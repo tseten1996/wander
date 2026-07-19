@@ -37,8 +37,10 @@ export function useTripRealtime(tripId: string | undefined) {
           for (const key of keys) {
             queryClient.invalidateQueries({ queryKey: [key, tripId] })
           }
-          // The dashboard aggregates several tables; refresh it on anything
+          // The dashboard + calendar aggregate several tables; refresh on anything
           queryClient.invalidateQueries({ queryKey: ['activity', tripId] })
+          queryClient.invalidateQueries({ queryKey: ['dashboard', tripId] })
+          queryClient.invalidateQueries({ queryKey: ['calendar', tripId] })
         }
       )
     }
