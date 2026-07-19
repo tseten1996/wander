@@ -27,13 +27,19 @@ export interface CreateTripInput {
   estimated_budget?: number | null
 }
 
+export interface CreatedTrip {
+  trip: Trip
+  /** The owner's member row, auto-created by the `on_trip_created` trigger. */
+  member: Member
+}
+
 export function useCreateTrip() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (input: CreateTripInput): Promise<Trip> => {
+    mutationFn: async (input: CreateTripInput): Promise<CreatedTrip> => {
       const { data: userData } = await supabase.auth.getUser()
       if (!userData.user) throw new Error('Not signed in')
-      const { data, error } = await supabase
+      const { data: trip, error } = await supabase
         .from('trips')
         .insert({
           name: input.name,
@@ -46,7 +52,14 @@ export function useCreateTrip() {
         .select()
         .single()
       if (error) throw error
-      return data
+      const { data: member, error: memberError } = await supabase
+        .from('members')
+        .select('*')
+        .eq('trip_id', trip.id)
+        .eq('user_id', userData.user.id)
+        .single()
+      if (memberError) throw memberError
+      return { trip, member }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trips'] }),
   })
