@@ -154,11 +154,11 @@ function Bubble({
         <Reactions message={message} onToggle={(emoji) => toggleReaction.mutate({ message, emoji })} />
       </div>
 
-      {/* Hover / tap actions */}
-      <div className={cn('flex items-start gap-0.5 self-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100')}>
+      {/* Hover on desktop, always tappable on mobile */}
+      <div className={cn('flex items-start gap-0.5 self-center transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-7" aria-label="React">
+            <Button variant="ghost" size="icon" className="size-9 md:size-7" aria-label="React">
               <SmilePlus className="size-4" />
             </Button>
           </PopoverTrigger>
@@ -168,7 +168,7 @@ function Bubble({
                 <button
                   key={e}
                   type="button"
-                  className="cursor-pointer rounded-lg p-1.5 text-lg transition-transform hover:scale-125"
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-lg text-lg transition-transform hover:scale-125"
                   onClick={() => toggleReaction.mutate({ message, emoji: e })}
                 >
                   {e}
@@ -179,7 +179,7 @@ function Bubble({
         </Popover>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-7" aria-label="Message actions">
+            <Button variant="ghost" size="icon" className="size-9 md:size-7" aria-label="Message actions">
               <MoreHorizontal className="size-4" />
             </Button>
           </DropdownMenuTrigger>

@@ -112,7 +112,7 @@ function CategorySection({
                   <button
                     type="button"
                     onClick={() => deleteItem.mutate(item.id)}
-                    className="cursor-pointer text-faint opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                    className="flex size-8 shrink-0 cursor-pointer items-center justify-center text-faint transition-opacity hover:text-danger md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                     aria-label={`Delete ${item.name}`}
                   >
                     <X className="size-4" />

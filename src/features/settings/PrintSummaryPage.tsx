@@ -44,8 +44,8 @@ function Summary() {
   const planned = budget.reduce((s, e) => s + (e.actual ?? e.estimated ?? 0), 0)
 
   return (
-    <div className="print-page mx-auto max-w-3xl px-6 py-8">
-      <div className="no-print mb-6 flex items-center justify-between">
+    <div className="print-page mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+      <div className="no-print mb-6 flex flex-wrap items-center justify-between gap-2">
         <Button variant="ghost" asChild>
           <Link to={`/trip/${trip.id}`}>
             <ArrowLeft /> Back to trip
@@ -57,7 +57,7 @@ function Summary() {
       </div>
 
       <header className="border-b-2 border-ink pb-4">
-        <h1 className="font-display text-4xl font-bold">{trip.name}</h1>
+        <h1 className="font-display text-3xl font-bold sm:text-4xl">{trip.name}</h1>
         <p className="mt-1 text-lg text-muted">
           {trip.destination && `${trip.destination} · `}
           {dateRange(trip.start_date, trip.end_date)}
@@ -116,29 +116,31 @@ function Summary() {
       {budget.length > 0 && (
         <section className="mt-6">
           <h2 className="font-display text-xl font-bold">Budget</h2>
-          <table className="mt-2 w-full text-sm">
-            <thead>
-              <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                <th className="py-1.5">Item</th>
-                <th className="py-1.5 text-right">Estimated</th>
-                <th className="py-1.5 text-right">Actual</th>
-              </tr>
-            </thead>
-            <tbody>
-              {budget.map((e) => (
-                <tr key={e.id} className="border-b border-line/50">
-                  <td className="py-1.5">{e.title}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatMoney(e.estimated, trip.currency)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatMoney(e.actual, trip.currency)}</td>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[420px] text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="py-1.5">Item</th>
+                  <th className="py-1.5 text-right">Estimated</th>
+                  <th className="py-1.5 text-right">Actual</th>
                 </tr>
-              ))}
-              <tr className="font-semibold">
-                <td className="py-2">Total planned</td>
-                <td />
-                <td className="py-2 text-right tabular-nums">{formatMoney(planned, trip.currency)}</td>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {budget.map((e) => (
+                  <tr key={e.id} className="border-b border-line/50">
+                    <td className="py-1.5">{e.title}</td>
+                    <td className="py-1.5 text-right tabular-nums">{formatMoney(e.estimated, trip.currency)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{formatMoney(e.actual, trip.currency)}</td>
+                  </tr>
+                ))}
+                <tr className="font-semibold">
+                  <td className="py-2">Total planned</td>
+                  <td />
+                  <td className="py-2 text-right tabular-nums">{formatMoney(planned, trip.currency)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

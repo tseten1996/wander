@@ -163,13 +163,13 @@ export default function NotesPage() {
                       {note.title}
                     </h3>
                     <div
-                      className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      className="flex shrink-0 gap-0.5 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-7"
+                        className="size-9 md:size-7"
                         aria-label={note.pinned ? 'Unpin note' : 'Pin note'}
                         onClick={() => updateNote.mutate({ id: note.id, pinned: !note.pinned })}
                       >
@@ -179,7 +179,7 @@ export default function NotesPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="size-7 text-danger"
+                          className="size-9 text-danger md:size-7"
                           aria-label="Delete note"
                           onClick={() => {
                             deleteNote.mutate(note.id)

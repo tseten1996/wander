@@ -1,15 +1,17 @@
 
-import { NavLink, Outlet, Link, useParams } from 'react-router-dom'
+import * as React from 'react'
+import { NavLink, Outlet, Link, useLocation, useParams } from 'react-router-dom'
 import {
   ArrowLeft, CalendarDays, Compass, Lightbulb, ListChecks,
-  Luggage, MapPin, MessageCircle, Moon, NotebookPen, PiggyBank, Settings,
-  Sun, Vote, HelpCircle,
+  Luggage, MapPin, MessageCircle, Moon, MoreHorizontal, NotebookPen, PiggyBank,
+  Settings, Sun, Vote, HelpCircle,
 } from 'lucide-react'
 import { TripProvider, useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
 import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageLoader, EmptyState } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 
@@ -28,14 +30,63 @@ const NAV = [
   { to: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
-// The five tabs that earn a spot on the mobile tab bar
+// The tabs that earn a spot on the mobile tab bar — everything else lives
+// behind "More" so every page stays reachable on a phone.
 const MOBILE_NAV = ['', 'itinerary', 'chat', 'checklist', 'budget']
+
+/** Bottom-sheet listing every nav item that didn't make the mobile tab bar. */
+function MoreSheet({ open, onOpenChange, items }: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  items: typeof NAV[number][]
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>More</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-3 gap-3">
+          {items.map(({ to, label, icon: Icon, ...rest }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={'end' in rest}
+              onClick={() => onOpenChange(false)}
+              className={({ isActive }) =>
+                cn(
+                  'flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-3 text-center text-xs font-medium transition-colors',
+                  isActive
+                    ? 'border-primary bg-primary-faint text-primary'
+                    : 'border-line text-ink-soft hover:bg-sunken'
+                )
+              }
+            >
+              <Icon className="size-5" />
+              {label}
+            </NavLink>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 function Shell() {
   const { trip, members, me } = useTripContext()
   const { dark, toggle } = useTheme()
+  const location = useLocation()
+  const [moreOpen, setMoreOpen] = React.useState(false)
 
   const mobileItems = NAV.filter((n) => MOBILE_NAV.includes(n.to))
+  const overflowItems = NAV.filter((n) => !MOBILE_NAV.includes(n.to))
+  const onOverflowPage = overflowItems.some((n) => location.pathname.endsWith(`/${n.to}`))
+
+  // A sheet opened from the tab bar should close itself the moment the
+  // route actually changes (link tap, browser back/forward, deep link).
+  React.useEffect(() => {
+    setMoreOpen(false)
+  }, [location.pathname])
 
   return (
     <div className="min-h-dvh md:flex">
@@ -95,19 +146,25 @@ function Shell() {
       </aside>
 
       {/* ── Mobile top bar ──────────────────────────────────────────── */}
-      <header className="no-print sticky top-0 z-40 flex items-center gap-2 border-b border-line bg-bg/80 px-4 py-3 backdrop-blur-md md:hidden">
+      <header className="no-print sticky top-0 z-40 flex items-center gap-1 border-b border-line bg-bg/80 px-2 py-1.5 backdrop-blur-md md:hidden">
         <Link
           to="/"
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted"
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted"
           title="All trips"
+          aria-label="All trips"
         >
           <ArrowLeft className="size-4" />
         </Link>
-        <p className="min-w-0 flex-1 truncate font-display font-bold">{trip.name}</p>
+        <p className="min-w-0 flex-1 truncate px-1 font-display font-bold">{trip.name}</p>
         <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
           {dark ? <Sun /> : <Moon />}
         </Button>
-        <NavLink to="settings">
+        <NavLink
+          to="settings"
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg"
+          aria-label="Settings"
+          title="Settings"
+        >
           <MemberAvatar name={me.display_name} color={me.color} size="sm" />
         </NavLink>
       </header>
@@ -138,8 +195,23 @@ function Shell() {
               {label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            aria-label="More pages"
+            aria-haspopup="dialog"
+            className={cn(
+              'flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors',
+              onOverflowPage ? 'text-primary' : 'text-muted'
+            )}
+          >
+            <MoreHorizontal className="size-5" />
+            More
+          </button>
         </div>
       </nav>
+
+      <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} items={overflowItems} />
     </div>
   )
 }
