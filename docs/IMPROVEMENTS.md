@@ -46,6 +46,10 @@ it before finishing.** Never re-implement anything in the Shipped list.
   packing, ideas and settings (trip info + profile) forms with inline field
   errors; shared `friendlyError()` mapping for Postgres error codes wired into
   every mutation's error toast
+- 2026-07-19 — Owner welcome step: after creating a trip, the owner (whose
+  member row previously defaulted silently to their email username) is now
+  prompted once to confirm/edit their display name and color, mirroring the
+  friend join flow — skippable, no migration needed
 
 ## Backlog
 
