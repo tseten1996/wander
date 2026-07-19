@@ -142,7 +142,7 @@ function TripInfoCard() {
               Tip: right-click any photo on the web and “Copy image address”.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="s-start">Start</Label>
               <Input id="s-start" type="date" {...form.register('start_date')} />
