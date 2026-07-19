@@ -9,6 +9,7 @@ export const Checkbox = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <CheckboxPrimitive.Root
     ref={ref}
+    data-tap-target-overlay=""
     className={cn(
       'peer size-5 shrink-0 rounded-md border border-line-strong bg-surface transition-colors cursor-pointer',
       'data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-on-primary',

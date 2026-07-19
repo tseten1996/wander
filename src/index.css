@@ -186,3 +186,40 @@
     min-height: 44px;
   }
 }
+
+/*
+  Same floor for the other controls the 2026-07-19 audit left under 44px:
+  text inputs (h-10 = 40px), select triggers, tabs triggers and dropdown/
+  select menu rows. `min-height` on an unlayered rule composes with
+  whatever height a call site's own class sets instead of conflicting with
+  it in tailwind-merge — so Packing's compact `h-9` quick-add still floors
+  to 44px on mobile without its desktop override being touched.
+*/
+@media (max-width: 767px) {
+  [data-tap-target] {
+    min-height: 44px;
+  }
+}
+
+/*
+  Checkbox's visible box is intentionally small (20px) — flooring it to
+  44px directly would make the checkbox itself look oversized. Instead give
+  it an invisible, centered 44x44 hit area via a pseudo-element so the tap
+  target grows without the checkbox's appearance changing. Callers that
+  pack checkboxes into dense rows (Packing, Checklist) still need enough
+  row height for neighbouring hit areas not to overlap — see the
+  `max-md:py-3` on Packing's row.
+*/
+@media (max-width: 767px) {
+  [data-tap-target-overlay] {
+    position: relative;
+  }
+  [data-tap-target-overlay]::before {
+    content: '';
+    position: absolute;
+    inset: 50%;
+    width: 44px;
+    height: 44px;
+    translate: -50% -50%;
+  }
+}

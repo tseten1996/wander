@@ -93,7 +93,7 @@ function CategorySection({
             return (
               <div
                 key={item.id}
-                className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-sunken/60"
+                className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-sunken/60 max-md:py-3"
               >
                 <Checkbox
                   checked={item.packed}
@@ -111,6 +111,7 @@ function CategorySection({
                 {canDelete && (
                   <button
                     type="button"
+                    data-icon-button=""
                     onClick={() => deleteItem.mutate(item.id)}
                     className="flex size-8 shrink-0 cursor-pointer items-center justify-center text-faint transition-opacity hover:text-danger md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                     aria-label={`Delete ${item.name}`}

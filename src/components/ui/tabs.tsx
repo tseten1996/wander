@@ -26,6 +26,7 @@ export const TabsTrigger = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Trigger
     ref={ref}
+    data-tap-target=""
     className={cn(
       'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-all cursor-pointer',
       'data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-soft',

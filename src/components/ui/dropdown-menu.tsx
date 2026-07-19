@@ -30,6 +30,7 @@ export const DropdownMenuItem = React.forwardRef<
 >(({ className, destructive, ...props }, ref) => (
   <DropdownMenuPrimitive.Item
     ref={ref}
+    data-tap-target=""
     className={cn(
       'flex cursor-pointer select-none items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm outline-none transition-colors',
       '[&_svg]:size-4 [&_svg]:shrink-0',

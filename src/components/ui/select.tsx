@@ -12,6 +12,7 @@ export const SelectTrigger = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
+    data-tap-target=""
     className={cn(
       'flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 text-sm',
       'focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
@@ -56,6 +57,7 @@ export const SelectItem = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
+    data-tap-target=""
     className={cn(
       'flex cursor-pointer select-none items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm text-ink-soft outline-none',
       'focus:bg-sunken focus:text-ink data-[state=checked]:text-primary',
