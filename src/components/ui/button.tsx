@@ -42,6 +42,10 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <Comp
         ref={ref}
         type={asChild ? undefined : (type ?? 'button')}
+        // Marks icon-only buttons so the global mobile tap-target minimum in
+        // index.css can find them, independent of whatever size-* utility a
+        // call site sets (see the comment there for why it can't be a class).
+        data-icon-button={(size ?? 'md') === 'icon' ? '' : undefined}
         className={cn(buttonVariants({ variant, size }), className)}
         {...props}
       />

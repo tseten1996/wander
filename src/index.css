@@ -151,3 +151,38 @@
   .no-print { display: none !important; }
   .print-page { box-shadow: none !important; border: none !important; }
 }
+
+/*
+  iOS Safari zooms the page when a focused form control computes to less
+  than 16px. Every text input/textarea in the design system defaults to
+  text-sm (14px), so force 16px on mobile for real form controls only.
+  Deliberately outside any @layer: unlayered rules win over Tailwind's
+  layered utilities regardless of specificity, so this can't be silently
+  undone by a component's `text-sm`/`text-xs` class or by an author's
+  className override that only targets one breakpoint.
+*/
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px;
+  }
+}
+
+/*
+  Touch-target floor for icon-only buttons on mobile (WCAG 2.5.5 / 44x44).
+  The Button component's `icon` size variant defaults to 36px, and several
+  call sites shrink it further (size-7 = 28px) to stay compact in dense rows
+  like chat bubbles or note cards. A responsive Tailwind class on the shared
+  component can't safely fix this: tailwind-merge treats `md:size-9` and a
+  call site's plain `size-7` override as different conflict groups, so the
+  override would only cancel the unprefixed part and silently change the
+  desktop size too. `min-width`/`min-height` sidesteps that entirely — it
+  composes with whatever width/height a `size-*` utility sets instead of
+  conflicting with it, so every icon button gets a real tap target on phones
+  without touching (or risking) a single call site's desktop sizing.
+*/
+@media (max-width: 767px) {
+  [data-icon-button] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

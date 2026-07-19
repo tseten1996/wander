@@ -50,10 +50,33 @@ it before finishing.** Never re-implement anything in the Shipped list.
   member row previously defaulted silently to their email username) is now
   prompted once to confirm/edit their display name and color, mirroring the
   friend join flow — skippable, no migration needed
+- 2026-07-19 — Mobile-responsive audit (375/390/768px): mobile bottom nav only
+  reached 5 of 12 pages — added a "More" bottom-sheet tab so every page is
+  reachable and thumb-sized; fixed 5 hover-only actions (chat bubble menu,
+  note card actions, checklist row menu, packing delete, idea delete) that
+  were unreachable on touch; global CSS fix for the classic iOS input-zoom
+  bug (16px minimum on mobile inputs, applied outside Tailwind's layer so it
+  can't be silently overridden); global 44px tap-target floor for icon-only
+  buttons via a `[data-icon-button]` marker rather than per-instance classes
+  (avoids a tailwind-merge footgun — see the comment in index.css); wrapped
+  the print-summary budget table in a scroll container. Verified with
+  `npm run build` and a Playwright pass that mocks the Supabase network layer
+  (this sandbox can't reach the real project — see prior sessions) to render
+  an authenticated trip at all three breakpoints and confirm zero horizontal
+  overflow anywhere, including the new More sheet.
 
 ## Backlog
 
 ### P1 — polish what exists
+- [ ] Bump remaining mobile touch targets under 44px: Input/Select trigger
+      (h-10 = 40px), Checkbox (20px), Tabs trigger, DropdownMenuItem padding.
+      Left alone in the 2026-07-19 mobile audit because the base components'
+      default sizing is shared with call sites that already pass their own
+      size override (e.g. Packing's compact `h-9` quick-add) — a naive
+      responsive class on the shared default risks tailwind-merge silently
+      changing THEIR desktop size too (same footgun documented in
+      index.css's `[data-icon-button]` comment). Needs a per-call-site pass,
+      not a base-component one.
 - [ ] Extend the zod + react-hook-form + `friendlyError()` pattern (shipped
       2026-07-19 on itinerary/budget/packing/ideas/settings) to Checklist,
       Polls, Messages, Questions and Notes — those five still create/update

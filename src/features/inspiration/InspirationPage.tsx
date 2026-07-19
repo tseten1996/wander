@@ -100,7 +100,7 @@ function IdeaCard({ item }: { item: InspirationItem }) {
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 shrink-0 text-danger opacity-0 transition-opacity group-hover:opacity-100"
+              className="size-9 shrink-0 text-danger transition-opacity md:size-7 md:opacity-0 md:group-hover:opacity-100"
               aria-label="Delete idea"
               onClick={() => {
                 deleteItem.mutate(item.id)

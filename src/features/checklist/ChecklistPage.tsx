@@ -78,7 +78,7 @@ function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
           <Button
             variant="ghost"
             size="icon"
-            className="opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+            className="transition-opacity md:opacity-0 md:group-hover:opacity-100 md:data-[state=open]:opacity-100"
             aria-label="Task actions"
           >
             <MoreHorizontal />
