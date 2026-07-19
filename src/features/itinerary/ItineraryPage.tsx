@@ -8,6 +8,9 @@ import {
   SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Controller, useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { GripVertical, MapPin, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -33,6 +36,29 @@ import {
 } from '@/components/ui/select'
 import { cn, formatMoney, formatTime, longDate, positionBetween } from '@/lib/utils'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
+
+const itinerarySchema = z
+  .object({
+    title: z.string().trim().min(1, 'Give it a title').max(120, 'Keep it under 120 characters'),
+    category: z.enum(['flight', 'hotel', 'activity', 'restaurant', 'transport', 'free']),
+    day: z.string().optional().nullable(),
+    start_time: z.string().optional().nullable(),
+    end_time: z.string().optional().nullable(),
+    location: z.string().trim().max(160, 'Keep it under 160 characters').optional().nullable(),
+    notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
+    cost: z.coerce
+      .number({ invalid_type_error: 'Enter a number' })
+      .min(0, 'Cost can’t be negative')
+      .optional()
+      .nullable()
+      .or(z.literal('')),
+  })
+  .refine((v) => !v.start_time || !v.end_time || v.end_time >= v.start_time, {
+    message: 'Ends before it starts',
+    path: ['end_time'],
+  })
+
+type ItineraryFormValues = z.input<typeof itinerarySchema>
 
 function SortableItemCard({ item }: { item: ItineraryItem }) {
   const { trip, me, isOwner } = useTripContext()
@@ -170,31 +196,34 @@ function ItemDialog({
   const createItem = useCreateItineraryItem(trip.id, me.id)
   const updateItem = useUpdateItineraryItem(trip.id)
 
-  const empty: ItineraryInput = {
+  const empty: ItineraryFormValues = {
     title: '',
     category: 'activity',
     day: trip.start_date,
-    start_time: null,
-    end_time: null,
-    location: null,
-    notes: null,
-    cost: null,
+    start_time: '',
+    end_time: '',
+    location: '',
+    notes: '',
+    cost: '',
   }
-  const [form, setForm] = React.useState<ItineraryInput>(empty)
+  const form = useForm<ItineraryFormValues>({
+    resolver: zodResolver(itinerarySchema),
+    defaultValues: empty,
+  })
 
   React.useEffect(() => {
     if (open) {
-      setForm(
+      form.reset(
         item
           ? {
               title: item.title,
               category: item.category,
-              day: item.day,
-              start_time: item.start_time,
-              end_time: item.end_time,
-              location: item.location,
-              notes: item.notes,
-              cost: item.cost,
+              day: item.day ?? '',
+              start_time: item.start_time ?? '',
+              end_time: item.end_time ?? '',
+              location: item.location ?? '',
+              notes: item.notes ?? '',
+              cost: item.cost ?? '',
             }
           : empty
       )
@@ -202,18 +231,27 @@ function ItemDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item])
 
-  function set<K extends keyof ItineraryInput>(key: K, value: ItineraryInput[K]) {
-    setForm((f) => ({ ...f, [key]: value }))
+  async function onSubmit(values: ItineraryFormValues) {
+    const payload: ItineraryInput = {
+      title: values.title.trim(),
+      category: values.category as ItineraryCategory,
+      day: values.day || null,
+      start_time: values.start_time || null,
+      end_time: values.end_time || null,
+      location: values.location?.trim() || null,
+      notes: values.notes?.trim() || null,
+      cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
+    }
+    try {
+      if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
+      else await createItem.mutateAsync(payload)
+      onOpenChange(false)
+    } catch {
+      // toasted by the mutation's onError
+    }
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form.title.trim()) return
-    const payload = { ...form, title: form.title.trim() }
-    if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
-    else await createItem.mutateAsync(payload)
-    onOpenChange(false)
-  }
+  const err = form.formState.errors
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -221,75 +259,60 @@ function ItemDialog({
         <DialogHeader>
           <DialogTitle>{item ? 'Edit itinerary item' : 'Add to itinerary'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="it-title">Title</Label>
             <Input
               id="it-title"
               placeholder="TeamLab Planets"
-              value={form.title}
-              onChange={(e) => set('title', e.target.value)}
               autoFocus={!item}
+              {...form.register('title')}
             />
+            {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Type</Label>
-              <Select
-                value={form.category}
-                onValueChange={(v) => set('category', v as ItineraryCategory)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORY_OPTIONS.map(([value, meta]) => (
-                    <SelectItem key={value} value={value}>
-                      {meta.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="category"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORY_OPTIONS.map(([value, meta]) => (
+                        <SelectItem key={value} value={value}>
+                          {meta.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-day">Day</Label>
-              <Input
-                id="it-day"
-                type="date"
-                value={form.day ?? ''}
-                onChange={(e) => set('day', e.target.value || null)}
-              />
+              <Input id="it-day" type="date" {...form.register('day')} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="it-start">Starts</Label>
-              <Input
-                id="it-start"
-                type="time"
-                value={form.start_time ?? ''}
-                onChange={(e) => set('start_time', e.target.value || null)}
-              />
+              <Input id="it-start" type="time" {...form.register('start_time')} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-end">Ends</Label>
-              <Input
-                id="it-end"
-                type="time"
-                value={form.end_time ?? ''}
-                onChange={(e) => set('end_time', e.target.value || null)}
-              />
+              <Input id="it-end" type="time" {...form.register('end_time')} />
+              {err.end_time && <p className="text-xs text-danger">{err.end_time.message}</p>}
             </div>
           </div>
           <div className="grid grid-cols-[1fr_7rem] gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="it-loc">Location</Label>
-              <Input
-                id="it-loc"
-                placeholder="Toyosu, Tokyo"
-                value={form.location ?? ''}
-                onChange={(e) => set('location', e.target.value || null)}
-              />
+              <Input id="it-loc" placeholder="Toyosu, Tokyo" {...form.register('location')} />
+              {err.location && <p className="text-xs text-danger">{err.location.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-cost">Cost</Label>
@@ -299,9 +322,9 @@ function ItemDialog({
                 min="0"
                 step="1"
                 placeholder="0"
-                value={form.cost ?? ''}
-                onChange={(e) => set('cost', e.target.value === '' ? null : Number(e.target.value))}
+                {...form.register('cost')}
               />
+              {err.cost && <p className="text-xs text-danger">{err.cost.message}</p>}
             </div>
           </div>
           <div className="space-y-1.5">
@@ -309,12 +332,12 @@ function ItemDialog({
             <Textarea
               id="it-notes"
               placeholder="Booking refs, links, what to bring…"
-              value={form.notes ?? ''}
-              onChange={(e) => set('notes', e.target.value || null)}
               className="min-h-16"
+              {...form.register('notes')}
             />
+            {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!form.title.trim()}>
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {item ? 'Save changes' : 'Add item'}
           </Button>
         </form>

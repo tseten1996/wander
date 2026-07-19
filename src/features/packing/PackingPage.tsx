@@ -39,15 +39,26 @@ function CategorySection({
   const togglePacked = useTogglePacked(trip.id)
   const deleteItem = useDeletePackingItem(trip.id)
   const [draft, setDraft] = React.useState('')
+  const [draftError, setDraftError] = React.useState<string | null>(null)
 
   const packed = items.filter((i) => i.packed).length
+  const MAX_NAME_LENGTH = 120
 
   async function add(e: React.FormEvent) {
     e.preventDefault()
     const name = draft.trim()
     if (!name) return
+    if (name.length > MAX_NAME_LENGTH) {
+      setDraftError(`Keep it under ${MAX_NAME_LENGTH} characters`)
+      return
+    }
+    setDraftError(null)
     setDraft('')
-    await addItem.mutateAsync({ name, category: category.value })
+    try {
+      await addItem.mutateAsync({ name, category: category.value })
+    } catch {
+      // toasted by the mutation's onError
+    }
   }
 
   return (
@@ -112,16 +123,23 @@ function CategorySection({
           })}
         </div>
 
-        <form onSubmit={add} className="mt-2 flex gap-2">
-          <Input
-            placeholder={`Add to ${category.label.toLowerCase()}…`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className="h-9 text-sm"
-          />
-          <Button type="submit" size="icon" variant="soft" disabled={!draft.trim()} aria-label="Add item">
-            <Plus />
-          </Button>
+        <form onSubmit={add} className="mt-2">
+          <div className="flex gap-2">
+            <Input
+              placeholder={`Add to ${category.label.toLowerCase()}…`}
+              value={draft}
+              maxLength={MAX_NAME_LENGTH}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                if (draftError) setDraftError(null)
+              }}
+              className="h-9 text-sm"
+            />
+            <Button type="submit" size="icon" variant="soft" disabled={!draft.trim()} aria-label="Add item">
+              <Plus />
+            </Button>
+          </div>
+          {draftError && <p className="mt-1 text-xs text-danger">{draftError}</p>}
         </form>
       </Card>
     </motion.div>
