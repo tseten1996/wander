@@ -1,5 +1,8 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
+import { Controller, useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { MoreHorizontal, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -38,6 +41,28 @@ const CATEGORIES: { value: BudgetCategory; label: string }[] = [
 
 const SHARED = 'shared'
 
+const budgetSchema = z.object({
+  title: z.string().trim().min(1, 'Give it a name').max(120, 'Keep it under 120 characters'),
+  category: z.enum(['stay', 'transport', 'food', 'activities', 'shopping', 'other']),
+  estimated: z.coerce
+    .number({ invalid_type_error: 'Enter a number' })
+    .min(0, 'Can’t be negative')
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  actual: z.coerce
+    .number({ invalid_type_error: 'Enter a number' })
+    .min(0, 'Can’t be negative')
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  paid_by: z.string().optional().nullable(),
+  entry_date: z.string().optional().nullable(),
+  notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
+})
+
+type BudgetFormValues = z.input<typeof budgetSchema>
+
 function EntryDialog({
   open,
   onOpenChange,
@@ -51,29 +76,32 @@ function EntryDialog({
   const createEntry = useCreateBudgetEntry(trip.id, me.id)
   const updateEntry = useUpdateBudgetEntry(trip.id)
 
-  const empty: BudgetInput = {
+  const empty: BudgetFormValues = {
     title: '',
     category: 'other',
-    estimated: null,
-    actual: null,
-    paid_by: null,
-    entry_date: null,
-    notes: null,
+    estimated: '',
+    actual: '',
+    paid_by: SHARED,
+    entry_date: '',
+    notes: '',
   }
-  const [form, setForm] = React.useState<BudgetInput>(empty)
+  const form = useForm<BudgetFormValues>({
+    resolver: zodResolver(budgetSchema),
+    defaultValues: empty,
+  })
 
   React.useEffect(() => {
     if (open) {
-      setForm(
+      form.reset(
         entry
           ? {
               title: entry.title,
               category: entry.category,
-              estimated: entry.estimated,
-              actual: entry.actual,
-              paid_by: entry.paid_by,
-              entry_date: entry.entry_date,
-              notes: entry.notes,
+              estimated: entry.estimated ?? '',
+              actual: entry.actual ?? '',
+              paid_by: entry.paid_by ?? SHARED,
+              entry_date: entry.entry_date ?? '',
+              notes: entry.notes ?? '',
             }
           : empty
       )
@@ -81,18 +109,26 @@ function EntryDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entry])
 
-  function set<K extends keyof BudgetInput>(key: K, value: BudgetInput[K]) {
-    setForm((f) => ({ ...f, [key]: value }))
+  async function onSubmit(values: BudgetFormValues) {
+    const payload: BudgetInput = {
+      title: values.title.trim(),
+      category: values.category as BudgetCategory,
+      estimated: values.estimated === '' || values.estimated == null ? null : Number(values.estimated),
+      actual: values.actual === '' || values.actual == null ? null : Number(values.actual),
+      paid_by: !values.paid_by || values.paid_by === SHARED ? null : values.paid_by,
+      entry_date: values.entry_date || null,
+      notes: values.notes?.trim() || null,
+    }
+    try {
+      if (entry) await updateEntry.mutateAsync({ id: entry.id, ...payload })
+      else await createEntry.mutateAsync(payload)
+      onOpenChange(false)
+    } catch {
+      // toasted by the mutation's onError
+    }
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form.title.trim()) return
-    const payload = { ...form, title: form.title.trim() }
-    if (entry) await updateEntry.mutateAsync({ id: entry.id, ...payload })
-    else await createEntry.mutateAsync(payload)
-    onOpenChange(false)
-  }
+  const err = form.formState.errors
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -100,37 +136,38 @@ function EntryDialog({
         <DialogHeader>
           <DialogTitle>{entry ? 'Edit expense' : 'Add expense'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="b-title">What is it?</Label>
             <Input
               id="b-title"
               placeholder="Hotel — 8 nights"
-              value={form.title}
-              onChange={(e) => set('title', e.target.value)}
               autoFocus={!entry}
+              {...form.register('title')}
             />
+            {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Category</Label>
-              <Select value={form.category} onValueChange={(v) => set('category', v as BudgetCategory)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="category"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="b-date">Date</Label>
-              <Input
-                id="b-date"
-                type="date"
-                value={form.entry_date ?? ''}
-                onChange={(e) => set('entry_date', e.target.value || null)}
-              />
+              <Input id="b-date" type="date" {...form.register('entry_date')} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -139,45 +176,44 @@ function EntryDialog({
               <Input
                 id="b-est"
                 type="number" min="0" step="0.01" placeholder="0.00"
-                value={form.estimated ?? ''}
-                onChange={(e) => set('estimated', e.target.value === '' ? null : Number(e.target.value))}
+                {...form.register('estimated')}
               />
+              {err.estimated && <p className="text-xs text-danger">{err.estimated.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="b-act">Actually paid</Label>
               <Input
                 id="b-act"
                 type="number" min="0" step="0.01" placeholder="0.00"
-                value={form.actual ?? ''}
-                onChange={(e) => set('actual', e.target.value === '' ? null : Number(e.target.value))}
+                {...form.register('actual')}
               />
+              {err.actual && <p className="text-xs text-danger">{err.actual.message}</p>}
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>Paid by</Label>
-            <Select
-              value={form.paid_by ?? SHARED}
-              onValueChange={(v) => set('paid_by', v === SHARED ? null : v)}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SHARED}>Shared / not paid yet</SelectItem>
-                {members.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>{m.display_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Controller
+              control={form.control}
+              name="paid_by"
+              render={({ field }) => (
+                <Select value={field.value ?? SHARED} onValueChange={field.onChange}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SHARED}>Shared / not paid yet</SelectItem>
+                    {members.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>{m.display_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="b-notes">Notes</Label>
-            <Textarea
-              id="b-notes"
-              value={form.notes ?? ''}
-              onChange={(e) => set('notes', e.target.value || null)}
-              className="min-h-14"
-            />
+            <Textarea id="b-notes" className="min-h-14" {...form.register('notes')} />
+            {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!form.title.trim()}>
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {entry ? 'Save changes' : 'Add expense'}
           </Button>
         </form>

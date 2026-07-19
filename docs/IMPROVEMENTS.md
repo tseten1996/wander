@@ -42,14 +42,18 @@ it before finishing.** Never re-implement anything in the Shipped list.
 - 2026-07-18 — Exports: JSON export/import, print-to-PDF trip summary page
 - 2026-07-18 — PWA (installable, precached shell) + GitHub Pages CI deploy; live at https://tseten1996.github.io/wander/
 - 2026-07-18 — Fix: CI empty env vars blanked Supabase config (`||` vs `??`)
+- 2026-07-19 — Validation hardening: zod + react-hook-form on itinerary, budget,
+  packing, ideas and settings (trip info + profile) forms with inline field
+  errors; shared `friendlyError()` mapping for Postgres error codes wired into
+  every mutation's error toast
 
 ## Backlog
 
 ### P1 — polish what exists
-- [ ] Validation hardening: zod schemas + inline error messages on every
-      dialog form (itinerary, budget, packing, ideas, settings still use
-      ad-hoc state); enforce max lengths matching DB; friendly Supabase
-      error mapping (e.g. unique violations)
+- [ ] Extend the zod + react-hook-form + `friendlyError()` pattern (shipped
+      2026-07-19 on itinerary/budget/packing/ideas/settings) to Checklist,
+      Polls, Messages, Questions and Notes — those five still create/update
+      via ad-hoc `useState` forms and raw `error.message` toasts
 - [ ] Replace native date inputs with a styled popover calendar widget
       (build on the Calendar page's grid; keep native inputs on mobile)
 - [ ] Itinerary links: URL field on items; auto-detect pasted URLs in

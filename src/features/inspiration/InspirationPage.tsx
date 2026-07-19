@@ -1,5 +1,8 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
+import { Controller, useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { ExternalLink, Lightbulb, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -28,6 +31,28 @@ const CATEGORIES: { value: InspirationCategory | 'all'; label: string }[] = [
   { value: 'places', label: 'Places' },
   { value: 'general', label: 'Other' },
 ]
+
+const urlOrEmpty = z
+  .string()
+  .trim()
+  .max(2000, 'That link is too long')
+  .optional()
+  .refine((v) => !v || /^https?:\/\/.+/i.test(v), { message: 'Must be a valid http(s) link' })
+
+const ideaSchema = z
+  .object({
+    title: z.string().trim().max(120, 'Keep it under 120 characters').optional(),
+    url: urlOrEmpty,
+    image_url: urlOrEmpty,
+    note: z.string().trim().max(500, 'Keep it under 500 characters').optional(),
+    category: z.enum(['stay', 'food', 'activities', 'places', 'general']),
+  })
+  .refine((v) => v.title?.trim() || v.url?.trim() || v.image_url?.trim(), {
+    message: 'Add a title, link or image',
+    path: ['title'],
+  })
+
+type IdeaFormValues = z.input<typeof ideaSchema>
 
 function hostOf(url: string): string {
   try {
@@ -105,29 +130,34 @@ export default function InspirationPage() {
 
   const [filter, setFilter] = React.useState<InspirationCategory | 'all'>('all')
   const [newOpen, setNewOpen] = React.useState(false)
-  const [form, setForm] = React.useState({
-    title: '', url: '', image_url: '', note: '', category: 'general' as InspirationCategory,
+  const emptyIdea: IdeaFormValues = { title: '', url: '', image_url: '', note: '', category: 'general' }
+  const form = useForm<IdeaFormValues>({
+    resolver: zodResolver(ideaSchema),
+    defaultValues: emptyIdea,
   })
 
   const items = (inspiration.data ?? []).filter(
     (i) => filter === 'all' || i.category === filter
   )
-  const valid = form.title.trim() || form.url.trim() || form.image_url.trim()
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!valid) return
-    await createIdea.mutateAsync({
-      title: form.title.trim() || null,
-      url: form.url.trim() || null,
-      image_url: form.image_url.trim() || null,
-      note: form.note.trim() || null,
-      category: form.category,
-    })
-    setForm({ title: '', url: '', image_url: '', note: '', category: 'general' })
-    setNewOpen(false)
-    toast.success('Pinned to the board')
+  async function onSubmit(values: IdeaFormValues) {
+    try {
+      await createIdea.mutateAsync({
+        title: values.title?.trim() || null,
+        url: values.url?.trim() || null,
+        image_url: values.image_url?.trim() || null,
+        note: values.note?.trim() || null,
+        category: values.category as InspirationCategory,
+      })
+      form.reset(emptyIdea)
+      setNewOpen(false)
+      toast.success('Pinned to the board')
+    } catch {
+      // toasted by the mutation's onError
+    }
   }
+
+  const err = form.formState.errors
 
   return (
     <div>
@@ -188,31 +218,32 @@ export default function InspirationPage() {
         </motion.div>
       )}
 
-      <Dialog open={newOpen} onOpenChange={setNewOpen}>
+      <Dialog
+        open={newOpen}
+        onOpenChange={(o) => {
+          setNewOpen(o)
+          if (!o) form.reset(emptyIdea)
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Pin an idea</DialogTitle>
           </DialogHeader>
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="idea-title">Title</Label>
               <Input
                 id="idea-title"
                 placeholder="Rooftop izakaya"
-                value={form.title}
-                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
                 autoFocus
+                {...form.register('title')}
               />
+              {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="idea-url">Link</Label>
-              <Input
-                id="idea-url"
-                type="url"
-                placeholder="https://…"
-                value={form.url}
-                onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-              />
+              <Input id="idea-url" type="url" placeholder="https://…" {...form.register('url')} />
+              {err.url && <p className="text-xs text-danger">{err.url.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="idea-img">Image URL</Label>
@@ -220,36 +251,35 @@ export default function InspirationPage() {
                 id="idea-img"
                 type="url"
                 placeholder="https://…/photo.jpg"
-                value={form.image_url}
-                onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+                {...form.register('image_url')}
               />
+              {err.image_url && <p className="text-xs text-danger">{err.image_url.message}</p>}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Category</Label>
-                <Select
-                  value={form.category}
-                  onValueChange={(v) => setForm((f) => ({ ...f, category: v as InspirationCategory }))}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.filter((c) => c.value !== 'all').map((c) => (
-                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={form.control}
+                  name="category"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.filter((c) => c.value !== 'all').map((c) => (
+                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="idea-note">Note</Label>
-                <Input
-                  id="idea-note"
-                  placeholder="Why it's cool"
-                  value={form.note}
-                  onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-                />
+                <Input id="idea-note" placeholder="Why it's cool" {...form.register('note')} />
+                {err.note && <p className="text-xs text-danger">{err.note.message}</p>}
               </div>
             </div>
-            <Button type="submit" size="lg" className="w-full" disabled={!valid || createIdea.isPending}>
+            <Button type="submit" size="lg" className="w-full" disabled={createIdea.isPending}>
               Pin it
             </Button>
           </form>

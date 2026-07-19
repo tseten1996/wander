@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
 export function useItinerary(tripId: string) {
@@ -49,6 +51,7 @@ export function useCreateItineraryItem(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'added to the itinerary', input.title)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not add that item')),
   })
 }
 
@@ -60,6 +63,7 @@ export function useUpdateItineraryItem(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save those changes')),
   })
 }
 
@@ -84,8 +88,9 @@ export function useReorderItinerary(tripId: string) {
       )
       return { previous }
     },
-    onError: (_e, _v, ctx) => {
+    onError: (err, _v, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(['itinerary_items', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not reorder the itinerary'))
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ['itinerary_items', tripId] }),
@@ -100,5 +105,6 @@ export function useDeleteItineraryItem(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that item')),
   })
 }

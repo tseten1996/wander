@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { friendlyError } from '@/lib/errors'
 import type { PackingCategory, PackingItem } from '@/types'
 
 export function usePacking(tripId: string) {
@@ -37,6 +39,7 @@ export function useAddPackingItem(tripId: string, memberId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not add that item')),
   })
 }
 
@@ -58,8 +61,9 @@ export function useTogglePacked(tripId: string) {
       )
       return { previous }
     },
-    onError: (_e, _v, ctx) => {
+    onError: (err, _v, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(['packing_items', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not update that item'))
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ['packing_items', tripId] }),
@@ -74,5 +78,6 @@ export function useDeletePackingItem(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that item')),
   })
 }

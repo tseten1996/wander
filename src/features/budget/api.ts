@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { BudgetCategory, BudgetEntry } from '@/types'
 
 export function useBudget(tripId: string) {
@@ -46,6 +48,7 @@ export function useCreateBudgetEntry(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'added an expense', input.title)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not add that expense')),
   })
 }
 
@@ -57,6 +60,7 @@ export function useUpdateBudgetEntry(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save those changes')),
   })
 }
 
@@ -68,5 +72,6 @@ export function useDeleteBudgetEntry(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that expense')),
   })
 }
