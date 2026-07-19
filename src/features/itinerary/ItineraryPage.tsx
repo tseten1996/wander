@@ -1,0 +1,385 @@
+import * as React from 'react'
+import { motion } from 'framer-motion'
+import {
+  DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { GripVertical, MapPin, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { useTripContext } from '@/hooks/useTrip'
+import {
+  useCreateItineraryItem, useDeleteItineraryItem, useItinerary,
+  useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
+} from './api'
+import { ITINERARY_META } from './meta'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input, Textarea } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { EmptyState, Skeleton } from '@/components/ui/misc'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { cn, formatMoney, formatTime, longDate, positionBetween } from '@/lib/utils'
+import type { ItineraryCategory, ItineraryItem } from '@/types'
+
+function SortableItemCard({ item }: { item: ItineraryItem }) {
+  const { trip, me, isOwner } = useTripContext()
+  const deleteItem = useDeleteItineraryItem(trip.id)
+  const [editOpen, setEditOpen] = React.useState(false)
+  const meta = ITINERARY_META[item.category]
+  const canDelete = isOwner || item.created_by === me.id
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: item.id })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn('relative', isDragging && 'z-10 opacity-80')}
+    >
+      <Card className="flex items-center gap-3 p-3.5">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab touch-none text-faint hover:text-muted active:cursor-grabbing"
+          aria-label={`Reorder ${item.title}`}
+        >
+          <GripVertical className="size-4" />
+        </button>
+        <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-xl', meta.chip)}>
+          <meta.icon className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">{item.title}</p>
+          <p className="truncate text-xs text-muted">
+            {[
+              item.start_time &&
+                `${formatTime(item.start_time)}${item.end_time ? ` – ${formatTime(item.end_time)}` : ''}`,
+              item.location,
+              item.cost != null ? formatMoney(item.cost, trip.currency) : null,
+            ]
+              .filter(Boolean)
+              .join(' · ') || meta.label}
+          </p>
+          {item.notes && <p className="mt-0.5 truncate text-xs text-faint">{item.notes}</p>}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Itinerary item actions">
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setEditOpen(true)}>
+              <Pencil /> Edit
+            </DropdownMenuItem>
+            {canDelete && (
+              <DropdownMenuItem
+                destructive
+                onClick={() => {
+                  deleteItem.mutate(item.id)
+                  toast.success('Removed from itinerary')
+                }}
+              >
+                <Trash2 /> Delete
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </Card>
+      <ItemDialog open={editOpen} onOpenChange={setEditOpen} item={item} />
+    </div>
+  )
+}
+
+function DaySection({ day, items }: { day: string | null; items: ItineraryItem[] }) {
+  const { trip } = useTripContext()
+  const reorder = useReorderItinerary(trip.id)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+  )
+
+  function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = items.findIndex((i) => i.id === active.id)
+    const overIndex = items.findIndex((i) => i.id === over.id)
+    if (oldIndex < 0 || overIndex < 0) return
+    // New position = midpoint of the neighbours in the final ordering
+    const finalOrder = arrayMove(items, oldIndex, overIndex)
+    const idx = finalOrder.findIndex((i) => i.id === active.id)
+    const prev = finalOrder[idx - 1] ?? null
+    const next = finalOrder[idx + 1] ?? null
+    reorder.mutate({
+      id: String(active.id),
+      position: positionBetween(prev?.position ?? null, next?.position ?? null),
+    })
+  }
+
+  return (
+    <section>
+      <h2 className="mb-2.5 flex items-baseline gap-2 font-display text-base font-semibold">
+        {day ? longDate(day) : 'Not scheduled yet'}
+        <span className="text-xs font-normal text-faint">
+          {items.length} {items.length === 1 ? 'item' : 'items'}
+        </span>
+      </h2>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {items.map((item) => (
+              <SortableItemCard key={item.id} item={item} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </section>
+  )
+}
+
+const CATEGORY_OPTIONS = Object.entries(ITINERARY_META) as [
+  ItineraryCategory,
+  (typeof ITINERARY_META)[ItineraryCategory],
+][]
+
+function ItemDialog({
+  open,
+  onOpenChange,
+  item,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  item?: ItineraryItem
+}) {
+  const { trip, me } = useTripContext()
+  const createItem = useCreateItineraryItem(trip.id, me.id)
+  const updateItem = useUpdateItineraryItem(trip.id)
+
+  const empty: ItineraryInput = {
+    title: '',
+    category: 'activity',
+    day: trip.start_date,
+    start_time: null,
+    end_time: null,
+    location: null,
+    notes: null,
+    cost: null,
+  }
+  const [form, setForm] = React.useState<ItineraryInput>(empty)
+
+  React.useEffect(() => {
+    if (open) {
+      setForm(
+        item
+          ? {
+              title: item.title,
+              category: item.category,
+              day: item.day,
+              start_time: item.start_time,
+              end_time: item.end_time,
+              location: item.location,
+              notes: item.notes,
+              cost: item.cost,
+            }
+          : empty
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, item])
+
+  function set<K extends keyof ItineraryInput>(key: K, value: ItineraryInput[K]) {
+    setForm((f) => ({ ...f, [key]: value }))
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.title.trim()) return
+    const payload = { ...form, title: form.title.trim() }
+    if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
+    else await createItem.mutateAsync(payload)
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{item ? 'Edit itinerary item' : 'Add to itinerary'}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="it-title">Title</Label>
+            <Input
+              id="it-title"
+              placeholder="TeamLab Planets"
+              value={form.title}
+              onChange={(e) => set('title', e.target.value)}
+              autoFocus={!item}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Type</Label>
+              <Select
+                value={form.category}
+                onValueChange={(v) => set('category', v as ItineraryCategory)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORY_OPTIONS.map(([value, meta]) => (
+                    <SelectItem key={value} value={value}>
+                      {meta.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="it-day">Day</Label>
+              <Input
+                id="it-day"
+                type="date"
+                value={form.day ?? ''}
+                onChange={(e) => set('day', e.target.value || null)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="it-start">Starts</Label>
+              <Input
+                id="it-start"
+                type="time"
+                value={form.start_time ?? ''}
+                onChange={(e) => set('start_time', e.target.value || null)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="it-end">Ends</Label>
+              <Input
+                id="it-end"
+                type="time"
+                value={form.end_time ?? ''}
+                onChange={(e) => set('end_time', e.target.value || null)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-[1fr_7rem] gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="it-loc">Location</Label>
+              <Input
+                id="it-loc"
+                placeholder="Toyosu, Tokyo"
+                value={form.location ?? ''}
+                onChange={(e) => set('location', e.target.value || null)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="it-cost">Cost</Label>
+              <Input
+                id="it-cost"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="0"
+                value={form.cost ?? ''}
+                onChange={(e) => set('cost', e.target.value === '' ? null : Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="it-notes">Notes</Label>
+            <Textarea
+              id="it-notes"
+              placeholder="Booking refs, links, what to bring…"
+              value={form.notes ?? ''}
+              onChange={(e) => set('notes', e.target.value || null)}
+              className="min-h-16"
+            />
+          </div>
+          <Button type="submit" size="lg" className="w-full" disabled={!form.title.trim()}>
+            {item ? 'Save changes' : 'Add item'}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export default function ItineraryPage() {
+  const { trip } = useTripContext()
+  const itinerary = useItinerary(trip.id)
+  const [newOpen, setNewOpen] = React.useState(false)
+
+  const items = itinerary.data ?? []
+  const byDay = new Map<string | null, ItineraryItem[]>()
+  for (const item of items) {
+    const key = item.day
+    byDay.set(key, [...(byDay.get(key) ?? []), item])
+  }
+  const days = [...byDay.keys()].sort((a, b) => {
+    if (a === null) return 1
+    if (b === null) return -1
+    return a.localeCompare(b)
+  })
+
+  return (
+    <div>
+      <PageHeader
+        title="Itinerary"
+        description="Your trip, day by day. Drag to reorder within a day."
+        action={
+          <Button onClick={() => setNewOpen(true)}>
+            <Plus /> Add item
+          </Button>
+        }
+      />
+      {itinerary.isLoading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
+          <Skeleton className="h-20" />
+        </div>
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={MapPin}
+          title="The itinerary is empty"
+          description="Add flights, stays, restaurants and activities — they'll organize themselves by day."
+          action={
+            <Button onClick={() => setNewOpen(true)}>
+              <Plus /> Add the first item
+            </Button>
+          }
+        />
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="space-y-8"
+        >
+          {days.map((day) => (
+            <DaySection key={day ?? 'unscheduled'} day={day} items={byDay.get(day)!} />
+          ))}
+        </motion.div>
+      )}
+      <ItemDialog open={newOpen} onOpenChange={setNewOpen} />
+    </div>
+  )
+}
