@@ -191,7 +191,7 @@ export function CreateTripDialog({
                 <Label htmlFor="trip-dest">Destination</Label>
                 <Input id="trip-dest" placeholder="Tokyo, Japan" {...form.register('destination')} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="trip-start">Start date</Label>
                   <Input id="trip-start" type="date" {...form.register('start_date')} />

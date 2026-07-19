@@ -84,6 +84,47 @@ it before finishing.** Never re-implement anything in the Shipped list.
   Settings/Notes (incl. the note-editor Tabs) at desktop + mobile —
   screenshots in docs/screenshots/ show taller, comfortably spaced controls
   on mobile with no overlap/overflow, and an unchanged desktop.
+- 2026-07-19 — Comprehensive mobile audit (user-requested, 320-1024px):
+  4 parallel research passes over every UI primitive, layout/nav component,
+  form dialog and content page turned up 19 confirmed bugs, all fixed:
+  (1) Dialog's close button lived inside its own `overflow-y-auto` region
+  and scrolled out of reach on tall content — moved to a sibling of a new
+  inner scroll wrapper so it stays pinned, and floored it to 44px via
+  `data-icon-button` (it had neither mobile marker, unlike every other
+  icon-only control). (2) Dialog's mobile/desktop switch was gated on
+  Tailwind's `sm:` (640px) while every other mobile rule in the app (tap
+  targets, 16px input font) uses `md:` (768px) — inputs behaved "mobile"
+  while the dialog chrome behaved "desktop" between 640-767px; unified on
+  `md:`. (3) Popover/Select/DropdownMenu content had no `collisionPadding`,
+  so flipped/shifted popups could render flush against the screen edge —
+  added a 16px default to all three, plus `max-w-[calc(100vw-2rem)]` and
+  (for Popover/DropdownMenu, Select already had it) `max-h-*
+  overflow-y-auto` so tall/wide content scrolls instead of clipping.
+  (4) SelectItem's option text had no truncate/`min-w-0` guard and could
+  force the popper wider than the viewport — fixed. (5) Seven `grid
+  grid-cols-2`/`grid-cols-3` form rows (CreateTripDialog, ItineraryPage x2,
+  PollsPage, BudgetPage x3, SettingsPage, ChecklistPage, InspirationPage)
+  packed date/time inputs or the Budget summary cards into ~130px columns
+  on a 320-375px phone with no mobile-first stacking — every one now reads
+  `grid-cols-1 sm:grid-cols-2/3/4`. (6) Calendar day cells used a forced
+  `aspect-square` that could be shorter than its content (a date circle +
+  up to 4 event dots) on a 320-375px phone, spilling dots into the row
+  below with no clipping; replaced with a `min-h-11` floor (content-driven
+  height, also now a real 44px tap target) plus `overflow-hidden` as a
+  backstop, keeping `sm:aspect-[4/3]` where there's room. (7) Note card
+  titles had no `break-words`, and — the actual root cause once traced —
+  the note's CSS Grid item (a `motion.div`) had no `min-w-0`, so Grid's
+  automatic per-item minimum-size algorithm still sized the column to fit
+  one long unbroken title/URL token regardless of the child's own
+  wrapping, causing real page-level horizontal scroll; fixed at both
+  layers. Verified with `npm run build` and a local mocked-Supabase
+  Playwright pass (own throwaway script, not committed — see the P3 idea
+  below) at 320/375/414px covering the dialogs and pages the fixes touch;
+  screenshots in docs/screenshots/ (w320/w375/w414 prefixes) confirm every
+  fix. Everything else audited (bottom tab bar, sidebar/header truncation,
+  PageHeader wrapping, chat bubbles, inspiration masonry, dashboard grids,
+  images) came back clean — see the audit agents' full findings in this
+  session's transcript if a future session wants the negative results too.
 
 ## Backlog
 

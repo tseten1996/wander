@@ -60,7 +60,7 @@ function NoteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="md:max-w-2xl">
         <div className="space-y-4">
           <Input
             placeholder="Note title"
@@ -149,6 +149,7 @@ export default function NotesPage() {
             return (
               <motion.div
                 key={note.id}
+                className="min-w-0"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.25, delay: Math.min(i * 0.04, 0.3) }}
@@ -158,7 +159,7 @@ export default function NotesPage() {
                   onClick={() => openNote(note)}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-display font-semibold">
+                    <h3 className="min-w-0 flex-1 break-words font-display font-semibold">
                       {note.pinned && <Pin className="mr-1.5 inline size-3.5 text-accent" />}
                       {note.title}
                     </h3>

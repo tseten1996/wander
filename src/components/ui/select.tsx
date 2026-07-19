@@ -32,14 +32,15 @@ SelectTrigger.displayName = 'SelectTrigger'
 export const SelectContent = React.forwardRef<
   React.ComponentRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, collisionPadding = 16, ...props }, ref) => (
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
       position="popper"
       sideOffset={6}
+      collisionPadding={collisionPadding}
       className={cn(
-        'z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-lift',
+        'z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-lift',
         'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
         className
       )}
@@ -65,7 +66,7 @@ export const SelectItem = React.forwardRef<
     )}
     {...props}
   >
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    <SelectPrimitive.ItemText className="block min-w-0 flex-1 truncate">{children}</SelectPrimitive.ItemText>
     <SelectPrimitive.ItemIndicator>
       <Check className="size-4" />
     </SelectPrimitive.ItemIndicator>
