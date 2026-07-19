@@ -5,6 +5,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   ({ className, ...props }, ref) => (
     <input
       ref={ref}
+      data-tap-target=""
       className={cn(
         'flex h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink placeholder:text-faint',
         'transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',

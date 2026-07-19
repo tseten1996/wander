@@ -64,19 +64,30 @@ it before finishing.** Never re-implement anything in the Shipped list.
   (this sandbox can't reach the real project — see prior sessions) to render
   an authenticated trip at all three breakpoints and confirm zero horizontal
   overflow anywhere, including the new More sheet.
+- 2026-07-19 — Bumped remaining mobile touch targets under 44px: Input,
+  SelectTrigger/SelectItem, TabsTrigger and DropdownMenuItem now carry a
+  `data-tap-target` marker floored to 44px height by an unlayered
+  `@media (max-width:767px)` rule in index.css — same min-height trick as
+  the existing `[data-icon-button]` fix, so it composes with any call
+  site's own height class instead of fighting it in tailwind-merge (Packing's
+  compact `h-9` quick-add still gets the floor without its desktop size
+  changing). Checkbox keeps its 20px visible box and instead gets an
+  invisible, centered 44x44 hit area via a `data-tap-target-overlay`
+  pseudo-element, so the checkbox itself doesn't look oversized; Packing's
+  list rows (the only place dense enough for neighbouring checkboxes' hit
+  areas to overlap) got `max-md:py-3` so consecutive rows stay ≥44px apart.
+  Also floored a raw `<button>` in Packing's delete action that had been
+  missed by the icon-button fix (it didn't use the shared `<Button>`
+  component, so never got `data-icon-button`). Verified with `npm run
+  build` and a local Playwright pass (own throwaway script, not committed)
+  that mocks the Supabase REST layer to render Packing/Checklist/
+  Settings/Notes (incl. the note-editor Tabs) at desktop + mobile —
+  screenshots in docs/screenshots/ show taller, comfortably spaced controls
+  on mobile with no overlap/overflow, and an unchanged desktop.
 
 ## Backlog
 
 ### P1 — polish what exists
-- [ ] Bump remaining mobile touch targets under 44px: Input/Select trigger
-      (h-10 = 40px), Checkbox (20px), Tabs trigger, DropdownMenuItem padding.
-      Left alone in the 2026-07-19 mobile audit because the base components'
-      default sizing is shared with call sites that already pass their own
-      size override (e.g. Packing's compact `h-9` quick-add) — a naive
-      responsive class on the shared default risks tailwind-merge silently
-      changing THEIR desktop size too (same footgun documented in
-      index.css's `[data-icon-button]` comment). Needs a per-call-site pass,
-      not a base-component one.
 - [ ] Extend the zod + react-hook-form + `friendlyError()` pattern (shipped
       2026-07-19 on itinerary/budget/packing/ideas/settings) to Checklist,
       Polls, Messages, Questions and Notes — those five still create/update
@@ -125,6 +136,14 @@ it before finishing.** Never re-implement anything in the Shipped list.
       permission matrix in ARCHITECTURE.md
 - [ ] Error reporting: lightweight window.onerror → Supabase table so broken
       deploys surface without user reports
+- [ ] Commit a reusable mock-Supabase screenshot/test harness (scripts/
+      screenshot-mock.mjs): every sandboxed session that needs a screenshot
+      of a data-bearing page currently re-derives its own throwaway
+      Playwright script that stubs the REST/auth layer with fabricated
+      trip/member/content rows, because this environment can't reach the
+      real Supabase project. A committed, parameterized version (pick
+      tables + rows via args) would save that rework and could double as
+      the base for the Playwright smoke test above.
 
 ### Blocked / decided against (do not revisit without a human decision)
 - Turnstile CAPTCHA on auth — decided against 2026-07-19: friends-only app,
