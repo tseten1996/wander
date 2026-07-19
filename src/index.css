@@ -1,0 +1,152 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/bricolage-grotesque';
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Wander design tokens.
+  Semantic names only — components say `bg-surface text-ink border-line`,
+  never raw palette values. Light = warm paper + deep ocean teal + sunset
+  amber. Dark keeps the hues, swaps the neutrals.
+*/
+:root {
+  --bg: #faf9f7;
+  --surface: #ffffff;
+  --elevated: #ffffff;
+  --sunken: #f3f1ed;
+  --ink: #1c1917;
+  --ink-soft: #44403c;
+  --muted: #78716c;
+  --faint: #a8a29e;
+  --line: #e7e4df;
+  --line-strong: #d6d2cb;
+
+  --primary: #0f766e;
+  --primary-strong: #115e59;
+  --primary-soft: #ccfbf1;
+  --primary-faint: #f0fdfa;
+  --on-primary: #ffffff;
+
+  --accent: #d97706;
+  --accent-soft: #fef3c7;
+  --danger: #e11d48;
+  --danger-soft: #ffe4e6;
+  --success: #059669;
+  --success-soft: #d1fae5;
+}
+
+.dark {
+  --bg: #0c0a09;
+  --surface: #1c1917;
+  --elevated: #292524;
+  --sunken: #171412;
+  --ink: #fafaf9;
+  --ink-soft: #d6d3d1;
+  --muted: #a8a29e;
+  --faint: #78716c;
+  --line: #292524;
+  --line-strong: #44403c;
+
+  --primary: #2dd4bf;
+  --primary-strong: #5eead4;
+  --primary-soft: #134e4a;
+  --primary-faint: #042f2e;
+  --on-primary: #042f2e;
+
+  --accent: #fbbf24;
+  --accent-soft: #451a03;
+  --danger: #fb7185;
+  --danger-soft: #4c0519;
+  --success: #34d399;
+  --success-soft: #022c22;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-faint: var(--primary-faint);
+  --color-on-primary: var(--on-primary);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-soft: 0 1px 2px rgb(28 25 23 / 0.04), 0 4px 12px rgb(28 25 23 / 0.05);
+  --shadow-lift: 0 2px 4px rgb(28 25 23 / 0.06), 0 12px 32px rgb(28 25 23 / 0.10);
+
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+  --radius-3xl: 1.5rem;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: var(--primary-soft);
+  }
+  h1, h2, h3 {
+    @apply font-display;
+  }
+  /* Sensible focus ring everywhere, only for keyboard users */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Hero gradient used on covers without a photo */
+  .gradient-travel {
+    background: linear-gradient(135deg, #0f766e 0%, #0e7490 45%, #b45309 120%);
+  }
+  .gradient-travel-soft {
+    background:
+      radial-gradient(80% 120% at 10% 0%, var(--primary-faint) 0%, transparent 60%),
+      radial-gradient(60% 100% at 100% 0%, var(--accent-soft) 0%, transparent 50%);
+  }
+  /* Scrollbar that doesn't fight the design */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Print styles: the trip summary page becomes the PDF export */
+@media print {
+  body { background: white !important; }
+  .no-print { display: none !important; }
+  .print-page { box-shadow: none !important; border: none !important; }
+}
