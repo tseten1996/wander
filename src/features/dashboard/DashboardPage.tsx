@@ -12,7 +12,6 @@ import { celebrateOncePerTrip, resetCelebration } from '@/lib/confetti'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/misc'
 import { cn, dateRange, daysUntil, formatMoney, longDate, formatTime, timeAgo } from '@/lib/utils'
 

@@ -1,7 +1,7 @@
-import * as React from 'react'
+
 import { NavLink, Outlet, Link, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, CalendarDays, CheckSquare, Compass, Lightbulb, ListChecks,
+  ArrowLeft, CalendarDays, Compass, Lightbulb, ListChecks,
   Luggage, MapPin, MessageCircle, Moon, NotebookPen, PiggyBank, Settings,
   Sun, Vote, HelpCircle,
 } from 'lucide-react'
