@@ -146,7 +146,7 @@ function Shell() {
       </aside>
 
       {/* ── Mobile top bar ──────────────────────────────────────────── */}
-      <header className="no-print sticky top-0 z-40 flex items-center gap-1 border-b border-line bg-bg/80 px-2 py-1.5 backdrop-blur-md md:hidden">
+      <header className="no-print sticky top-0 z-40 flex items-center gap-1 border-b border-line bg-bg/80 px-2 py-1.5 backdrop-blur-md md:hidden [transform:translateZ(0)] will-change-transform">
         <Link
           to="/"
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted"
@@ -177,7 +177,17 @@ function Shell() {
       </main>
 
       {/* ── Mobile bottom tabs ──────────────────────────────────────── */}
-      <nav className="no-print fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/90 backdrop-blur-md md:hidden">
+      {/*
+        iOS/Android browsers auto-hide their chrome (URL bar) while scrolling,
+        which changes the visual viewport height mid-scroll. A plain
+        `position: fixed` element is repainted on the main thread in step with
+        that chrome animation, and on fast/momentum scrolls the repaint falls
+        behind — the bar visibly lags and a gap opens below it until scrolling
+        settles. Forcing this onto its own GPU compositor layer (translateZ +
+        will-change) makes the browser track it every frame independently of
+        that repaint, which is the standard fix for this class of bug.
+      */}
+      <nav className="no-print fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/90 backdrop-blur-md md:hidden [transform:translateZ(0)] will-change-transform">
         <div className="flex items-stretch justify-around pb-[env(safe-area-inset-bottom)]">
           {mobileItems.map(({ to, label, icon: Icon, ...rest }) => (
             <NavLink
