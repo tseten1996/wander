@@ -1,0 +1,340 @@
+import * as React from 'react'
+import { motion } from 'framer-motion'
+import {
+  Check, Clock, Crown, Lock, LockOpen, MoreHorizontal, Plus, Trash2, Vote as VoteIcon, X,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { useTripContext } from '@/hooks/useTrip'
+import {
+  isPollOpen, useCreatePoll, useDeletePoll, usePolls, useSetPollClosed, useVote,
+  type PollWithVotes,
+} from './api'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { MemberAvatar } from '@/components/ui/avatar'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { cn, timeAgo } from '@/lib/utils'
+import type { PollCategory } from '@/types'
+
+const CATEGORIES: { value: PollCategory; label: string }[] = [
+  { value: 'general', label: 'General' },
+  { value: 'dates', label: 'Travel dates' },
+  { value: 'stay', label: 'Where to stay' },
+  { value: 'flights', label: 'Flights' },
+  { value: 'food', label: 'Restaurants' },
+  { value: 'activities', label: 'Activities' },
+  { value: 'transport', label: 'Transportation' },
+]
+
+/* ── Poll card ──────────────────────────────────────────────────────────── */
+
+function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
+  const { trip, me, isOwner, membersById } = useTripContext()
+  const vote = useVote(trip.id, me.id)
+  const setClosed = useSetPollClosed(trip.id, me.id)
+  const deletePoll = useDeletePoll(trip.id)
+
+  const open = isPollOpen(poll)
+  const expired = !poll.closed && !!poll.closes_at && new Date(poll.closes_at) < new Date()
+  const totalVotes = poll.votes.length
+  const myVote = poll.votes.find((v) => v.member_id === me.id)
+  const maxVotes = Math.max(0, ...poll.poll_options.map(
+    (o) => poll.votes.filter((v) => v.option_id === o.id).length
+  ))
+  const canManage = isOwner || poll.created_by === me.id
+  const author = poll.created_by ? membersById.get(poll.created_by) : null
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.3) }}
+    >
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="primary">
+                {CATEGORIES.find((c) => c.value === poll.category)?.label ?? poll.category}
+              </Badge>
+              {!open && (
+                <Badge variant="neutral">
+                  <Lock /> {expired ? 'Expired' : 'Closed'}
+                </Badge>
+              )}
+              {open && poll.closes_at && (
+                <Badge variant="accent">
+                  <Clock /> closes {timeAgo(poll.closes_at) === 'just now' ? 'soon' : new Date(poll.closes_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </Badge>
+              )}
+            </div>
+            <h3 className="mt-2 font-display text-lg font-semibold">{poll.question}</h3>
+            <p className="mt-0.5 text-xs text-muted">
+              {author ? `by ${author.display_name}` : ''} · {totalVotes}{' '}
+              {totalVotes === 1 ? 'vote' : 'votes'}
+            </p>
+          </div>
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Poll actions">
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => setClosed.mutate({ poll, closed: !poll.closed })}
+                >
+                  {poll.closed ? <LockOpen /> : <Lock />}
+                  {poll.closed ? 'Reopen poll' : 'Close poll'}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  destructive
+                  onClick={() => {
+                    deletePoll.mutate(poll.id)
+                    toast.success('Poll deleted')
+                  }}
+                >
+                  <Trash2 /> Delete poll
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-2">
+          {poll.poll_options.map((option) => {
+            const optionVotes = poll.votes.filter((v) => v.option_id === option.id)
+            const share = totalVotes === 0 ? 0 : (optionVotes.length / totalVotes) * 100
+            const isMine = myVote?.option_id === option.id
+            const isWinner = !open && optionVotes.length > 0 && optionVotes.length === maxVotes
+            return (
+              <button
+                key={option.id}
+                type="button"
+                disabled={!open || vote.isPending}
+                onClick={() => vote.mutate({ poll, optionId: option.id })}
+                className={cn(
+                  'relative w-full overflow-hidden rounded-xl border px-4 py-3 text-left transition-all',
+                  open && 'cursor-pointer hover:border-primary/50',
+                  isMine ? 'border-primary' : 'border-line',
+                  isWinner && 'border-accent'
+                )}
+              >
+                <span
+                  className={cn(
+                    'absolute inset-y-0 left-0 transition-all duration-500',
+                    isWinner ? 'bg-accent-soft' : 'bg-primary-faint'
+                  )}
+                  style={{ width: `${share}%` }}
+                />
+                <span className="relative flex items-center justify-between gap-3">
+                  <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                    {isWinner && <Crown className="size-4 shrink-0 text-accent" />}
+                    {isMine && <Check className="size-4 shrink-0 text-primary" />}
+                    <span className="truncate">{option.label}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="flex -space-x-1">
+                      {optionVotes.slice(0, 3).map((v) => {
+                        const m = membersById.get(v.member_id)
+                        return m ? (
+                          <MemberAvatar key={v.id} name={m.display_name} color={m.color} size="xs" />
+                        ) : null
+                      })}
+                    </span>
+                    <span className="text-xs tabular-nums text-muted">{optionVotes.length}</span>
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        {open && (
+          <p className="mt-3 text-xs text-muted">
+            {myVote ? 'Tap your choice again to remove your vote.' : 'Tap an option to vote.'}
+          </p>
+        )}
+      </Card>
+    </motion.div>
+  )
+}
+
+/* ── New poll dialog ────────────────────────────────────────────────────── */
+
+function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { trip, me } = useTripContext()
+  const createPoll = useCreatePoll(trip.id, me.id)
+  const [question, setQuestion] = React.useState('')
+  const [category, setCategory] = React.useState<PollCategory>('general')
+  const [closesAt, setClosesAt] = React.useState('')
+  const [options, setOptions] = React.useState<string[]>(['', ''])
+
+  const valid = question.trim().length > 0 && options.filter((o) => o.trim()).length >= 2
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!valid) return
+    try {
+      await createPoll.mutateAsync({
+        question: question.trim(),
+        category,
+        closes_at: closesAt ? new Date(closesAt).toISOString() : null,
+        options: options.map((o) => o.trim()).filter(Boolean),
+      })
+      onOpenChange(false)
+      setQuestion('')
+      setCategory('general')
+      setClosesAt('')
+      setOptions(['', ''])
+      toast.success('Poll created')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create the poll')
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New poll</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="poll-q">Question</Label>
+            <Input
+              id="poll-q"
+              placeholder="Where should we stay?"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Category</Label>
+              <Select value={category} onValueChange={(v) => setCategory(v as PollCategory)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="poll-closes">Closes (optional)</Label>
+              <Input
+                id="poll-closes"
+                type="datetime-local"
+                value={closesAt}
+                onChange={(e) => setClosesAt(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Options</Label>
+            <div className="space-y-2">
+              {options.map((opt, i) => (
+                <div key={i} className="flex gap-2">
+                  <Input
+                    placeholder={`Option ${i + 1}`}
+                    value={opt}
+                    onChange={(e) =>
+                      setOptions((prev) => prev.map((p, j) => (j === i ? e.target.value : p)))
+                    }
+                  />
+                  {options.length > 2 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Remove option"
+                      onClick={() => setOptions((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {options.length < 8 && (
+              <Button
+                variant="soft"
+                size="sm"
+                className="mt-1"
+                onClick={() => setOptions((prev) => [...prev, ''])}
+              >
+                <Plus /> Add option
+              </Button>
+            )}
+          </div>
+          <Button type="submit" size="lg" className="w-full" disabled={!valid || createPoll.isPending}>
+            {createPoll.isPending ? 'Creating…' : 'Create poll'}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/* ── Page ───────────────────────────────────────────────────────────────── */
+
+export default function PollsPage() {
+  const { trip } = useTripContext()
+  const polls = usePolls(trip.id)
+  const [newOpen, setNewOpen] = React.useState(false)
+
+  return (
+    <div>
+      <PageHeader
+        title="Polls"
+        description="Decide together — one vote per person, live results."
+        action={
+          <Button onClick={() => setNewOpen(true)}>
+            <Plus /> New poll
+          </Button>
+        }
+      />
+      {polls.isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-48" />
+          <Skeleton className="h-48" />
+        </div>
+      ) : polls.data!.length === 0 ? (
+        <EmptyState
+          icon={VoteIcon}
+          title="No polls yet"
+          description="Settle the big questions — dates, hotels, restaurants — with a quick vote."
+          action={
+            <Button onClick={() => setNewOpen(true)}>
+              <Plus /> Create the first poll
+            </Button>
+          }
+        />
+      ) : (
+        <div className="space-y-4">
+          {polls.data!.map((p, i) => (
+            <PollCard key={p.id} poll={p} index={i} />
+          ))}
+        </div>
+      )}
+      <NewPollDialog open={newOpen} onOpenChange={setNewOpen} />
+    </div>
+  )
+}
