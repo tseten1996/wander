@@ -147,7 +147,7 @@ function EntryDialog({
             />
             {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Category</Label>
               <Controller
@@ -170,7 +170,7 @@ function EntryDialog({
               <Input id="b-date" type="date" {...form.register('entry_date')} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="b-est">Estimated</Label>
               <Input
