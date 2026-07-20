@@ -1,5 +1,8 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
+import { Controller, useFieldArray, useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import {
   Check, Clock, Crown, Lock, LockOpen, MoreHorizontal, Plus, Trash2, Vote as VoteIcon, X,
 } from 'lucide-react'
@@ -38,6 +41,29 @@ const CATEGORIES: { value: PollCategory; label: string }[] = [
   { value: 'activities', label: 'Activities' },
   { value: 'transport', label: 'Transportation' },
 ]
+
+const pollSchema = z
+  .object({
+    question: z.string().trim().min(1, 'Give it a question').max(200, 'Keep it under 200 characters'),
+    category: z.enum([
+      'general', 'dates', 'stay', 'flights', 'food', 'activities', 'transport',
+    ]),
+    closes_at: z.string().optional().nullable(),
+    options: z
+      .array(
+        z.object({
+          value: z.string().trim().max(120, 'Keep options under 120 characters'),
+        })
+      )
+      .min(2)
+      .max(8),
+  })
+  .refine((v) => v.options.filter((o) => o.value.trim()).length >= 2, {
+    message: 'Add at least 2 options',
+    path: ['options'],
+  })
+
+type PollFormValues = z.input<typeof pollSchema>
 
 /* ── Poll card ──────────────────────────────────────────────────────────── */
 
@@ -178,33 +204,40 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
 function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { trip, me } = useTripContext()
   const createPoll = useCreatePoll(trip.id, me.id)
-  const [question, setQuestion] = React.useState('')
-  const [category, setCategory] = React.useState<PollCategory>('general')
-  const [closesAt, setClosesAt] = React.useState('')
-  const [options, setOptions] = React.useState<string[]>(['', ''])
 
-  const valid = question.trim().length > 0 && options.filter((o) => o.trim()).length >= 2
+  const empty: PollFormValues = {
+    question: '',
+    category: 'general',
+    closes_at: '',
+    options: [{ value: '' }, { value: '' }],
+  }
+  const form = useForm<PollFormValues>({
+    resolver: zodResolver(pollSchema),
+    defaultValues: empty,
+  })
+  const { fields, append, remove } = useFieldArray({ control: form.control, name: 'options' })
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!valid) return
+  React.useEffect(() => {
+    if (open) form.reset(empty)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  async function onSubmit(values: PollFormValues) {
     try {
       await createPoll.mutateAsync({
-        question: question.trim(),
-        category,
-        closes_at: closesAt ? new Date(closesAt).toISOString() : null,
-        options: options.map((o) => o.trim()).filter(Boolean),
+        question: values.question.trim(),
+        category: values.category as PollCategory,
+        closes_at: values.closes_at ? new Date(values.closes_at).toISOString() : null,
+        options: values.options.map((o) => o.value.trim()).filter(Boolean),
       })
       onOpenChange(false)
-      setQuestion('')
-      setCategory('general')
-      setClosesAt('')
-      setOptions(['', ''])
       toast.success('Poll created')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not create the poll')
+    } catch {
+      // toasted by the mutation's onError
     }
   }
+
+  const err = form.formState.errors
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -212,60 +245,60 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         <DialogHeader>
           <DialogTitle>New poll</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="poll-q">Question</Label>
             <Input
               id="poll-q"
               placeholder="Where should we stay?"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
+              autoFocus
+              {...form.register('question')}
             />
+            {err.question && <p className="text-xs text-danger">{err.question.message}</p>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Category</Label>
-              <Select value={category} onValueChange={(v) => setCategory(v as PollCategory)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="category"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="poll-closes">Closes (optional)</Label>
-              <Input
-                id="poll-closes"
-                type="datetime-local"
-                value={closesAt}
-                onChange={(e) => setClosesAt(e.target.value)}
-              />
+              <Input id="poll-closes" type="datetime-local" {...form.register('closes_at')} />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>Options</Label>
             <div className="space-y-2">
-              {options.map((opt, i) => (
-                <div key={i} className="flex gap-2">
+              {fields.map((field, i) => (
+                <div key={field.id} className="flex gap-2">
                   <Input
                     placeholder={`Option ${i + 1}`}
-                    value={opt}
-                    onChange={(e) =>
-                      setOptions((prev) => prev.map((p, j) => (j === i ? e.target.value : p)))
-                    }
+                    {...form.register(`options.${i}.value` as const)}
                   />
-                  {options.length > 2 && (
+                  {fields.length > 2 && (
                     <Button
+                      type="button"
                       variant="ghost"
                       size="icon"
                       aria-label="Remove option"
-                      onClick={() => setOptions((prev) => prev.filter((_, j) => j !== i))}
+                      onClick={() => remove(i)}
                     >
                       <X />
                     </Button>
@@ -273,19 +306,25 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
                 </div>
               ))}
             </div>
-            {options.length < 8 && (
+            {(err.options?.root?.message ?? err.options?.message) && (
+              <p className="text-xs text-danger">
+                {err.options?.root?.message ?? err.options?.message}
+              </p>
+            )}
+            {fields.length < 8 && (
               <Button
+                type="button"
                 variant="soft"
                 size="sm"
                 className="mt-1"
-                onClick={() => setOptions((prev) => [...prev, ''])}
+                onClick={() => append({ value: '' })}
               >
                 <Plus /> Add option
               </Button>
             )}
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!valid || createPoll.isPending}>
-            {createPoll.isPending ? 'Creating…' : 'Create poll'}
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? 'Creating…' : 'Create poll'}
           </Button>
         </form>
       </DialogContent>

@@ -1,5 +1,8 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import {
   CheckCircle2, CircleHelp, MoreHorizontal, Plus, RotateCcw, Trash2,
 } from 'lucide-react'
@@ -25,6 +28,15 @@ import {
 import { timeAgo } from '@/lib/utils'
 import type { Question } from '@/types'
 
+const ANSWER_MAX_LENGTH = 2000
+
+const questionSchema = z.object({
+  title: z.string().trim().min(1, 'Give it a question').max(200, 'Keep it under 200 characters'),
+  body: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
+})
+
+type QuestionFormValues = z.input<typeof questionSchema>
+
 function QuestionCard({ question, index }: { question: Question; index: number }) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const answerQuestion = useAnswerQuestion(trip.id, me.id)
@@ -35,6 +47,7 @@ function QuestionCard({ question, index }: { question: Question; index: number }
   const [answer, setAnswer] = React.useState(question.answer ?? '')
   const author = question.member_id ? membersById.get(question.member_id) : null
   const canDelete = isOwner || question.member_id === me.id
+  const answerTooLong = answer.length > ANSWER_MAX_LENGTH
 
   return (
     <motion.div
@@ -75,14 +88,21 @@ function QuestionCard({ question, index }: { question: Question; index: number }
                   placeholder="Write the answer…"
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
+                  aria-invalid={answerTooLong}
                   autoFocus
                 />
+                {answerTooLong && (
+                  <p className="text-xs text-danger">
+                    Keep it under {ANSWER_MAX_LENGTH} characters
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <Button size="sm" variant="ghost" onClick={() => setAnswering(false)}>
                     Cancel
                   </Button>
                   <Button
                     size="sm"
+                    disabled={answerTooLong}
                     onClick={() => {
                       answerQuestion.mutate({ question, answer: answer.trim() || null })
                       setAnswering(false)
@@ -139,21 +159,33 @@ export default function QuestionsPage() {
   const createQuestion = useCreateQuestion(trip.id, me.id)
 
   const [newOpen, setNewOpen] = React.useState(false)
-  const [title, setTitle] = React.useState('')
-  const [body, setBody] = React.useState('')
+  const form = useForm<QuestionFormValues>({
+    resolver: zodResolver(questionSchema),
+    defaultValues: { title: '', body: '' },
+  })
+
+  React.useEffect(() => {
+    if (newOpen) form.reset({ title: '', body: '' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newOpen])
 
   const open = (questions.data ?? []).filter((q) => !q.answered)
   const answered = (questions.data ?? []).filter((q) => q.answered)
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) return
-    await createQuestion.mutateAsync({ title: title.trim(), body: body.trim() })
-    setTitle('')
-    setBody('')
-    setNewOpen(false)
-    toast.success('Question posted')
+  async function onSubmit(values: QuestionFormValues) {
+    try {
+      await createQuestion.mutateAsync({
+        title: values.title.trim(),
+        body: values.body?.trim() ?? '',
+      })
+      setNewOpen(false)
+      toast.success('Question posted')
+    } catch {
+      // toasted by the mutation's onError
+    }
   }
+
+  const err = form.formState.errors
 
   return (
     <div>
@@ -212,27 +244,27 @@ export default function QuestionsPage() {
           <DialogHeader>
             <DialogTitle>Ask the group</DialogTitle>
           </DialogHeader>
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="q-title">Question</Label>
               <Input
                 id="q-title"
                 placeholder="Who's booking the Airbnb?"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
                 autoFocus
+                {...form.register('title')}
               />
+              {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="q-body">Details (optional)</Label>
               <Textarea
                 id="q-body"
                 placeholder="Any context that helps…"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
+                {...form.register('body')}
               />
+              {err.body && <p className="text-xs text-danger">{err.body.message}</p>}
             </div>
-            <Button type="submit" size="lg" className="w-full" disabled={!title.trim() || createQuestion.isPending}>
+            <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
               Post question
             </Button>
           </form>

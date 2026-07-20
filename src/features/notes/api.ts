@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { Note } from '@/types'
 
 export function useNotes(tripId: string) {
@@ -38,6 +40,7 @@ export function useCreateNote(tripId: string, memberId: string) {
       return data
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not create that note')),
   })
 }
 
@@ -49,6 +52,7 @@ export function useUpdateNote(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save those changes')),
   })
 }
 
@@ -60,5 +64,6 @@ export function useDeleteNote(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that note')),
   })
 }

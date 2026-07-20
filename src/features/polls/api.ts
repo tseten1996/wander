@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { Poll, PollCategory, PollOption, Vote } from '@/types'
 
 export type PollWithVotes = Poll & { poll_options: PollOption[]; votes: Vote[] }
@@ -61,6 +63,7 @@ export function useCreatePoll(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'created a poll', input.question)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not create that poll')),
   })
 }
 
@@ -88,6 +91,7 @@ export function useVote(tripId: string, memberId: string) {
       if (!existing) logActivity(tripId, memberId, 'voted on', poll.question)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not record your vote')),
   })
 }
 
@@ -100,6 +104,7 @@ export function useSetPollClosed(tripId: string, memberId: string) {
       if (closed) logActivity(tripId, memberId, 'closed the poll', poll.question)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not update that poll')),
   })
 }
 
@@ -111,6 +116,7 @@ export function useDeletePoll(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that poll')),
   })
 }
 

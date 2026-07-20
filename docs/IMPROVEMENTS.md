@@ -125,14 +125,31 @@ it before finishing.** Never re-implement anything in the Shipped list.
   PageHeader wrapping, chat bubbles, inspiration masonry, dashboard grids,
   images) came back clean — see the audit agents' full findings in this
   session's transcript if a future session wants the negative results too.
+- 2026-07-20 — Extended the zod + react-hook-form + `friendlyError()` pattern
+  to the five features that still used ad-hoc `useState` forms: Checklist
+  (new/edit task dialog), Polls (new poll dialog, incl. a `useFieldArray`
+  for the options list — the min-2-options rule is a schema-level `refine`,
+  whose react-hook-form error lands under `errors.options.root.message` for
+  array fields rather than `.message`, see `@hookform/resolvers`'
+  `toNestErrors`), Questions (ask dialog; the inline answer box stays plain
+  `useState` — it's not a dialog form — but now caps at 2000 chars),
+  Notes (title/content, content capped at 20,000 chars, `Untitled` fallback
+  preserved) and Messages (composer + inline edit box capped at 4000 chars;
+  chat intentionally keeps its send-on-Enter `useState` input rather than
+  becoming an RHF dialog, since that would fight the existing UX). Also
+  closed a real gap the ledger's "loading/error states audit" item below
+  had already flagged: Checklist/Polls/Messages/Questions/Notes' `api.ts`
+  mutations (including every delete) had **zero** `onError` handlers before
+  this — failures were entirely silent. All ~20 mutations across the five
+  files now toast a `friendlyError()` message. Verified with `npm run build`
+  and a throwaway mocked-Supabase Playwright pass (own script, not
+  committed — see the P3 idea below) that opens each of the five dialogs/
+  inputs and submits invalid input to confirm the inline error renders;
+  screenshots in docs/screenshots/ (`w1280_*` prefix).
 
 ## Backlog
 
 ### P1 — polish what exists
-- [ ] Extend the zod + react-hook-form + `friendlyError()` pattern (shipped
-      2026-07-19 on itinerary/budget/packing/ideas/settings) to Checklist,
-      Polls, Messages, Questions and Notes — those five still create/update
-      via ad-hoc `useState` forms and raw `error.message` toasts
 - [ ] Replace native date inputs with a styled popover calendar widget
       (build on the Calendar page's grid; keep native inputs on mobile)
 - [ ] Itinerary links: URL field on items; auto-detect pasted URLs in
