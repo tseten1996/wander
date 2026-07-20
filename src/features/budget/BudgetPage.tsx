@@ -317,7 +317,7 @@ export default function BudgetPage() {
       ) : (
         <div className="space-y-5">
           {/* Summary */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card className="p-4">
               <p className="text-xs font-medium text-muted">Budget</p>
               <p className="mt-1 font-display text-xl font-bold tabular-nums">

@@ -144,7 +144,13 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => setSelected(day)}
                   className={cn(
-                    'flex aspect-square cursor-pointer flex-col items-center justify-start gap-0.5 rounded-lg pt-1.5 text-sm transition-colors sm:aspect-[4/3]',
+                    // No forced aspect ratio on mobile: with up to 4 event
+                    // dots per day, a strict square can be shorter than its
+                    // content, spilling dots past the cell into the row
+                    // below. min-h-11 keeps a tap-friendly floor and lets
+                    // the grid row grow with content instead; sm:aspect-[4/3]
+                    // reclaims the neat fixed shape once there's more room.
+                    'flex min-h-11 cursor-pointer flex-col items-center justify-start gap-0.5 overflow-hidden rounded-lg pt-1.5 text-sm transition-colors sm:aspect-[4/3]',
                     !isSameMonth(day, month) && 'text-faint/60',
                     inTrip && 'bg-primary-faint/60',
                     isSameDay(day, selected) && 'ring-2 ring-primary',
