@@ -117,6 +117,25 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
+  /*
+    Native form controls, aligned with the design system's text inputs:
+    iOS centers the value inside date/time inputs while every other field
+    is left-aligned — force left so mixed forms read as one column. Number
+    fields drop the webkit spin buttons, which crowd the narrow cost/budget
+    inputs; typing and arrow keys still work.
+  */
+  input::-webkit-date-and-time-value {
+    text-align: left;
+  }
+  input[type='number'] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;

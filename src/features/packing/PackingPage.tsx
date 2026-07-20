@@ -130,6 +130,7 @@ function CategorySection({
               placeholder={`Add to ${category.label.toLowerCase()}…`}
               value={draft}
               maxLength={MAX_NAME_LENGTH}
+              aria-invalid={draftError ? true : undefined}
               onChange={(e) => {
                 setDraft(e.target.value)
                 if (draftError) setDraftError(null)

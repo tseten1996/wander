@@ -125,6 +125,28 @@ it before finishing.** Never re-implement anything in the Shipped list.
   PageHeader wrapping, chat bubbles, inspiration masonry, dashboard grids,
   images) came back clean — see the audit agents' full findings in this
   session's transcript if a future session wants the negative results too.
+- 2026-07-20 — Popup + input design polish (user-requested): reworked the
+  dialog/popup presentation so popups feel native on mobile and refined on
+  desktop. Dialogs now animate — mobile sheets slide up from the bottom
+  edge and back down on close (no more instant pop-in), desktop dialogs
+  fade+zoom from center; all three floating menus (Select, DropdownMenu,
+  Popover) gained matching exit animations so nothing vanishes abruptly.
+  Added a mobile grabber handle to the sheet, tightened mobile padding
+  (p-5 vs desktop p-6) and enlarged the mobile dialog title (text-xl) and
+  close-button hit area. Inputs/Textarea/Select now render a real error
+  state driven by `aria-invalid` (danger border + soft danger ring that
+  survives focus), wired into every form field that shows an inline error
+  across all dialogs — so an invalid field looks broken at the control,
+  not only in the helper text, and the a11y signal matches the visual.
+  Also: hover-border affordance on all text controls, `inputMode="decimal"`
+  on every numeric field (cost/budget/estimated/actual) for a better mobile
+  keypad, stripped the crowded webkit number spinners, and left-aligned
+  native date/time values so mixed forms read as one clean column. Verified
+  with `npm run build` and a mocked-Supabase Playwright pass: mobile sheet
+  rests flush to the viewport bottom with the invalid field showing a red
+  border (rgb(225,29,72)) + error text and zero overflow, and the desktop
+  dialog lands dead-center (640,400 on a 1280x800 viewport) after its enter
+  animation and closes cleanly on Escape.
 
 ## Backlog
 
