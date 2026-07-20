@@ -1,5 +1,8 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
+import { Controller, useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { CalendarClock, ListChecks, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -30,6 +33,15 @@ import { cn, daysUntil, shortDate } from '@/lib/utils'
 import type { ChecklistItem } from '@/types'
 
 const UNASSIGNED = 'unassigned'
+
+const checklistSchema = z.object({
+  title: z.string().trim().min(1, 'Give it a title').max(200, 'Keep it under 200 characters'),
+  assignee_id: z.string(),
+  due_date: z.string().optional().nullable(),
+  notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
+})
+
+type ChecklistFormValues = z.input<typeof checklistSchema>
 
 function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
   const { trip, me, isOwner, membersById } = useTripContext()
@@ -119,36 +131,50 @@ function ItemDialog({
   const createItem = useCreateChecklistItem(trip.id, me.id)
   const updateItem = useUpdateChecklistItem(trip.id)
 
-  const [title, setTitle] = React.useState(item?.title ?? '')
-  const [notes, setNotes] = React.useState(item?.notes ?? '')
-  const [assignee, setAssignee] = React.useState(item?.assignee_id ?? UNASSIGNED)
-  const [dueDate, setDueDate] = React.useState(item?.due_date ?? '')
+  const empty: ChecklistFormValues = {
+    title: '',
+    assignee_id: UNASSIGNED,
+    due_date: '',
+    notes: '',
+  }
+  const form = useForm<ChecklistFormValues>({
+    resolver: zodResolver(checklistSchema),
+    defaultValues: empty,
+  })
 
   React.useEffect(() => {
     if (open) {
-      setTitle(item?.title ?? '')
-      setNotes(item?.notes ?? '')
-      setAssignee(item?.assignee_id ?? UNASSIGNED)
-      setDueDate(item?.due_date ?? '')
+      form.reset(
+        item
+          ? {
+              title: item.title,
+              assignee_id: item.assignee_id ?? UNASSIGNED,
+              due_date: item.due_date ?? '',
+              notes: item.notes ?? '',
+            }
+          : empty
+      )
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item])
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) return
+  async function onSubmit(values: ChecklistFormValues) {
     const payload = {
-      title: title.trim(),
-      notes: notes.trim() || null,
-      assignee_id: assignee === UNASSIGNED ? null : assignee,
-      due_date: dueDate || null,
+      title: values.title.trim(),
+      notes: values.notes?.trim() || null,
+      assignee_id: values.assignee_id === UNASSIGNED ? null : values.assignee_id,
+      due_date: values.due_date || null,
     }
-    if (item) {
-      await updateItem.mutateAsync({ id: item.id, ...payload })
-    } else {
-      await createItem.mutateAsync(payload)
+    try {
+      if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
+      else await createItem.mutateAsync(payload)
+      onOpenChange(false)
+    } catch {
+      // toasted by the mutation's onError
     }
-    onOpenChange(false)
   }
+
+  const err = form.formState.errors
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -156,42 +182,43 @@ function ItemDialog({
         <DialogHeader>
           <DialogTitle>{item ? 'Edit task' : 'New task'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="task-title">Task</Label>
             <Input
               id="task-title"
               placeholder="Book flights"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
               autoFocus={!item}
+              {...form.register('title')}
             />
+            {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Assign to</Label>
-              <Select value={assignee} onValueChange={setAssignee}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={UNASSIGNED}>Anyone</SelectItem>
-                  {members.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Controller
+                control={form.control}
+                name="assignee_id"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={UNASSIGNED}>Anyone</SelectItem>
+                      {members.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.display_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="task-due">Due date</Label>
-              <Input
-                id="task-due"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
+              <Input id="task-due" type="date" {...form.register('due_date')} />
             </div>
           </div>
           <div className="space-y-1.5">
@@ -199,12 +226,12 @@ function ItemDialog({
             <Textarea
               id="task-notes"
               placeholder="Confirmation numbers, links…"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
               className="min-h-16"
+              {...form.register('notes')}
             />
+            {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!title.trim()}>
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {item ? 'Save changes' : 'Add task'}
           </Button>
         </form>

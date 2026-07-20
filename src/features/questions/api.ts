@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { Question } from '@/types'
 
 export function useQuestions(tripId: string) {
@@ -37,6 +39,7 @@ export function useCreateQuestion(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'asked', title)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not post that question')),
   })
 }
 
@@ -58,6 +61,7 @@ export function useAnswerQuestion(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'answered', question.title)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save that answer')),
   })
 }
 
@@ -72,6 +76,7 @@ export function useReopenQuestion(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not reopen that question')),
   })
 }
 
@@ -83,5 +88,6 @@ export function useDeleteQuestion(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that question')),
   })
 }

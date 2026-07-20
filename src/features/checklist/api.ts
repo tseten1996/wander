@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { friendlyError } from '@/lib/errors'
 import type { ChecklistItem } from '@/types'
 
 export function useChecklist(tripId: string) {
@@ -48,6 +50,7 @@ export function useCreateChecklistItem(tripId: string, memberId: string) {
       logActivity(tripId, memberId, 'added a task', input.title)
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not add that task')),
   })
 }
 
@@ -59,6 +62,7 @@ export function useUpdateChecklistItem(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save those changes')),
   })
 }
 
@@ -82,8 +86,9 @@ export function useToggleDone(tripId: string, memberId: string) {
       )
       return { previous }
     },
-    onError: (_err, _item, ctx) => {
+    onError: (err, _item, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(['checklist_items', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not update that task'))
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ['checklist_items', tripId] }),
@@ -98,5 +103,6 @@ export function useDeleteChecklistItem(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that task')),
   })
 }

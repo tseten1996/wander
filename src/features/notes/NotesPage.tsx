@@ -1,6 +1,9 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
 import Markdown from 'react-markdown'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { NotebookPen, Pin, PinOff, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -15,6 +18,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MemberAvatar } from '@/components/ui/avatar'
 import { timeAgo } from '@/lib/utils'
 import type { Note } from '@/types'
+
+const noteSchema = z.object({
+  title: z.string().trim().max(200, 'Keep it under 200 characters'),
+  content: z.string().trim().max(20000, 'Keep it under 20,000 characters'),
+})
+
+type NoteFormValues = z.input<typeof noteSchema>
 
 /** Shared markdown renderer with sensible typography inside cards. */
 function NoteMarkdown({ children }: { children: string }) {
@@ -38,36 +48,43 @@ function NoteDialog({
   const createNote = useCreateNote(trip.id, me.id)
   const updateNote = useUpdateNote(trip.id)
 
-  const [title, setTitle] = React.useState('')
-  const [content, setContent] = React.useState('')
+  const empty: NoteFormValues = { title: '', content: '' }
+  const form = useForm<NoteFormValues>({
+    resolver: zodResolver(noteSchema),
+    defaultValues: empty,
+  })
 
   React.useEffect(() => {
-    if (open) {
-      setTitle(note?.title ?? '')
-      setContent(note?.content ?? '')
-    }
+    if (open) form.reset(note ? { title: note.title, content: note.content } : empty)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, note])
 
-  async function save() {
-    const t = title.trim() || 'Untitled'
-    if (note) {
-      await updateNote.mutateAsync({ id: note.id, title: t, content })
-    } else {
-      await createNote.mutateAsync({ title: t, content })
+  const content = form.watch('content')
+  const err = form.formState.errors
+
+  async function onSubmit(values: NoteFormValues) {
+    const payload = { title: values.title.trim() || 'Untitled', content: values.content.trim() }
+    try {
+      if (note) await updateNote.mutateAsync({ id: note.id, ...payload })
+      else await createNote.mutateAsync(payload)
+      onOpenChange(false)
+    } catch {
+      // toasted by the mutation's onError
     }
-    onOpenChange(false)
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="md:max-w-2xl">
-        <div className="space-y-4">
-          <Input
-            placeholder="Note title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="border-0 bg-transparent px-0 font-display text-xl font-bold focus:ring-0"
-          />
+        <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
+          <div>
+            <Input
+              placeholder="Note title"
+              className="border-0 bg-transparent px-0 font-display text-xl font-bold focus:ring-0"
+              {...form.register('title')}
+            />
+            {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
+          </div>
           <Tabs defaultValue="write">
             <TabsList>
               <TabsTrigger value="write">Write</TabsTrigger>
@@ -76,10 +93,11 @@ function NoteDialog({
             <TabsContent value="write" className="mt-3">
               <Textarea
                 placeholder={'Markdown supported…\n\n## Restaurant ideas\n- Ichiran ramen\n- [Tsukiji market](https://example.com)'}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
                 className="min-h-64 font-mono text-sm"
+                aria-invalid={!!err.content}
+                {...form.register('content')}
               />
+              {err.content && <p className="mt-1 text-xs text-danger">{err.content.message}</p>}
             </TabsContent>
             <TabsContent value="preview" className="mt-3">
               <div className="min-h-64 rounded-xl border border-line p-4">
@@ -91,10 +109,10 @@ function NoteDialog({
               </div>
             </TabsContent>
           </Tabs>
-          <Button size="lg" className="w-full" onClick={save} disabled={createNote.isPending || updateNote.isPending}>
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {note ? 'Save note' : 'Create note'}
           </Button>
-        </div>
+        </form>
       </DialogContent>
     </Dialog>
   )
