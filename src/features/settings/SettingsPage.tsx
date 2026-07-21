@@ -115,18 +115,27 @@ function TripInfoCard() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="s-name">Trip name</Label>
-              <Input id="s-name" {...form.register('name')} />
+              <Input id="s-name" aria-invalid={err.name ? true : undefined} {...form.register('name')} />
               {err.name && <p className="text-xs text-danger">{err.name.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-dest">Destination</Label>
-              <Input id="s-dest" {...form.register('destination')} />
+              <Input
+                id="s-dest"
+                aria-invalid={err.destination ? true : undefined}
+                {...form.register('destination')}
+              />
               {err.destination && <p className="text-xs text-danger">{err.destination.message}</p>}
             </div>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="s-desc">Description</Label>
-            <Textarea id="s-desc" className="min-h-16" {...form.register('description')} />
+            <Textarea
+              id="s-desc"
+              className="min-h-16"
+              aria-invalid={err.description ? true : undefined}
+              {...form.register('description')}
+            />
             {err.description && <p className="text-xs text-danger">{err.description.message}</p>}
           </div>
           <div className="space-y-1.5">
@@ -135,6 +144,7 @@ function TripInfoCard() {
               id="s-cover"
               type="url"
               placeholder="https://images.unsplash.com/…"
+              aria-invalid={err.cover_url ? true : undefined}
               {...form.register('cover_url')}
             />
             {err.cover_url && <p className="text-xs text-danger">{err.cover_url.message}</p>}
@@ -149,19 +159,36 @@ function TripInfoCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-end">End</Label>
-              <Input id="s-end" type="date" {...form.register('end_date')} />
+              <Input
+                id="s-end"
+                type="date"
+                aria-invalid={err.end_date ? true : undefined}
+                {...form.register('end_date')}
+              />
               {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-budget">Budget</Label>
-              <Input id="s-budget" type="number" min="0" {...form.register('estimated_budget')} />
+              <Input
+                id="s-budget"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                aria-invalid={err.estimated_budget ? true : undefined}
+                {...form.register('estimated_budget')}
+              />
               {err.estimated_budget && (
                 <p className="text-xs text-danger">{err.estimated_budget.message}</p>
               )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-currency">Currency</Label>
-              <Input id="s-currency" maxLength={3} {...form.register('currency')} />
+              <Input
+                id="s-currency"
+                maxLength={3}
+                aria-invalid={err.currency ? true : undefined}
+                {...form.register('currency')}
+              />
               {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
             </div>
           </div>
@@ -217,6 +244,7 @@ function ProfileCard() {
             <Input
               value={name}
               maxLength={40}
+              aria-invalid={nameError ? true : undefined}
               onChange={(e) => {
                 setName(e.target.value)
                 if (nameError) setNameError(null)

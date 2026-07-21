@@ -143,6 +143,7 @@ function EntryDialog({
               id="b-title"
               placeholder="Hotel — 8 nights"
               autoFocus={!entry}
+              aria-invalid={err.title ? true : undefined}
               {...form.register('title')}
             />
             {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
@@ -175,7 +176,8 @@ function EntryDialog({
               <Label htmlFor="b-est">Estimated</Label>
               <Input
                 id="b-est"
-                type="number" min="0" step="0.01" placeholder="0.00"
+                type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+                aria-invalid={err.estimated ? true : undefined}
                 {...form.register('estimated')}
               />
               {err.estimated && <p className="text-xs text-danger">{err.estimated.message}</p>}
@@ -184,7 +186,8 @@ function EntryDialog({
               <Label htmlFor="b-act">Actually paid</Label>
               <Input
                 id="b-act"
-                type="number" min="0" step="0.01" placeholder="0.00"
+                type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+                aria-invalid={err.actual ? true : undefined}
                 {...form.register('actual')}
               />
               {err.actual && <p className="text-xs text-danger">{err.actual.message}</p>}
@@ -210,7 +213,12 @@ function EntryDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="b-notes">Notes</Label>
-            <Textarea id="b-notes" className="min-h-14" {...form.register('notes')} />
+            <Textarea
+              id="b-notes"
+              className="min-h-14"
+              aria-invalid={err.notes ? true : undefined}
+              {...form.register('notes')}
+            />
             {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>

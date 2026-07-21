@@ -236,13 +236,20 @@ export default function InspirationPage() {
                 id="idea-title"
                 placeholder="Rooftop izakaya"
                 autoFocus
+                aria-invalid={err.title ? true : undefined}
                 {...form.register('title')}
               />
               {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="idea-url">Link</Label>
-              <Input id="idea-url" type="url" placeholder="https://…" {...form.register('url')} />
+              <Input
+                id="idea-url"
+                type="url"
+                placeholder="https://…"
+                aria-invalid={err.url ? true : undefined}
+                {...form.register('url')}
+              />
               {err.url && <p className="text-xs text-danger">{err.url.message}</p>}
             </div>
             <div className="space-y-1.5">
@@ -251,6 +258,7 @@ export default function InspirationPage() {
                 id="idea-img"
                 type="url"
                 placeholder="https://…/photo.jpg"
+                aria-invalid={err.image_url ? true : undefined}
                 {...form.register('image_url')}
               />
               {err.image_url && <p className="text-xs text-danger">{err.image_url.message}</p>}
@@ -275,7 +283,12 @@ export default function InspirationPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="idea-note">Note</Label>
-                <Input id="idea-note" placeholder="Why it's cool" {...form.register('note')} />
+                <Input
+                  id="idea-note"
+                  placeholder="Why it's cool"
+                  aria-invalid={err.note ? true : undefined}
+                  {...form.register('note')}
+                />
                 {err.note && <p className="text-xs text-danger">{err.note.message}</p>}
               </div>
             </div>

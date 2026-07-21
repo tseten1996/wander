@@ -15,7 +15,8 @@ export const SelectTrigger = React.forwardRef<
     data-tap-target=""
     className={cn(
       'flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 text-sm',
-      'focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
+      'transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
+      'aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/10',
       'disabled:cursor-not-allowed disabled:opacity-50 [&>span]:truncate cursor-pointer',
       className
     )}
@@ -42,6 +43,7 @@ export const SelectContent = React.forwardRef<
       className={cn(
         'z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-lift',
         'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+        'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
         className
       )}
       {...props}

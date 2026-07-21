@@ -266,6 +266,7 @@ function ItemDialog({
               id="it-title"
               placeholder="TeamLab Planets"
               autoFocus={!item}
+              aria-invalid={err.title ? true : undefined}
               {...form.register('title')}
             />
             {err.title && <p className="text-xs text-danger">{err.title.message}</p>}
@@ -304,14 +305,24 @@ function ItemDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-end">Ends</Label>
-              <Input id="it-end" type="time" {...form.register('end_time')} />
+              <Input
+                id="it-end"
+                type="time"
+                aria-invalid={err.end_time ? true : undefined}
+                {...form.register('end_time')}
+              />
               {err.end_time && <p className="text-xs text-danger">{err.end_time.message}</p>}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_7rem]">
             <div className="space-y-1.5">
               <Label htmlFor="it-loc">Location</Label>
-              <Input id="it-loc" placeholder="Toyosu, Tokyo" {...form.register('location')} />
+              <Input
+                id="it-loc"
+                placeholder="Toyosu, Tokyo"
+                aria-invalid={err.location ? true : undefined}
+                {...form.register('location')}
+              />
               {err.location && <p className="text-xs text-danger">{err.location.message}</p>}
             </div>
             <div className="space-y-1.5">
@@ -319,9 +330,11 @@ function ItemDialog({
               <Input
                 id="it-cost"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="1"
                 placeholder="0"
+                aria-invalid={err.cost ? true : undefined}
                 {...form.register('cost')}
               />
               {err.cost && <p className="text-xs text-danger">{err.cost.message}</p>}
@@ -333,6 +346,7 @@ function ItemDialog({
               id="it-notes"
               placeholder="Booking refs, links, what to bring…"
               className="min-h-16"
+              aria-invalid={err.notes ? true : undefined}
               {...form.register('notes')}
             />
             {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}

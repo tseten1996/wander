@@ -86,7 +86,13 @@ function WelcomeStep({ created, onDone }: { created: CreatedTrip; onDone: () => 
           <Label htmlFor="welcome-name">Your name</Label>
           <div className="flex items-center gap-3">
             <MemberAvatar name={name || '?'} color={color} size="md" />
-            <Input id="welcome-name" autoFocus maxLength={40} {...form.register('name')} />
+            <Input
+              id="welcome-name"
+              autoFocus
+              maxLength={40}
+              aria-invalid={err.name ? true : undefined}
+              {...form.register('name')}
+            />
           </div>
           {err.name && <p className="text-xs text-danger">{err.name.message}</p>}
         </div>
@@ -184,7 +190,12 @@ export function CreateTripDialog({
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="trip-name">Trip name</Label>
-                <Input id="trip-name" placeholder="Tokyo Adventure" {...form.register('name')} />
+                <Input
+                  id="trip-name"
+                  placeholder="Tokyo Adventure"
+                  aria-invalid={err.name ? true : undefined}
+                  {...form.register('name')}
+                />
                 {err.name && <p className="text-xs text-danger">{err.name.message}</p>}
               </div>
               <div className="space-y-1.5">
@@ -198,7 +209,12 @@ export function CreateTripDialog({
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="trip-end">End date</Label>
-                  <Input id="trip-end" type="date" {...form.register('end_date')} />
+                  <Input
+                    id="trip-end"
+                    type="date"
+                    aria-invalid={err.end_date ? true : undefined}
+                    {...form.register('end_date')}
+                  />
                   {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
                 </div>
               </div>
