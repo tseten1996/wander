@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { friendlyError } from '@/lib/errors'
 import type { Message, MessageReaction } from '@/types'
 
 export type MessageWithReactions = Message & { message_reactions: MessageReaction[] }
@@ -38,6 +40,7 @@ export function useSendMessage(tripId: string, memberId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not send that message')),
   })
 }
 
@@ -52,6 +55,7 @@ export function useEditMessage(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not save that edit')),
   })
 }
 
@@ -63,6 +67,7 @@ export function useDeleteMessage(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not delete that message')),
   })
 }
 
@@ -74,6 +79,7 @@ export function useSetPinned(tripId: string) {
       if (error) throw error
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not update that message')),
   })
 }
 
@@ -104,5 +110,6 @@ export function useToggleReaction(tripId: string, memberId: string) {
       }
     },
     onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not react to that message')),
   })
 }

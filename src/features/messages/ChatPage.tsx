@@ -22,6 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
+const MESSAGE_MAX_LENGTH = 4000
 
 function Reactions({
   message,
@@ -120,15 +121,21 @@ function Bubble({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               className="min-h-16 text-left"
+              aria-invalid={draft.length > MESSAGE_MAX_LENGTH}
               autoFocus
             />
+            {draft.length > MESSAGE_MAX_LENGTH && (
+              <p className="text-left text-xs text-danger">
+                Keep it under {MESSAGE_MAX_LENGTH} characters
+              </p>
+            )}
             <div className={cn('flex gap-2', mine && 'justify-end')}>
               <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
                 Cancel
               </Button>
               <Button
                 size="sm"
-                disabled={!draft.trim()}
+                disabled={!draft.trim() || draft.length > MESSAGE_MAX_LENGTH}
                 onClick={() => {
                   editMessage.mutate({ id: message.id, content: draft.trim() })
                   setEditing(false)
@@ -238,7 +245,7 @@ export default function ChatPage() {
 
   async function send() {
     const content = draft.trim()
-    if (!content) return
+    if (!content || content.length > MESSAGE_MAX_LENGTH) return
     setDraft('')
     const reply = replyTo?.id ?? null
     setReplyTo(null)
@@ -329,18 +336,22 @@ export default function ChatPage() {
                 void send()
               }
             }}
+            aria-invalid={draft.length > MESSAGE_MAX_LENGTH}
             className="max-h-40 min-h-11 flex-1 resize-none"
           />
           <Button
             size="icon"
             className="size-11 rounded-xl"
-            disabled={!draft.trim() || sendMessage.isPending}
+            disabled={!draft.trim() || draft.length > MESSAGE_MAX_LENGTH || sendMessage.isPending}
             onClick={send}
             aria-label="Send message"
           >
             <SendHorizonal />
           </Button>
         </div>
+        {draft.length > MESSAGE_MAX_LENGTH && (
+          <p className="mt-1 text-xs text-danger">Keep it under {MESSAGE_MAX_LENGTH} characters</p>
+        )}
       </motion.div>
     </div>
   )
