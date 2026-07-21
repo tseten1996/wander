@@ -246,10 +246,20 @@ export default function ChatPage() {
   async function send() {
     const content = draft.trim()
     if (!content || content.length > MESSAGE_MAX_LENGTH) return
-    setDraft('')
+    const previousReplyTo = replyTo
     const reply = replyTo?.id ?? null
+    // Optimistically clear the composer so a successful send feels instant.
+    setDraft('')
     setReplyTo(null)
-    await sendMessage.mutateAsync({ content, replyTo: reply })
+    try {
+      await sendMessage.mutateAsync({ content, replyTo: reply })
+    } catch {
+      // The send failed (useSendMessage already surfaces a toast). Restore the
+      // user's typed text and reply context so their input isn't lost — but only
+      // if they haven't started composing something new in the meantime.
+      setDraft((current) => (current.trim() ? current : content))
+      setReplyTo((current) => current ?? previousReplyTo)
+    }
   }
 
   return (
