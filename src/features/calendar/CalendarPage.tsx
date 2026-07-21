@@ -94,7 +94,9 @@ export default function CalendarPage() {
   const [month, setMonth] = React.useState(() =>
     trip.start_date ? parseISO(trip.start_date) : new Date()
   )
-  const [selected, setSelected] = React.useState<Date>(new Date())
+  const [selected, setSelected] = React.useState<Date>(() =>
+    trip.start_date ? parseISO(trip.start_date) : new Date()
+  )
 
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(month), { weekStartsOn: 1 }),
