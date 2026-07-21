@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/input'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -279,6 +279,8 @@ export default function ChatPage() {
             <Skeleton className="ml-auto h-14 w-2/3" />
             <Skeleton className="h-14 w-1/2" />
           </div>
+        ) : messages.isError ? (
+          <ErrorState onRetry={() => messages.refetch()} isRetrying={messages.isFetching} />
         ) : messages.data!.length === 0 ? (
           <EmptyState
             icon={MessageCircle}

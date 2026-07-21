@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -204,6 +204,8 @@ export default function QuestionsPage() {
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
         </div>
+      ) : questions.isError ? (
+        <ErrorState onRetry={() => questions.refetch()} isRetrying={questions.isFetching} />
       ) : questions.data!.length === 0 ? (
         <EmptyState
           icon={CircleHelp}

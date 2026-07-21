@@ -17,7 +17,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -322,6 +322,8 @@ export default function BudgetPage() {
           <Skeleton className="h-28" />
           <Skeleton className="h-48" />
         </div>
+      ) : budget.isError ? (
+        <ErrorState onRetry={() => budget.refetch()} isRetrying={budget.isFetching} />
       ) : (
         <div className="space-y-5">
           {/* Summary */}

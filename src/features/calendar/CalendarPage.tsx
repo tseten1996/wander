@@ -11,7 +11,7 @@ import { useTripContext } from '@/hooks/useTrip'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/misc'
+import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, formatTime, longDate } from '@/lib/utils'
 import type { BudgetEntry, ChecklistItem, ItineraryItem } from '@/types'
 
@@ -131,6 +131,8 @@ export default function CalendarPage() {
         </div>
         {events.isLoading ? (
           <Skeleton className="h-64" />
+        ) : events.isError ? (
+          <ErrorState onRetry={() => events.refetch()} isRetrying={events.isFetching} />
         ) : (
           <div className="grid grid-cols-7 gap-1">
             {days.map((day) => {

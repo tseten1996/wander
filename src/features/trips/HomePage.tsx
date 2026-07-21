@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { AvatarStack } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import { PageLoader, Skeleton } from '@/components/ui/misc'
+import { ErrorState, PageLoader, Skeleton } from '@/components/ui/misc'
 import { dateRange, daysUntil } from '@/lib/utils'
 
 function Wordmark() {
@@ -210,6 +210,12 @@ function TripsHome() {
             <Skeleton className="h-56" />
             <Skeleton className="h-56" />
           </div>
+        ) : trips.isError ? (
+          <ErrorState
+            title="Couldn’t load your trips"
+            onRetry={() => trips.refetch()}
+            isRetrying={trips.isFetching}
+          />
         ) : active.length === 0 ? (
           <Card className="p-10 text-center">
             <Compass className="mx-auto size-10 text-primary" />
