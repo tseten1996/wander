@@ -13,7 +13,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -195,6 +195,8 @@ export default function InspirationPage() {
           <Skeleton className="h-40" />
           <Skeleton className="h-48" />
         </div>
+      ) : inspiration.isError ? (
+        <ErrorState onRetry={() => inspiration.refetch()} isRetrying={inspiration.isFetching} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Lightbulb}

@@ -12,7 +12,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -148,6 +148,8 @@ export default function NotesPage() {
           <Skeleton className="h-40" />
           <Skeleton className="h-40" />
         </div>
+      ) : notes.isError ? (
+        <ErrorState onRetry={() => notes.refetch()} isRetrying={notes.isFetching} />
       ) : notes.data!.length === 0 ? (
         <EmptyState
           icon={NotebookPen}

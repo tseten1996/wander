@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -280,6 +280,8 @@ export default function ChecklistPage() {
           <Skeleton className="h-14" />
           <Skeleton className="h-14" />
         </div>
+      ) : checklist.isError ? (
+        <ErrorState onRetry={() => checklist.refetch()} isRetrying={checklist.isFetching} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={ListChecks}

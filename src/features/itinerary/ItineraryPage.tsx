@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -394,6 +394,8 @@ export default function ItineraryPage() {
           <Skeleton className="h-20" />
           <Skeleton className="h-20" />
         </div>
+      ) : itinerary.isError ? (
+        <ErrorState onRetry={() => itinerary.refetch()} isRetrying={itinerary.isFetching} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={MapPin}

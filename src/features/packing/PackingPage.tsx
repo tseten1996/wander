@@ -13,7 +13,7 @@ import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
-import { Skeleton } from '@/components/ui/misc'
+import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 import type { PackingCategory, PackingItem } from '@/types'
 
@@ -172,6 +172,8 @@ export default function PackingPage() {
           <Skeleton className="h-48" />
           <Skeleton className="h-48" />
         </div>
+      ) : packing.isError ? (
+        <ErrorState onRetry={() => packing.refetch()} isRetrying={packing.isFetching} />
       ) : (
         <div className="grid items-start gap-4 md:grid-cols-2">
           {CATEGORIES.map((c, i) => (

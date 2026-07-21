@@ -12,7 +12,7 @@ import { celebrateOncePerTrip, resetCelebration } from '@/lib/confetti'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
-import { Skeleton } from '@/components/ui/misc'
+import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, dateRange, daysUntil, formatMoney, longDate, formatTime, timeAgo } from '@/lib/utils'
 
 const fadeUp = {
@@ -98,6 +98,18 @@ export default function DashboardPage() {
     { to: 'checklist', label: 'Checklist', icon: ListChecks, hint: dash.data ? `${dash.data.checklist.filter((c) => !c.done).length} open` : '' },
     { to: 'packing', label: 'Packing', icon: Luggage, hint: dash.data ? `${dash.data.packingPacked}/${dash.data.packingTotal} packed` : '' },
   ]
+
+  // A failed dashboard load must not sit on skeletons forever (which reads as a
+  // brand-new, empty trip). Keep the Hero — it's driven by trip context, not
+  // this query — and surface a retryable error for the rest.
+  if (dash.isError) {
+    return (
+      <div className="space-y-5">
+        <Hero />
+        <ErrorState onRetry={() => dash.refetch()} isRetrying={dash.isFetching} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">

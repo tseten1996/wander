@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { EmptyState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { MemberAvatar } from '@/components/ui/avatar'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -355,6 +355,8 @@ export default function PollsPage() {
           <Skeleton className="h-48" />
           <Skeleton className="h-48" />
         </div>
+      ) : polls.isError ? (
+        <ErrorState onRetry={() => polls.refetch()} isRetrying={polls.isFetching} />
       ) : polls.data!.length === 0 ? (
         <EmptyState
           icon={VoteIcon}
