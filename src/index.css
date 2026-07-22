@@ -162,6 +162,25 @@
   .text-balance {
     text-wrap: balance;
   }
+  /*
+    Brief ring pulse used to point out the item a search result deep-links to.
+    The ring is a box-shadow so it follows each target's own border-radius and
+    isn't clipped by an ancestor's overflow. Reduced-motion users still land on
+    the element (scrolled into view) — the base rule zeroes the animation.
+  */
+  .search-flash {
+    animation: search-flash 1.6s ease-out;
+  }
+}
+
+@keyframes search-flash {
+  0%,
+  60% {
+    box-shadow: 0 0 0 2px var(--primary), 0 0 0 7px var(--primary-faint);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgb(0 0 0 / 0), 0 0 0 7px rgb(0 0 0 / 0);
+  }
 }
 
 /* Print styles: the trip summary page becomes the PDF export */

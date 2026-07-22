@@ -4,7 +4,7 @@ import { NavLink, Outlet, Link, useLocation, useParams } from 'react-router-dom'
 import {
   ArrowLeft, CalendarDays, Compass, Lightbulb, ListChecks,
   Luggage, MapPin, MessageCircle, Moon, MoreHorizontal, NotebookPen, PiggyBank,
-  Settings, Sun, Vote, HelpCircle,
+  Search, Settings, Sun, Vote, HelpCircle,
 } from 'lucide-react'
 import { TripProvider, useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
@@ -13,7 +13,12 @@ import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageLoader, EmptyState } from '@/components/ui/misc'
+import { SearchDialog, SearchHighlighter, useSearchHotkey } from '@/features/search'
 import { cn } from '@/lib/utils'
+
+/** ⌘K on Apple platforms, Ctrl-K elsewhere — decorative hint on the trigger. */
+const HOTKEY_HINT =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'
 
 const NAV = [
   { to: '', label: 'Overview', icon: Compass, end: true },
@@ -77,6 +82,9 @@ function Shell() {
   const { dark, toggle } = useTheme()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = React.useState(false)
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const openSearch = React.useCallback(() => setSearchOpen(true), [])
+  useSearchHotkey(openSearch)
 
   const mobileItems = NAV.filter((n) => MOBILE_NAV.includes(n.to))
   const overflowItems = NAV.filter((n) => !MOBILE_NAV.includes(n.to))
@@ -107,6 +115,18 @@ function Shell() {
             )}
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={openSearch}
+          className="mx-3 mt-3 flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-sm text-muted transition-colors hover:border-line-strong hover:text-ink"
+        >
+          <Search className="size-4 shrink-0" />
+          <span className="flex-1 text-left">Search…</span>
+          <kbd className="rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-faint">
+            {HOTKEY_HINT}
+          </kbd>
+        </button>
 
         <nav className="scrollbar-thin mt-3 flex-1 space-y-0.5 overflow-y-auto px-3">
           {NAV.map(({ to, label, icon: Icon, ...rest }) => (
@@ -156,6 +176,9 @@ function Shell() {
           <ArrowLeft className="size-4" />
         </Link>
         <p className="min-w-0 flex-1 truncate px-1 font-display font-bold">{trip.name}</p>
+        <Button variant="ghost" size="icon" onClick={openSearch} aria-label="Search this trip">
+          <Search />
+        </Button>
         <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
           {dark ? <Sun /> : <Moon />}
         </Button>
@@ -222,6 +245,8 @@ function Shell() {
       </nav>
 
       <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} items={overflowItems} />
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} tripId={trip.id} />
+      <SearchHighlighter />
     </div>
   )
 }

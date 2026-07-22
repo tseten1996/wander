@@ -30,6 +30,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { searchAnchorId } from '@/features/search/anchor'
 import { cn, daysUntil, shortDate } from '@/lib/utils'
 import type { ChecklistItem } from '@/types'
 
@@ -58,6 +59,7 @@ function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
   return (
     <motion.div
       layout
+      id={searchAnchorId(item.id)}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, delay: Math.min(index * 0.03, 0.25) }}
