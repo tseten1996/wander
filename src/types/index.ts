@@ -31,6 +31,7 @@ export interface Trip {
   invite_code: string
   invite_enabled: boolean
   archived: boolean
+  checklist_starter_dismissed: boolean
   created_at: string
 }
 

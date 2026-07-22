@@ -95,6 +95,49 @@ export function useToggleDone(tripId: string, memberId: string) {
   })
 }
 
+/** Common first tasks offered on a brand-new, empty checklist (#42). */
+export const STARTER_TASKS = [
+  'Book flights',
+  'Reserve accommodation',
+  'Buy travel insurance',
+  'Check passports & visas',
+  'Make a packing list',
+] as const
+
+/** Seed the starter-pack tasks in one shot when the owner accepts the offer. */
+export function useSeedStarterTasks(tripId: string, memberId: string) {
+  const invalidate = useInvalidate(tripId)
+  return useMutation({
+    mutationFn: async () => {
+      const base = Date.now()
+      const rows = STARTER_TASKS.map((title, i) => ({
+        trip_id: tripId,
+        created_by: memberId,
+        title,
+        position: base + i, // preserve the offered order, stay monotonic
+      }))
+      const { error } = await supabase.from('checklist_items').insert(rows)
+      if (error) throw error
+      logActivity(tripId, memberId, 'added starter tasks', `${rows.length} tasks`)
+    },
+    onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not add the starter tasks')),
+  })
+}
+
+/** Permanently dismiss the starter-pack offer for this trip (#42). */
+export function useDismissChecklistStarter(tripId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.rpc('dismiss_checklist_starter', { p_trip_id: tripId })
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trip', tripId] }),
+    onError: (err) => toast.error(friendlyError(err, 'Could not dismiss the offer')),
+  })
+}
+
 export function useDeleteChecklistItem(tripId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
