@@ -120,7 +120,7 @@ export function useDeletePoll(tripId: string) {
   })
 }
 
-export function isPollOpen(poll: Poll): boolean {
+export function isPollOpen(poll: Pick<Poll, 'closed' | 'closes_at'>): boolean {
   if (poll.closed) return false
   if (poll.closes_at && new Date(poll.closes_at) < new Date()) return false
   return true
