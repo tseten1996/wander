@@ -21,7 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { searchAnchorId } from '@/features/search/anchor'
-import { cn } from '@/lib/utils'
+import { cn, isMobileViewport } from '@/lib/utils'
 import type { InspirationCategory, InspirationItem } from '@/types'
 
 const CATEGORIES: { value: InspirationCategory | 'all'; label: string }[] = [
@@ -238,7 +238,7 @@ export default function InspirationPage() {
               <Input
                 id="idea-title"
                 placeholder="Rooftop izakaya"
-                autoFocus
+                autoFocus={!isMobileViewport()}
                 aria-invalid={err.title ? true : undefined}
                 {...form.register('title')}
               />

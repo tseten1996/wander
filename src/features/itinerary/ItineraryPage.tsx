@@ -39,7 +39,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { cn, formatMoney, formatTime, longDate, positionBetween } from '@/lib/utils'
+import { cn, formatMoney, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
 const itinerarySchema = z
@@ -296,7 +296,7 @@ function ItemDialog({
             <Input
               id="it-title"
               placeholder="TeamLab Planets"
-              autoFocus={!item}
+              autoFocus={!item && !isMobileViewport()}
               aria-invalid={err.title ? true : undefined}
               {...form.register('title')}
             />

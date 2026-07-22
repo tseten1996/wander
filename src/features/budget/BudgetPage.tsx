@@ -28,7 +28,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { cn, formatMoney, shortDate } from '@/lib/utils'
+import { cn, formatMoney, isMobileViewport, shortDate } from '@/lib/utils'
 import {
   computeBalances, hasSettlementData, isAllSettled, minimalTransfers,
 } from './settlement'
@@ -146,7 +146,7 @@ function EntryDialog({
             <Input
               id="b-title"
               placeholder="Hotel — 8 nights"
-              autoFocus={!entry}
+              autoFocus={!entry && !isMobileViewport()}
               aria-invalid={err.title ? true : undefined}
               {...form.register('title')}
             />

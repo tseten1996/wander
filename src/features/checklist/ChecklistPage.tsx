@@ -31,7 +31,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { searchAnchorId } from '@/features/search/anchor'
-import { cn, daysUntil, shortDate } from '@/lib/utils'
+import { cn, daysUntil, isMobileViewport, shortDate } from '@/lib/utils'
 import type { ChecklistItem } from '@/types'
 
 const UNASSIGNED = 'unassigned'
@@ -191,7 +191,7 @@ function ItemDialog({
             <Input
               id="task-title"
               placeholder="Book flights"
-              autoFocus={!item}
+              autoFocus={!item && !isMobileViewport()}
               {...form.register('title')}
             />
             {err.title && <p className="text-xs text-danger">{err.title.message}</p>}

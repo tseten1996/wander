@@ -30,7 +30,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { searchAnchorId } from '@/features/search/anchor'
-import { cn, timeAgo } from '@/lib/utils'
+import { cn, isMobileViewport, timeAgo } from '@/lib/utils'
 import type { PollCategory } from '@/types'
 
 const CATEGORIES: { value: PollCategory; label: string }[] = [
@@ -252,7 +252,7 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             <Input
               id="poll-q"
               placeholder="Where should we stay?"
-              autoFocus
+              autoFocus={!isMobileViewport()}
               {...form.register('question')}
             />
             {err.question && <p className="text-xs text-danger">{err.question.message}</p>}
