@@ -190,6 +190,15 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
             )
           })}
         </div>
+        {/* Vote counts update live (realtime invalidation) — announce changes
+            to screen readers without re-reading the whole card (#44). */}
+        <p aria-live="polite" className="sr-only">
+          {totalVotes === 0
+            ? 'No votes yet'
+            : `${totalVotes} ${totalVotes === 1 ? 'vote' : 'votes'}: ${poll.poll_options
+                .map((o) => `${o.label} ${poll.votes.filter((v) => v.option_id === o.id).length}`)
+                .join(', ')}`}
+        </p>
         {open && (
           <p className="mt-3 text-xs text-muted">
             {myVote ? 'Tap your choice again to remove your vote.' : 'Tap an option to vote.'}

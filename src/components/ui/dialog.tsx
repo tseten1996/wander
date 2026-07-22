@@ -14,20 +14,25 @@ export function DialogContent({
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
   // On mobile, opening a sheet must not summon the on-screen keyboard over
-  // it: stop Radix from focusing the first tabbable (usually a text input),
-  // and release anything an autoFocus attribute grabbed during mount.
-  // Desktop keeps the type-immediately behavior.
+  // it: stop Radix from focusing the first tabbable (usually a text input).
+  // Focus still moves INSIDE the dialog (#44) — onto the sheet container
+  // itself (tabIndex -1 below) — so screen readers and Escape land in the
+  // right place without any text control holding focus. Desktop keeps the
+  // type-immediately behavior. Radix restores focus to the trigger on close.
+  const contentRef = React.useRef<React.ComponentRef<typeof DialogPrimitive.Content>>(null)
   const handleOpenAutoFocus = (e: Event) => {
     onOpenAutoFocus?.(e)
     if (!e.defaultPrevented && isMobileViewport()) {
       e.preventDefault()
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      contentRef.current?.focus()
     }
   }
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
       <DialogPrimitive.Content
+        ref={contentRef}
+        tabIndex={-1}
         onOpenAutoFocus={handleOpenAutoFocus}
         className={cn(
           // Bottom sheet on mobile, centered dialog on desktop. The close
