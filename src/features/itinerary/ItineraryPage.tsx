@@ -19,6 +19,7 @@ import {
   useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
 } from './api'
 import { ITINERARY_META } from './meta'
+import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -46,6 +47,15 @@ const itinerarySchema = z
     start_time: z.string().optional().nullable(),
     end_time: z.string().optional().nullable(),
     location: z.string().trim().max(160, 'Keep it under 160 characters').optional().nullable(),
+    url: z
+      .string()
+      .trim()
+      .max(2000, 'That link is too long')
+      .optional()
+      .nullable()
+      .refine((v) => !v || /^https?:\/\/.+/i.test(v), {
+        message: 'Must be a full http(s) link',
+      }),
     notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
     cost: z.coerce
       .number({ invalid_type_error: 'Enter a number' })
@@ -103,6 +113,20 @@ function SortableItemCard({ item }: { item: ItineraryItem }) {
               .join(' · ') || meta.label}
           </p>
           {item.notes && <p className="mt-0.5 truncate text-xs text-faint">{item.notes}</p>}
+          {(() => {
+            // Explicit url field first, then any URLs pasted into title/notes.
+            const urls = [...new Set(
+              [item.url, ...extractUrls(item.title), ...extractUrls(item.notes)]
+                .filter((u): u is string => !!u)
+            )]
+            if (urls.length === 0 && !item.location) return null
+            return (
+              <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {urls.map((u) => <LinkChip key={u} url={u} />)}
+                {item.location && <MapsChip location={item.location} />}
+              </span>
+            )
+          })()}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -204,6 +228,7 @@ function ItemDialog({
     start_time: '',
     end_time: '',
     location: '',
+    url: '',
     notes: '',
     cost: '',
   }
@@ -223,6 +248,7 @@ function ItemDialog({
               start_time: item.start_time ?? '',
               end_time: item.end_time ?? '',
               location: item.location ?? '',
+              url: item.url ?? '',
               notes: item.notes ?? '',
               cost: item.cost ?? '',
             }
@@ -240,6 +266,7 @@ function ItemDialog({
       start_time: values.start_time || null,
       end_time: values.end_time || null,
       location: values.location?.trim() || null,
+      url: values.url?.trim() || null,
       notes: values.notes?.trim() || null,
       cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
     }
@@ -351,6 +378,18 @@ function ItemDialog({
               />
               {err.cost && <p className="text-xs text-danger">{err.cost.message}</p>}
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="it-url">Link</Label>
+            <Input
+              id="it-url"
+              type="url"
+              inputMode="url"
+              placeholder="https://teamlab.art/e/planets"
+              aria-invalid={err.url ? true : undefined}
+              {...form.register('url')}
+            />
+            {err.url && <p className="text-xs text-danger">{err.url.message}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="it-notes">Notes</Label>

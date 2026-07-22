@@ -124,6 +124,7 @@ export interface ItineraryItem {
   start_time: string | null
   end_time: string | null
   location: string | null
+  url: string | null
   notes: string | null
   cost: number | null
   position: number
