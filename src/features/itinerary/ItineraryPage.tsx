@@ -23,6 +23,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
@@ -295,7 +296,18 @@ function ItemDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-day">Day</Label>
-              <Input id="it-day" type="date" {...form.register('day')} />
+              <Controller
+                control={form.control}
+                name="day"
+                render={({ field }) => (
+                  <DateInput
+                    id="it-day"
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
+              />
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

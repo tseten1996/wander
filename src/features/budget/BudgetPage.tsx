@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -168,7 +169,18 @@ function EntryDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="b-date">Date</Label>
-              <Input id="b-date" type="date" {...form.register('entry_date')} />
+              <Controller
+                control={form.control}
+                name="entry_date"
+                render={({ field }) => (
+                  <DateInput
+                    id="b-date"
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
+              />
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
