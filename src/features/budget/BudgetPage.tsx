@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { MoreHorizontal, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, MoreHorizontal, Pencil, PiggyBank, Plus, Scale, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
@@ -29,6 +29,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn, formatMoney, shortDate } from '@/lib/utils'
+import {
+  computeBalances, hasSettlementData, isAllSettled, minimalTransfers,
+} from './settlement'
 import type { BudgetCategory, BudgetEntry } from '@/types'
 
 const CATEGORIES: { value: BudgetCategory; label: string }[] = [
@@ -296,6 +299,95 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   )
 }
 
+function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
+  const { trip, members } = useTripContext()
+
+  const balances = React.useMemo(
+    () => computeBalances(entries, members),
+    [entries, members]
+  )
+  const transfers = React.useMemo(() => minimalTransfers(balances), [balances])
+  const settled = isAllSettled(balances)
+
+  // Owed first (largest positive net), then those who owe.
+  const sortedBalances = React.useMemo(
+    () => [...balances].sort((a, b) => b.net - a.net),
+    [balances]
+  )
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Scale className="size-4 text-muted" aria-hidden />
+          Settle up
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <ul className="space-y-2.5">
+          {sortedBalances.map((b) => {
+            const owed = b.net > 0.005
+            const owes = b.net < -0.005
+            return (
+              <li key={b.member.id} className="flex items-center gap-3">
+                <MemberAvatar name={b.member.display_name} color={b.member.color} size="sm" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {b.member.display_name}
+                </span>
+                <span
+                  className={cn(
+                    'text-right text-sm font-semibold tabular-nums',
+                    owed && 'text-success',
+                    owes && 'text-danger',
+                    !owed && !owes && 'text-muted'
+                  )}
+                >
+                  {owed && `gets back ${formatMoney(b.net, trip.currency)}`}
+                  {owes && `owes ${formatMoney(-b.net, trip.currency)}`}
+                  {!owed && !owes && 'settled'}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+
+        <div className="border-t border-line/60 pt-3">
+          {settled || transfers.length === 0 ? (
+            <p className="text-sm text-muted">Everyone’s even — nothing to settle. 🎉</p>
+          ) : (
+            <>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-faint">
+                Suggested transfers
+              </p>
+              <ul className="space-y-2">
+                {transfers.map((t, i) => (
+                  <li
+                    key={`${t.from.id}-${t.to.id}-${i}`}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                  >
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <MemberAvatar name={t.from.display_name} color={t.from.color} size="sm" />
+                      {t.from.display_name}
+                    </span>
+                    <ArrowRight className="size-4 text-faint" aria-label="pays" />
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <MemberAvatar name={t.to.display_name} color={t.to.color} size="sm" />
+                      {t.to.display_name}
+                    </span>
+                    <span className="ml-auto font-semibold tabular-nums">
+                      {formatMoney(t.amount, trip.currency)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function BudgetPage() {
   const { trip } = useTripContext()
   const budget = useBudget(trip.id)
@@ -411,6 +503,8 @@ export default function BudgetPage() {
               </CardContent>
             </Card>
           )}
+
+          {hasSettlementData(entries) && <SettlementCard entries={entries} />}
 
           {entries.length === 0 ? (
             <EmptyState
