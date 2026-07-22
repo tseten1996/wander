@@ -20,6 +20,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { searchAnchorId } from '@/features/search/anchor'
 import { cn } from '@/lib/utils'
 import type { InspirationCategory, InspirationItem } from '@/types'
 
@@ -69,7 +70,7 @@ function IdeaCard({ item }: { item: InspirationItem }) {
   const canDelete = isOwner || item.created_by === me.id
 
   return (
-    <Card className="group mb-4 break-inside-avoid overflow-hidden">
+    <Card id={searchAnchorId(item.id)} className="group mb-4 break-inside-avoid overflow-hidden">
       {item.image_url && (
         <img
           src={item.image_url}

@@ -29,6 +29,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { searchAnchorId } from '@/features/search/anchor'
 import { cn, timeAgo } from '@/lib/utils'
 import type { PollCategory } from '@/types'
 
@@ -89,7 +90,7 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.3) }}
     >
-      <Card className="p-5">
+      <Card id={searchAnchorId(poll.id)} className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

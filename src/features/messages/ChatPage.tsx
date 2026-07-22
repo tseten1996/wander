@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { searchAnchorId } from '@/features/search/anchor'
 import { cn } from '@/lib/utils'
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
@@ -88,7 +89,7 @@ function Bubble({
   const repliedAuthor = repliedTo?.member_id ? membersById.get(repliedTo.member_id) : null
 
   return (
-    <div className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
+    <div id={searchAnchorId(message.id)} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
       <MemberAvatar
         name={author?.display_name ?? 'Left the trip'}
         color={author?.color ?? '#a8a29e'}

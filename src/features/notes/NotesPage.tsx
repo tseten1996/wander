@@ -16,6 +16,7 @@ import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MemberAvatar } from '@/components/ui/avatar'
+import { searchAnchorId } from '@/features/search/anchor'
 import { timeAgo } from '@/lib/utils'
 import type { Note } from '@/types'
 
@@ -175,6 +176,7 @@ export default function NotesPage() {
                 transition={{ duration: 0.25, delay: Math.min(i * 0.04, 0.3) }}
               >
                 <Card
+                  id={searchAnchorId(note.id)}
                   className="group cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:shadow-lift"
                   onClick={() => openNote(note)}
                 >
