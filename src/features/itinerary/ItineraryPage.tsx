@@ -11,9 +11,12 @@ import { CSS } from '@dnd-kit/utilities'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { GripVertical, MapPin, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  CalendarArrowDown, GripVertical, MapPin, MoreHorizontal, Pencil, Plus, Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
+import { exportItineraryIcs } from '@/lib/export'
 import {
   useCreateItineraryItem, useDeleteItineraryItem, useItinerary,
   useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
@@ -414,8 +417,23 @@ export default function ItineraryPage() {
   const { trip } = useTripContext()
   const itinerary = useItinerary(trip.id)
   const [newOpen, setNewOpen] = React.useState(false)
+  const [exporting, setExporting] = React.useState(false)
 
   const items = itinerary.data ?? []
+
+  async function exportCalendar() {
+    setExporting(true)
+    try {
+      const count = await exportItineraryIcs(trip.id, trip.name)
+      if (count === 0) toast('Add a day to itinerary items to export them to a calendar')
+      else toast.success(`Exported ${count} ${count === 1 ? 'event' : 'events'} to calendar`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not export the calendar')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const byDay = new Map<string | null, ItineraryItem[]>()
   for (const item of items) {
     const key = item.day
@@ -433,9 +451,19 @@ export default function ItineraryPage() {
         title="Itinerary"
         description="Your trip, day by day. Drag to reorder within a day."
         action={
-          <Button onClick={() => setNewOpen(true)}>
-            <Plus /> Add item
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={exportCalendar}
+              disabled={exporting || items.length === 0}
+              aria-label="Export itinerary to a calendar file"
+            >
+              <CalendarArrowDown /> Export
+            </Button>
+            <Button onClick={() => setNewOpen(true)}>
+              <Plus /> Add item
+            </Button>
+          </div>
         }
       />
       {itinerary.isLoading ? (
