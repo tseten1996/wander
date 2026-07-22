@@ -9,6 +9,7 @@ import {
 import { TripProvider, useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
+import { useUnreadDots, type UnreadRoute } from '@/hooks/useUnreadDots'
 import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -39,11 +40,34 @@ const NAV = [
 // behind "More" so every page stays reachable on a phone.
 const MOBILE_NAV = ['', 'itinerary', 'chat', 'checklist', 'budget']
 
+/** Icon wrapper that badges an amber "new since last visit" dot (#43). */
+function IconWithDot({ icon: Icon, unread, className }: {
+  icon: typeof NAV[number]['icon']
+  unread: boolean
+  className?: string
+}) {
+  return (
+    <span className="relative inline-flex">
+      <Icon className={className} />
+      {unread && (
+        <>
+          <span
+            aria-hidden
+            className="absolute -right-1 -top-1 size-2 rounded-full bg-accent ring-2 ring-surface"
+          />
+          <span className="sr-only">(new activity)</span>
+        </>
+      )}
+    </span>
+  )
+}
+
 /** Bottom-sheet listing every nav item that didn't make the mobile tab bar. */
-function MoreSheet({ open, onOpenChange, items }: {
+function MoreSheet({ open, onOpenChange, items, unread }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   items: typeof NAV[number][]
+  unread: Record<UnreadRoute, boolean>
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -67,7 +91,7 @@ function MoreSheet({ open, onOpenChange, items }: {
                 )
               }
             >
-              <Icon className="size-5" />
+              <IconWithDot icon={Icon} unread={unread[to as UnreadRoute] ?? false} className="size-5" />
               {label}
             </NavLink>
           ))}
@@ -89,6 +113,11 @@ function Shell() {
   const mobileItems = NAV.filter((n) => MOBILE_NAV.includes(n.to))
   const overflowItems = NAV.filter((n) => !MOBILE_NAV.includes(n.to))
   const onOverflowPage = overflowItems.some((n) => location.pathname.endsWith(`/${n.to}`))
+
+  // Trip-relative segment: /trip/<id>/<feature> → '<feature>' ('' = overview)
+  const activeRoute = location.pathname.split('/')[3] ?? ''
+  const unread = useUnreadDots(trip.id, me.id, activeRoute)
+  const overflowUnread = overflowItems.some((n) => unread[n.to as UnreadRoute])
 
   // A sheet opened from the tab bar should close itself the moment the
   // route actually changes (link tap, browser back/forward, deep link).
@@ -143,7 +172,7 @@ function Shell() {
                 )
               }
             >
-              <Icon className="size-4.5" />
+              <IconWithDot icon={Icon} unread={unread[to as UnreadRoute] ?? false} className="size-4.5" />
               {label}
             </NavLink>
           ))}
@@ -224,7 +253,7 @@ function Shell() {
                 )
               }
             >
-              <Icon className="size-5" />
+              <IconWithDot icon={Icon} unread={unread[to as UnreadRoute] ?? false} className="size-5" />
               {label}
             </NavLink>
           ))}
@@ -238,13 +267,13 @@ function Shell() {
               onOverflowPage ? 'text-primary' : 'text-muted'
             )}
           >
-            <MoreHorizontal className="size-5" />
+            <IconWithDot icon={MoreHorizontal} unread={overflowUnread} className="size-5" />
             More
           </button>
         </div>
       </nav>
 
-      <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} items={overflowItems} />
+      <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} items={overflowItems} unread={unread} />
       <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} tripId={trip.id} />
       <SearchHighlighter />
     </div>
