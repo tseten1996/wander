@@ -1,7 +1,7 @@
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, isMobileViewport } from '@/lib/utils'
 
 export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
@@ -10,12 +10,25 @@ export const DialogClose = DialogPrimitive.Close
 export function DialogContent({
   className,
   children,
+  onOpenAutoFocus,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
+  // On mobile, opening a sheet must not summon the on-screen keyboard over
+  // it: stop Radix from focusing the first tabbable (usually a text input),
+  // and release anything an autoFocus attribute grabbed during mount.
+  // Desktop keeps the type-immediately behavior.
+  const handleOpenAutoFocus = (e: Event) => {
+    onOpenAutoFocus?.(e)
+    if (!e.defaultPrevented && isMobileViewport()) {
+      e.preventDefault()
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    }
+  }
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
       <DialogPrimitive.Content
+        onOpenAutoFocus={handleOpenAutoFocus}
         className={cn(
           // Bottom sheet on mobile, centered dialog on desktop. The close
           // button lives outside the scrollable inner div (below) so it

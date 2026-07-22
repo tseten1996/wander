@@ -25,7 +25,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { timeAgo } from '@/lib/utils'
+import { isMobileViewport, timeAgo } from '@/lib/utils'
 import type { Question } from '@/types'
 
 const ANSWER_MAX_LENGTH = 2000
@@ -252,7 +252,7 @@ export default function QuestionsPage() {
               <Input
                 id="q-title"
                 placeholder="Who's booking the Airbnb?"
-                autoFocus
+                autoFocus={!isMobileViewport()}
                 {...form.register('title')}
               />
               {err.title && <p className="text-xs text-danger">{err.title.message}</p>}

@@ -86,3 +86,12 @@ export function randomCode(length = 12): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length))
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('')
 }
+
+/**
+ * True below the app's md (768px) mobile/desktop switch, evaluated at call
+ * time. For render-time decisions in components that mount fresh (dialog
+ * content, sheet forms) — not a hook, so it won't react to live resizes.
+ */
+export function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+}

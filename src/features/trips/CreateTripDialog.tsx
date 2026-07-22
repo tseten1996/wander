@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
 import { MEMBER_COLORS } from '@/lib/colors'
-import { cn } from '@/lib/utils'
+import { cn, isMobileViewport } from '@/lib/utils'
 import { useCreateTrip, type CreatedTrip } from './api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -89,7 +89,7 @@ function WelcomeStep({ created, onDone }: { created: CreatedTrip; onDone: () => 
             <MemberAvatar name={name || '?'} color={color} size="md" />
             <Input
               id="welcome-name"
-              autoFocus
+              autoFocus={!isMobileViewport()}
               maxLength={40}
               aria-invalid={err.name ? true : undefined}
               {...form.register('name')}
