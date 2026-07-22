@@ -28,6 +28,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
@@ -363,11 +364,19 @@ function ItemDialog({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_7rem]">
             <div className="space-y-1.5">
               <Label htmlFor="it-loc">Location</Label>
-              <Input
-                id="it-loc"
-                placeholder="Toyosu, Tokyo"
-                aria-invalid={err.location ? true : undefined}
-                {...form.register('location')}
+              <Controller
+                control={form.control}
+                name="location"
+                render={({ field }) => (
+                  <PlaceAutocomplete
+                    id="it-loc"
+                    placeholder="Toyosu, Tokyo"
+                    aria-invalid={err.location ? true : undefined}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
               />
               {err.location && <p className="text-xs text-danger">{err.location.message}</p>}
             </div>
