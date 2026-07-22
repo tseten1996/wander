@@ -1,0 +1,40 @@
+name: Apply Supabase migrations
+
+# Keeps the database in lockstep with the frontend: any push to main that
+# touches supabase/migrations/ applies the pending migrations to the live
+# project before Pages redeploys the app. Requires two repo secrets:
+#   SUPABASE_ACCESS_TOKEN — personal access token (supabase.com/dashboard/account/tokens)
+#   SUPABASE_DB_PASSWORD  — the project's database password
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      # The project ref is public (it's in the app bundle's Supabase URL).
+      SUPABASE_PROJECT_REF: qqmfxbcroxunvtgxxray
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Show migration status
+        run: supabase migration list --linked
+      - name: Apply pending migrations
+        run: supabase db push

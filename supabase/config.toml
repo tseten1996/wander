@@ -1,0 +1,4 @@
+# Minimal Supabase CLI config — enough for `supabase link` + `supabase db push`
+# in CI (.github/workflows/migrate.yml). Local-stack settings are intentionally
+# omitted; add them with `supabase init` if local development ever needs them.
+project_id = "wander"
