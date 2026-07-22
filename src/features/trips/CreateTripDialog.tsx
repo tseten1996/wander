@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { useCreateTrip, type CreatedTrip } from './api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { MemberAvatar } from '@/components/ui/avatar'
 import {
@@ -205,15 +206,33 @@ export function CreateTripDialog({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="trip-start">Start date</Label>
-                  <Input id="trip-start" type="date" {...form.register('start_date')} />
+                  <Controller
+                    control={form.control}
+                    name="start_date"
+                    render={({ field }) => (
+                      <DateInput
+                        id="trip-start"
+                        value={field.value ?? ''}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="trip-end">End date</Label>
-                  <Input
-                    id="trip-end"
-                    type="date"
-                    aria-invalid={err.end_date ? true : undefined}
-                    {...form.register('end_date')}
+                  <Controller
+                    control={form.control}
+                    name="end_date"
+                    render={({ field }) => (
+                      <DateInput
+                        id="trip-end"
+                        value={field.value ?? ''}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        aria-invalid={err.end_date ? true : undefined}
+                      />
+                    )}
                   />
                   {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
                 </div>

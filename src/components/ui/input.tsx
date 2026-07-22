@@ -11,19 +11,22 @@ import { cn } from '@/lib/utils'
   styles by selector specificity, so a focused invalid field stays red
   instead of flipping back to the primary teal.
 */
+/* Shared by Input and by input-shaped triggers (e.g. the DateInput popover
+   button) so they can't drift apart visually. */
+export const inputClasses = cn(
+  'flex h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink placeholder:text-faint',
+  'transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
+  'aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/10',
+  'aria-invalid:focus:border-danger aria-invalid:focus:ring-danger/25',
+  'disabled:cursor-not-allowed disabled:opacity-50'
+)
+
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
     <input
       ref={ref}
       data-tap-target=""
-      className={cn(
-        'flex h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink placeholder:text-faint',
-        'transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
-        'aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/10',
-        'aria-invalid:focus:border-danger aria-invalid:focus:ring-danger/25',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        className
-      )}
+      className={cn(inputClasses, className)}
       {...props}
     />
   )

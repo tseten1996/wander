@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -155,15 +156,33 @@ function TripInfoCard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="s-start">Start</Label>
-              <Input id="s-start" type="date" {...form.register('start_date')} />
+              <Controller
+                control={form.control}
+                name="start_date"
+                render={({ field }) => (
+                  <DateInput
+                    id="s-start"
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-end">End</Label>
-              <Input
-                id="s-end"
-                type="date"
-                aria-invalid={err.end_date ? true : undefined}
-                {...form.register('end_date')}
+              <Controller
+                control={form.control}
+                name="end_date"
+                render={({ field }) => (
+                  <DateInput
+                    id="s-end"
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    aria-invalid={err.end_date ? true : undefined}
+                  />
+                )}
               />
               {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
             </div>

@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input, Textarea } from '@/components/ui/input'
+import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -218,7 +219,18 @@ function ItemDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="task-due">Due date</Label>
-              <Input id="task-due" type="date" {...form.register('due_date')} />
+              <Controller
+                control={form.control}
+                name="due_date"
+                render={({ field }) => (
+                  <DateInput
+                    id="task-due"
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
+              />
             </div>
           </div>
           <div className="space-y-1.5">
