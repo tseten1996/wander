@@ -7,28 +7,70 @@ export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogClose = DialogPrimitive.Close
 
+/*
+  Close-restore bookkeeping (#44). Dialogs here are opened by plain
+  state-setting buttons (not DialogPrimitive.Trigger), so Radix's built-in
+  restore targets a null triggerRef and focus fell to <body> on close. There
+  is also no component-lifecycle moment that reliably precedes React's
+  autoFocus, so track the last element focused OUTSIDE any overlay at the
+  document level — that element is the opener (or, for dialogs launched from
+  a dropdown item, the dropdown's own trigger, which is the right target
+  since the item unmounts with the menu).
+*/
+let lastFocusOutsideOverlays: HTMLElement | null = null
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const t = e.target
+      if (
+        t instanceof HTMLElement &&
+        !t.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')
+      ) {
+        lastFocusOutsideOverlays = t
+      }
+    },
+    true
+  )
+}
+
 export function DialogContent({
   className,
   children,
   onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
+  const handleCloseAutoFocus = (e: Event) => {
+    onCloseAutoFocus?.(e)
+    const opener = lastFocusOutsideOverlays
+    if (!e.defaultPrevented && opener?.isConnected) {
+      e.preventDefault()
+      opener.focus()
+    }
+  }
   // On mobile, opening a sheet must not summon the on-screen keyboard over
-  // it: stop Radix from focusing the first tabbable (usually a text input),
-  // and release anything an autoFocus attribute grabbed during mount.
-  // Desktop keeps the type-immediately behavior.
+  // it: stop Radix from focusing the first tabbable (usually a text input).
+  // Focus still moves INSIDE the dialog (#44) — onto the sheet container
+  // itself (tabIndex -1 below) — so screen readers and Escape land in the
+  // right place without any text control holding focus. Desktop keeps the
+  // type-immediately behavior. Radix restores focus to the trigger on close.
+  const contentRef = React.useRef<React.ComponentRef<typeof DialogPrimitive.Content>>(null)
   const handleOpenAutoFocus = (e: Event) => {
     onOpenAutoFocus?.(e)
     if (!e.defaultPrevented && isMobileViewport()) {
       e.preventDefault()
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      contentRef.current?.focus()
     }
   }
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
       <DialogPrimitive.Content
+        ref={contentRef}
+        tabIndex={-1}
         onOpenAutoFocus={handleOpenAutoFocus}
+        onCloseAutoFocus={handleCloseAutoFocus}
         className={cn(
           // Bottom sheet on mobile, centered dialog on desktop. The close
           // button lives outside the scrollable inner div (below) so it

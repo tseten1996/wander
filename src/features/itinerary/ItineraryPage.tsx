@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
 import {
-  DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors,
-  type DragEndEvent,
+  DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter,
+  useSensor, useSensors, type DragEndEvent,
 } from '@dnd-kit/core'
 import {
-  SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
+  SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable,
+  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Controller, useForm } from 'react-hook-form'
@@ -165,7 +166,10 @@ function DaySection({ day, items }: { day: string | null; items: ItineraryItem[]
   const reorder = useReorderItinerary(trip.id)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    // Keyboard alternative to drag (#44): focus a grip handle, Space/Enter
+    // picks the item up, arrows move it, Space drops, Escape cancels.
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
   function onDragEnd(event: DragEndEvent) {

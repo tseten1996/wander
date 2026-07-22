@@ -10,6 +10,13 @@
   Semantic names only — components say `bg-surface text-ink border-line`,
   never raw palette values. Light = warm paper + deep ocean teal + sunset
   amber. Dark keeps the hues, swaps the neutrals.
+
+  Contrast contract (#44): every text token meets WCAG AA (4.5:1) on the
+  surfaces it's used over — ink/ink-soft/muted/faint on bg/surface/elevated/
+  sunken, primary + danger as text, and each status color on its -soft badge
+  background — in BOTH themes. Check any change with a contrast calculator
+  before shipping; the deliberate ordering ink > ink-soft > muted > faint
+  must also survive.
 */
 :root {
   --bg: #faf9f7;
@@ -18,8 +25,8 @@
   --sunken: #f3f1ed;
   --ink: #1c1917;
   --ink-soft: #44403c;
-  --muted: #78716c;
-  --faint: #a8a29e;
+  --muted: #6d675f;
+  --faint: #787169;
   --line: #e7e4df;
   --line-strong: #d6d2cb;
 
@@ -29,11 +36,11 @@
   --primary-faint: #f0fdfa;
   --on-primary: #ffffff;
 
-  --accent: #d97706;
+  --accent: #b45309;
   --accent-soft: #fef3c7;
-  --danger: #e11d48;
+  --danger: #c81640;
   --danger-soft: #ffe4e6;
-  --success: #059669;
+  --success: #047857;
   --success-soft: #d1fae5;
 }
 
@@ -45,7 +52,7 @@
   --ink: #fafaf9;
   --ink-soft: #d6d3d1;
   --muted: #a8a29e;
-  --faint: #78716c;
+  --faint: #948d87;
   --line: #292524;
   --line-strong: #44403c;
 
