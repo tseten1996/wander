@@ -104,11 +104,16 @@ function DesktopDatePicker({
 
   // Keep DOM focus on the roving-tabindex day while the popover is open, so
   // arrow keys visibly walk the grid and Enter/Space select the focused day.
+  // Deferred a tick: on mouse-open the browser's default click behavior
+  // focuses the trigger *after* this effect has run and would win otherwise.
   React.useEffect(() => {
     if (!open) return
-    gridRef.current
-      ?.querySelector<HTMLButtonElement>(`[data-day="${format(focused, 'yyyy-MM-dd')}"]`)
-      ?.focus()
+    const t = window.setTimeout(() => {
+      gridRef.current
+        ?.querySelector<HTMLButtonElement>(`[data-day="${format(focused, 'yyyy-MM-dd')}"]`)
+        ?.focus()
+    }, 0)
+    return () => window.clearTimeout(t)
   }, [open, focused, month])
 
   const onGridKeyDown = (e: React.KeyboardEvent) => {
@@ -121,8 +126,14 @@ function DesktopDatePicker({
     } else if (e.key === 'PageUp' || e.key === 'PageDown') {
       e.preventDefault()
       moveFocus(addMonths(focused, e.key === 'PageUp' ? -1 : 1))
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // Select from state, not from the DOM-focused button — the roving
+      // focus() is deferred a tick, so under fast keystrokes the previously
+      // focused day's button could still hold focus and swallow the key.
+      e.preventDefault()
+      select(focused)
     }
-    // Enter/Space activate the focused <button>; Escape closes via Radix.
+    // Escape closes via Radix and restores focus to the trigger.
   }
 
   return (
