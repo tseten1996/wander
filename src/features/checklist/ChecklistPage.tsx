@@ -3,11 +3,15 @@ import { motion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { CalendarClock, ListChecks, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  CalendarClock, ListChecks, MoreHorizontal, Pencil, Plus, Sparkles, Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useChecklist, useCreateChecklistItem, useDeleteChecklistItem, useToggleDone,
+  STARTER_TASKS,
+  useChecklist, useCreateChecklistItem, useDeleteChecklistItem,
+  useDismissChecklistStarter, useSeedStarterTasks, useToggleDone,
   useUpdateChecklistItem,
 } from './api'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -254,6 +258,61 @@ function ItemDialog({
   )
 }
 
+function StarterPackOffer() {
+  const { trip, me } = useTripContext()
+  const seed = useSeedStarterTasks(trip.id, me.id)
+  const dismiss = useDismissChecklistStarter(trip.id)
+  // Hide instantly on accept/dismiss; the DB flag keeps it hidden on reload.
+  const [hidden, setHidden] = React.useState(false)
+  if (hidden) return null
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+      <Card className="p-5 text-center sm:p-6">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary-faint text-primary">
+          <Sparkles className="size-6" />
+        </div>
+        <h3 className="mt-4 font-display text-lg font-bold">Start with the essentials</h3>
+        <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+          New trip? Add a handful of common tasks to get going — you can edit,
+          reassign, or remove any of them.
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+          {STARTER_TASKS.map((title) => (
+            <Badge key={title} variant="neutral">
+              {title}
+            </Badge>
+          ))}
+        </div>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-center">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setHidden(true)
+              dismiss.mutate()
+            }}
+          >
+            No thanks
+          </Button>
+          <Button
+            onClick={async () => {
+              try {
+                await seed.mutateAsync()
+                setHidden(true)
+              } catch {
+                // toasted by the mutation's onError; keep the offer visible to retry
+              }
+            }}
+            disabled={seed.isPending}
+          >
+            <Plus /> {seed.isPending ? 'Adding…' : 'Add these tasks'}
+          </Button>
+        </div>
+      </Card>
+    </motion.div>
+  )
+}
+
 export default function ChecklistPage() {
   const { trip } = useTripContext()
   const checklist = useChecklist(trip.id)
@@ -297,16 +356,20 @@ export default function ChecklistPage() {
       ) : checklist.isError ? (
         <ErrorState onRetry={() => checklist.refetch()} isRetrying={checklist.isFetching} />
       ) : items.length === 0 ? (
-        <EmptyState
-          icon={ListChecks}
-          title="Nothing on the list"
-          description="Flights, bookings, insurance, tickets — add the tasks and assign owners."
-          action={
-            <Button onClick={() => setNewOpen(true)}>
-              <Plus /> Add the first task
-            </Button>
-          }
-        />
+        trip.checklist_starter_dismissed ? (
+          <EmptyState
+            icon={ListChecks}
+            title="Nothing on the list"
+            description="Flights, bookings, insurance, tickets — add the tasks and assign owners."
+            action={
+              <Button onClick={() => setNewOpen(true)}>
+                <Plus /> Add the first task
+              </Button>
+            }
+          />
+        ) : (
+          <StarterPackOffer />
+        )
       ) : (
         <Card className="divide-y divide-line/60 p-2">
           {open.map((item, i) => (
