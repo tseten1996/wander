@@ -91,8 +91,16 @@ export function useUnreadDots(
 
   React.useEffect(() => {
     if (!isUnreadRoute(activeRoute)) return
+    // Acknowledge everything currently on the page, not just "now" — server
+    // timestamps can be ahead of the device clock, and a dot that survives
+    // an actual visit would be worse than no dot at all.
+    const idx = UNREAD_FEATURES.findIndex((f) => f.route === activeRoute)
+    const newest = latest[idx]?.data
+    const stamp = new Date(
+      Math.max(Date.now(), newest ? new Date(newest).getTime() : 0)
+    ).toISOString()
     setSeen((prev) => {
-      const next = { ...prev, [activeRoute]: new Date().toISOString() }
+      const next = { ...prev, [activeRoute]: stamp }
       try {
         localStorage.setItem(storageKey(tripId, memberId), JSON.stringify(next))
       } catch {
@@ -100,6 +108,9 @@ export function useUnreadDots(
       }
       return next
     })
+    // `latest` is intentionally represented by latestStamp — the array's
+    // identity changes every render, its data only when a probe refetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute, latestStamp, tripId, memberId])
 
   return React.useMemo(() => {
