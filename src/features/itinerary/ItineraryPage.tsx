@@ -383,7 +383,6 @@ function ItemDialog({
             <Label htmlFor="it-url">Link</Label>
             <Input
               id="it-url"
-              type="url"
               inputMode="url"
               placeholder="https://teamlab.art/e/planets"
               aria-invalid={err.url ? true : undefined}
