@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Activity, BudgetEntry, ChecklistItem, ItineraryItem } from '@/types'
+import { isPollOpen } from '@/features/polls/api'
+import type { Activity, BudgetEntry, ChecklistItem, ItineraryItem, Poll } from '@/types'
 
 export interface DashboardData {
   checklist: Pick<ChecklistItem, 'id' | 'done'>[]
@@ -24,13 +25,12 @@ export function useDashboard(tripId: string) {
     queryFn: async (): Promise<DashboardData> => {
       const today = new Date().toISOString().slice(0, 10)
       const [
-        checklist, polls, pollsClosed, questions, questionsAnswered,
+        checklist, polls, questions, questionsAnswered,
         packing, packingPacked, budget, upcoming, activity,
         messages, notes, ideas,
       ] = await Promise.all([
         supabase.from('checklist_items').select('id, done').eq('trip_id', tripId),
-        supabase.from('polls').select('id', { count: 'exact', head: true }).eq('trip_id', tripId),
-        supabase.from('polls').select('id', { count: 'exact', head: true }).eq('trip_id', tripId).eq('closed', true),
+        supabase.from('polls').select('closed, closes_at').eq('trip_id', tripId),
         supabase.from('questions').select('id', { count: 'exact', head: true }).eq('trip_id', tripId),
         supabase.from('questions').select('id', { count: 'exact', head: true }).eq('trip_id', tripId).eq('answered', true),
         supabase.from('packing_items').select('id', { count: 'exact', head: true }).eq('trip_id', tripId),
@@ -59,10 +59,14 @@ export function useDashboard(tripId: string) {
         checklist.error ?? budget.error ?? upcoming.error ?? activity.error
       if (firstError) throw firstError
 
+      // A poll counts as complete when the Polls UI would no longer accept
+      // votes — same predicate as isPollOpen (closed OR past closes_at).
+      const pollRows = (polls.data ?? []) as Pick<Poll, 'closed' | 'closes_at'>[]
+
       return {
         checklist: checklist.data ?? [],
-        pollsTotal: polls.count ?? 0,
-        pollsClosed: pollsClosed.count ?? 0,
+        pollsTotal: pollRows.length,
+        pollsClosed: pollRows.filter((p) => !isPollOpen(p)).length,
         questionsTotal: questions.count ?? 0,
         questionsAnswered: questionsAnswered.count ?? 0,
         packingTotal: packing.count ?? 0,
