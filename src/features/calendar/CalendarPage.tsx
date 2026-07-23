@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, formatTime, longDate } from '@/lib/utils'
+import { useTripWeather } from '@/hooks/useWeather'
+import { describeWeather } from '@/lib/weather'
 import type { BudgetEntry, ChecklistItem, ItineraryItem } from '@/types'
 
 interface CalendarEvent {
@@ -91,6 +93,7 @@ const KIND_ICON = {
 export default function CalendarPage() {
   const { trip } = useTripContext()
   const events = useCalendarEvents(trip.id)
+  const weather = useTripWeather(trip)
   const [month, setMonth] = React.useState(() =>
     trip.start_date ? parseISO(trip.start_date) : new Date()
   )
@@ -139,6 +142,7 @@ export default function CalendarPage() {
           <div className="grid grid-cols-7 gap-1">
             {days.map((day) => {
               const dayEvents = (events.data ?? []).filter((e) => isSameDay(e.date, day))
+              const dayWeather = weather.data?.get(format(day, 'yyyy-MM-dd'))
               const inTrip =
                 trip.start_date && trip.end_date &&
                 day >= parseISO(trip.start_date) && day <= parseISO(trip.end_date)
@@ -174,6 +178,21 @@ export default function CalendarPage() {
                       <span key={e.id} className={cn('size-1.5 rounded-full', e.color)} />
                     ))}
                   </span>
+                  {dayWeather && (() => {
+                    const { label, Icon } = describeWeather(dayWeather.code)
+                    const hi = Math.round(dayWeather.tempMax)
+                    const lo = Math.round(dayWeather.tempMin)
+                    return (
+                      <span
+                        className="mt-auto flex items-center gap-0.5 pb-0.5 text-[10px] leading-none text-muted"
+                        title={`${label} · High ${hi}° Low ${lo}°`}
+                      >
+                        <Icon className="size-3 shrink-0" aria-hidden />
+                        <span className="tabular-nums">{hi}°</span>
+                        <span className="sr-only">{`${label}, high ${hi} degrees, low ${lo} degrees`}</span>
+                      </span>
+                    )
+                  })()}
                 </button>
               )
             })}
