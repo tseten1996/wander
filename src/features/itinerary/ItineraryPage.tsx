@@ -42,6 +42,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn, formatMoney, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
+import { useTripWeather } from '@/hooks/useWeather'
+import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
 const itinerarySchema = z
@@ -162,7 +164,15 @@ function SortableItemCard({ item }: { item: ItineraryItem }) {
   )
 }
 
-function DaySection({ day, items }: { day: string | null; items: ItineraryItem[] }) {
+function DaySection({
+  day,
+  items,
+  weather,
+}: {
+  day: string | null
+  items: ItineraryItem[]
+  weather?: DailyWeather
+}) {
   const { trip } = useTripContext()
   const reorder = useReorderItinerary(trip.id)
   const sensors = useSensors(
@@ -197,6 +207,21 @@ function DaySection({ day, items }: { day: string | null; items: ItineraryItem[]
         <span className="text-xs font-normal text-faint">
           {items.length} {items.length === 1 ? 'item' : 'items'}
         </span>
+        {weather && (() => {
+          const { label, Icon } = describeWeather(weather.code)
+          const hi = Math.round(weather.tempMax)
+          const lo = Math.round(weather.tempMin)
+          return (
+            <span
+              className="ml-auto flex items-center gap-1 self-center rounded-full bg-sunken px-2 py-0.5 text-xs font-normal text-muted"
+              title={`${label} · High ${hi}° Low ${lo}°`}
+            >
+              <Icon className="size-3.5 shrink-0" aria-hidden />
+              <span className="tabular-nums">{hi}° / {lo}°</span>
+              <span className="sr-only">{`${label}, high ${hi} degrees, low ${lo} degrees`}</span>
+            </span>
+          )
+        })()}
       </h2>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
@@ -429,6 +454,7 @@ function ItemDialog({
 export default function ItineraryPage() {
   const { trip } = useTripContext()
   const itinerary = useItinerary(trip.id)
+  const weather = useTripWeather(trip)
   const [newOpen, setNewOpen] = React.useState(false)
   const [exporting, setExporting] = React.useState(false)
 
@@ -505,7 +531,12 @@ export default function ItineraryPage() {
           className="space-y-8"
         >
           {days.map((day) => (
-            <DaySection key={day ?? 'unscheduled'} day={day} items={byDay.get(day)!} />
+            <DaySection
+              key={day ?? 'unscheduled'}
+              day={day}
+              items={byDay.get(day)!}
+              weather={day ? weather.data?.get(day) : undefined}
+            />
           ))}
         </motion.div>
       )}

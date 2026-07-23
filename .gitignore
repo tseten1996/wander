@@ -5,6 +5,9 @@ node_modules/
 dist/
 dev-dist/
 
+# TypeScript incremental build caches (machine-specific, unreviewable)
+*.tsbuildinfo
+
 # Local env — never commit secrets
 .env
 .env.local
