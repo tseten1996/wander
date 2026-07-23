@@ -1,0 +1,51 @@
+# CodeRabbit — advisory-only configuration.
+#
+# CodeRabbit is a SIGNAL feeding the loop's single judgment gate (the Code
+# Review routine, routines/02-code-review.md) — it is deliberately NOT a
+# gate itself. It must never approve, request changes, or set a blocking
+# commit status: the review routine ingests its comments as evidence,
+# verifies each against the code, and owns the verdict. See
+# routines/README.md ("The loop as a graph") for why there is exactly one
+# judgment gate.
+language: en-US
+
+reviews:
+  # Comments only — never an APPROVE / REQUEST_CHANGES review verdict.
+  request_changes_workflow: false
+  # No commit status: CodeRabbit must not appear as a check that could be
+  # mistaken for (or promoted to) a required gate.
+  commit_status: false
+  high_level_summary: true
+  poem: false
+  review_status: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    # Only the loop's branches; keep noise off meta/docs-only PRs.
+    base_branches:
+      - main
+  path_instructions:
+    - path: "supabase/migrations/**"
+      instructions: |
+        RLS is this app's only security boundary — the client talks straight
+        to Postgres with a public anon key. For every new table: require
+        trip_id, ENABLE ROW LEVEL SECURITY, and policies built on
+        is_trip_member()/is_trip_owner() in the same migration. Read every
+        policy and SECURITY DEFINER function as an attacker holding a valid
+        anonymous session for a DIFFERENT trip: flag any cross-trip read or
+        write, any member→owner escalation, and any function trusting a
+        client-supplied id.
+    - path: "src/**"
+      instructions: |
+        Design tokens come from src/index.css (Tailwind v4 @theme) — flag
+        raw hex colours outside src/lib/colors.ts and
+        src/features/trips/covers.ts. Flag hover-only interactions, tap
+        targets under 44px, and inputs under 16px font on mobile. Each
+        feature's api.ts is the only file that may touch Supabase for that
+        feature; UI primitives (src/components/ui) must not import from
+        features. TanStack Query keys are [table, tripId]. No new paid or
+        API-key-requiring dependencies — this is a free-tier static SPA.
+
+chat:
+  auto_reply: false

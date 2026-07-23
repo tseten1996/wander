@@ -107,8 +107,8 @@ On a re-review after a bounce, your scope is exactly: (a) each finding from your
 
 1. Submit a REQUEST_CHANGES review on the PR with numbered findings: severity, file:line, what is wrong, what done looks like.
 2. Comment on the PR: `wander-review: <head-sha>`
-3. Add the `needs-changes` label to the PR.
-4. On the issue: add `queue:in-progress` FIRST, then remove `queue:in-review` (transition rule — a crash mid-swap must leave a detectable dual-label, never a label-less issue).
+3. Add the `needs-changes` label to the PR. (This triggers the auto-bounce workflow, which may perform step 4's swap before you do — that's expected.)
+4. On the issue: add `queue:in-progress` FIRST, then remove `queue:in-review` (transition rule — a crash mid-swap must leave a detectable dual-label, never a label-less issue). Treat label operations as idempotent: "already present" on add and "not found" on remove are successes, not errors — the auto-bounce workflow races you benignly.
 5. Comment on the issue: `Review found <n> blocker(s)/major(s) — bounced to queue:in-progress. See PR review.`
 
 Adding `queue:in-progress` back to the issue fires Build & Ship automatically; it will pick the issue up in review-response mode.

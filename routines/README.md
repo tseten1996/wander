@@ -64,26 +64,27 @@ queue:in-review ──(review PASS, human merges; `Closes #` fires)──► clo
 |---|---|---|
 | `improvement`, `epic`, `blocked`, `theme:*` | discovery, human, build (follow-up splits) | discovery, human |
 | `queue:ready` | discovery, human (deliberate override) | build (on promotion), discovery (hygiene) |
-| `queue:in-progress` | **build only** — plus review, on a bounce | build (handoff), discovery (post-merge cleanup) |
+| `queue:in-progress` | **build only** — plus review and the auto-bounce workflow, on a bounce | build (handoff), discovery (post-merge cleanup) |
 | `queue:in-review` | **build only** (handoff) | review (bounce), discovery (post-merge cleanup) |
 | `needs-changes` (on PR) | review routine; human (manual bounce, below) | build (findings addressed) |
 
-### Manual bounce (human)
+### Manual bounce (human) — one action
 
 To send an open PR back for fixes yourself — e.g. CodeRabbit or your own
-reading found something the routine passed — apply the labels **in this
-order**, because `needs-changes` on the PR is the only signal that
-distinguishes your bounce from a crashed handoff (which build repairs by
-reverting the labels):
+reading found something the routine passed — **add `needs-changes` to the
+PR** (and say what you want fixed in a PR comment, or leave the CodeRabbit
+threads unresolved). That single label is the whole protocol:
+`.github/workflows/auto-bounce.yml` performs the issue swap (add
+`queue:in-progress`, then remove `queue:in-review`) and fires Build & Ship,
+which enters review-response mode and treats every unresolved review thread
+on the PR — routine, CodeRabbit, or yours — as the work order. A human
+bounce does not consume the review routine's two-bounce budget.
 
-1. Add `needs-changes` to the **PR** (state what you want fixed in a PR
-   comment or by leaving the CodeRabbit threads unresolved)
-2. Add `queue:in-progress` to the **issue** (this fires Build & Ship)
-3. Remove `queue:in-review` from the issue
-
-Build & Ship enters review-response mode and treats every unresolved review
-thread on the PR — routine, CodeRabbit, or yours — as the work order. A
-human bounce does not consume the review routine's two-bounce budget.
+`needs-changes` on the PR is the signal that distinguishes a deliberate
+bounce from a crashed handoff — which is why the PR label, not the issue
+swap, is the human's action. Fallback if Actions is down: do the swap by
+hand in the same order (PR `needs-changes` → issue add `queue:in-progress`
+→ issue remove `queue:in-review`).
 
 ### Wake sources (liveness table)
 
@@ -92,7 +93,7 @@ human bounce does not consume the review routine's two-bounce budget.
 | `queue:ready` waiting | `issues: labeled` fires build | discovery's daily **liveness sweep** re-fires build |
 | build capacity freed | `pull_request: closed` on `improve/*` fires build | liveness sweep |
 | PR awaiting review | CI `workflow_run: completed` on `improve/*` fires review | liveness sweep (flags unreviewed heads) |
-| bounce awaiting fix | `issues: labeled` (`queue:in-progress`) fires build | liveness sweep |
+| bounce awaiting fix | auto-bounce workflow (label swap + direct fire); `issues: labeled` fires build on routine bounces | liveness sweep |
 | fix awaiting re-review | CI completion + `needs-changes` removal both fire review | liveness sweep |
 | approved, awaiting merge | human (terminal) | discovery flags after 3 days |
 | two-bounce escalation | human (terminal) | discovery flags daily |

@@ -21,6 +21,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { searchAnchorId } from '@/features/search/anchor'
 import { cn } from '@/lib/utils'
+import { FALLBACK_MEMBER_COLOR } from '@/lib/colors'
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
 const MESSAGE_MAX_LENGTH = 4000
@@ -92,7 +93,7 @@ function Bubble({
     <div id={searchAnchorId(message.id)} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
       <MemberAvatar
         name={author?.display_name ?? 'Left the trip'}
-        color={author?.color ?? '#a8a29e'}
+        color={author?.color ?? FALLBACK_MEMBER_COLOR}
         size="sm"
         className="mt-1"
       />
