@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
 import { useUnreadDots, type UnreadRoute } from '@/hooks/useUnreadDots'
 import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
+import { LivePresence } from '@/components/layout/LivePresence'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageLoader, EmptyState } from '@/components/ui/misc'
@@ -145,6 +146,10 @@ function Shell() {
           </div>
         </div>
 
+        <div className="px-5 pt-1">
+          <LivePresence showLabel />
+        </div>
+
         <button
           type="button"
           onClick={openSearch}
@@ -205,6 +210,7 @@ function Shell() {
           <ArrowLeft className="size-4" />
         </Link>
         <p className="min-w-0 flex-1 truncate px-1 font-display font-bold">{trip.name}</p>
+        <LivePresence className="shrink-0" size="xs" max={3} hideWhenSolo />
         <Button variant="ghost" size="icon" onClick={openSearch} aria-label="Search this trip">
           <Search />
         </Button>
