@@ -48,6 +48,76 @@ preserve:
   (the add-before-remove rule), and recovery is mechanical wherever the
   correct repair is provable (resolution table below).
 
+## Full flow diagram
+
+Teal = Claude routines · dark slate = deterministic gate · purple = advisory
+signal (never blocking) · amber = the human · dotted = advisory/cleanup
+paths. Static export: [docs/screenshots/improvement-loop.png](../docs/screenshots/improvement-loop.png).
+
+```mermaid
+flowchart TD
+    classDef agent fill:#0f766e,stroke:#115e59,color:#ffffff
+    classDef gate fill:#1e293b,stroke:#0f172a,color:#ffffff
+    classDef human fill:#d97706,stroke:#b45309,color:#ffffff
+    classDef advisory fill:#7c3aed,stroke:#6d28d9,color:#ffffff
+    classDef auto fill:#e7e5e4,stroke:#a8a29e,color:#1c1917
+
+    HI([Human files ideas<br/>wander-idea-triage or by hand]):::human
+    HB([Human adds needs-changes<br/>to PR — one-action bounce]):::human
+    HM([Human merges PR<br/>the only path to Done]):::human
+    HE([Human resolves escalations<br/>and blocked issues]):::human
+
+    subgraph TIER3["TIER 3 — Discovery and Strategy — daily schedule"]
+        D1[Product audit +<br/>backlog hygiene, cap 25]:::agent
+        D2[Create scored issues<br/>5-axis scores, floor 14/25]:::agent
+        D3[Stage queue:ready, max 2<br/>governor-aware, no file overlap]:::agent
+        D4[Sweeper: liveness sweep,<br/>residue cleanup, telemetry,<br/>weekly escape-analysis retro]:::agent
+        D1 --> D2 --> D3
+    end
+
+    HI --> D2
+    D3 -->|label event fires<br/>fire-build.yml| B0
+
+    subgraph TIER1["TIER 1 — Build and Ship — fired on demand"]
+        B0{Hard gates: state doctor,<br/>PR governor max 3, run lease,<br/>one build at a time}:::agent
+        B1[Promote issue to<br/>queue:in-progress]:::agent
+        B2[Branch improve/issue-num,<br/>smallest complete version,<br/>Wander invariants]:::agent
+        B3[Local verify: typecheck,<br/>build, Playwright smoke]:::agent
+        B4[Open PR with improve label,<br/>issue to queue:in-review]:::agent
+        BR[Review-response mode:<br/>fix or rebut every thread,<br/>verify advisory findings first]:::agent
+        B0 --> B1 --> B2 --> B3 --> B4
+        BR --> B3
+    end
+
+    B4 -->|every push| CI
+    B4 -.->|comments as<br/>they arrive| CR
+
+    CI[DETERMINISTIC GATE — CI<br/>typecheck + guards: RLS gate,<br/>token lint + bundle budget + smoke]:::gate
+    CR[CodeRabbit — ADVISORY ONLY<br/>comments, never a verdict,<br/>never a commit status]:::advisory
+
+    CI -->|workflow_run fires<br/>fire-review.yml| R0
+
+    subgraph TIER2["TIER 2 — Code Review — the single judgment gate"]
+        R0{Unreviewed head SHA?<br/>red CI = auto-blocker,<br/>pending CI = wait}:::agent
+        R1[Independent re-verification +<br/>invariant audit: RLS attacker lens,<br/>identity, free tier, design floors]:::agent
+        R2[Ingest advisory findings as evidence:<br/>verify each, classify or reject]:::agent
+        R3{Verdict — convergence:<br/>max 2 bounces,<br/>no moving goalposts}:::agent
+        R0 --> R1 --> R2 --> R3
+    end
+
+    CR -.->|evidence,<br/>never verdicts| R2
+
+    R3 -->|PASS: approve| HM
+    R3 -->|FAIL: needs-changes on PR,<br/>issue back to queue:in-progress| BR
+    R3 -->|3rd failure:<br/>two-bounce escalation| HE
+
+    HB -->|auto-bounce.yml:<br/>atomic swap + direct fire| BR
+
+    HM --> DONE[Closes-num auto-closes issue,<br/>deploy to Pages + apply migrations]:::auto
+    DONE -->|PR closed fires fire-build.yml:<br/>capacity freed, next staged issue| B0
+    DONE -.->|residue cleaned<br/>next morning| D4
+```
+
 ## Label state machine
 
 ```
