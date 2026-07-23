@@ -20,10 +20,14 @@ on:
     types: [completed]
   pull_request:
     types: [unlabeled]
+  workflow_dispatch:
+
+permissions: {}
 
 jobs:
   fire:
     if: >-
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
         startsWith(github.event.workflow_run.head_branch, 'improve/')) ||
       (github.event_name == 'pull_request' &&
@@ -38,10 +42,14 @@ jobs:
         env:
           ROUTINE_ID: ${{ secrets.WANDER_REVIEW_ROUTINE_ID }}
           ROUTINE_TOKEN: ${{ secrets.WANDER_REVIEW_ROUTINE_TOKEN }}
-          EVENT: ${{ github.event_name }}
-          BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.event.workflow_run.head_branch }}
+          DETAIL: >-
+            ${{ github.event_name == 'pull_request'
+                && format('needs-changes removed on branch {0}', github.event.pull_request.head.ref)
+                || (github.event_name == 'workflow_run'
+                    && format('CI completed on branch {0}', github.event.workflow_run.head_branch)
+                    || 'manual dispatch') }}
         run: |
-          BODY=$(jq -n --arg t "GitHub event: ${EVENT} on branch ${BRANCH}. A Wander improve PR may be ready for review. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
+          BODY=$(jq -n --arg t "GitHub event: ${DETAIL}. A Wander improve PR may be ready for review. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
           curl -sS --fail -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
             -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
             -H "anthropic-version: 2023-06-01" \
