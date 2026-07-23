@@ -109,7 +109,7 @@ const INVITE_PREVIEW = {
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
-  const { pathname } = new URL(req.url())
+  const { pathname, search } = new URL(req.url())
   const method = req.method()
 
   let body = {}
@@ -159,13 +159,20 @@ async function routeSupabase(route) {
   if (pathname.endsWith('/rest/v1/rpc/get_invite_preview')) return json([INVITE_PREVIEW])
 
   // ── REST tables ──
+  // Discriminate by the query shape so one stub serves several call sites:
+  //   trips   — the trip page reads a single row (`.eq('id', …).maybeSingle()`);
+  //             the home list reads all rows (no id filter).
+  //   members — the trip page reads the ordered roster (`.order('joined_at')`);
+  //             create-trip reads just the owner row (`.single()`, no order).
   if (pathname.endsWith('/rest/v1/trips')) {
     if (method === 'POST') return json(TRIP_ROW, 201) // insert().select().single()
-    return json([]) // trip list — start with none
+    if (search.includes('id=eq.')) return json(TRIP_ROW) // trip page: one trip
+    return json([]) // home trip list — start with none
   }
   if (pathname.endsWith('/rest/v1/members')) {
-    if (method === 'GET') return json(OWNER_MEMBER) // .single() after create
-    return json([])
+    if (method !== 'GET') return json([])
+    if (search.includes('order=')) return json([OWNER_MEMBER]) // trip page roster
+    return json(OWNER_MEMBER) // .single() after create
   }
 
   // Anything else (stray queries from lazily-mounted pages): empty + harmless.
@@ -320,6 +327,37 @@ async function runSignOut(browser) {
   }
 }
 
+async function runTripPresence(browser) {
+  console.log('\n▶ trip page mounts without a realtime presence crash')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}`, { waitUntil: 'domcontentloaded' })
+    // TripLayout renders the trip name once trip + members resolve. The layout
+    // mounts LivePresence twice (desktop sidebar + mobile top bar); both share
+    // ONE presence channel via the trip context. If a change makes each widget
+    // open its own subscription again, supabase-js reuses the channel by topic
+    // and the second `.on('presence', …)` throws
+    //   "cannot add `presence` callbacks for … after `subscribe()`."
+    // during commit — which unmounts the whole tree, leaving a blank page and
+    // never rendering the name below.
+    await page
+      .getByText('Lisbon in Spring')
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('trip layout renders for the owner (no blank-screen crash)')
+
+    const presenceErr = errors.find((m) => /presence|after `subscribe`/i.test(m))
+    if (presenceErr) throw new Error(`realtime presence crash re-introduced: ${presenceErr}`)
+    if (errors.length) throw new Error(`Uncaught page error on the trip page: ${errors[0]}`)
+    ok('trip page raised no realtime presence / uncaught errors')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -332,6 +370,7 @@ async function main() {
     await runCreateTrip(browser)
     await runOffline(browser)
     await runSignOut(browser)
+    await runTripPresence(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()

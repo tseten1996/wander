@@ -1,5 +1,4 @@
 import { useTripContext } from '@/hooks/useTrip'
-import { useTripPresence } from '@/hooks/usePresence'
 import { AvatarStack } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 
@@ -23,8 +22,7 @@ export function LivePresence({
   hideWhenSolo?: boolean
   className?: string
 }) {
-  const { members, me } = useTripContext()
-  const activeIds = useTripPresence(me.trip_id, me.id)
+  const { members, me, activeIds } = useTripContext()
 
   // Keep the roster's stable joined_at order so avatars don't reshuffle as
   // presence syncs.

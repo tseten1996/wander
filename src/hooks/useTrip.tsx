@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useTripRealtime } from '@/hooks/useRealtime'
+import { useTripPresence } from '@/hooks/usePresence'
 import type { Member, Trip } from '@/types'
 
 interface TripContextValue {
@@ -12,6 +13,8 @@ interface TripContextValue {
   /** The signed-in person's member row in this trip. */
   me: Member
   isOwner: boolean
+  /** Member ids of everyone who currently has this trip open (live presence). */
+  activeIds: Set<string>
 }
 
 const TripContext = React.createContext<TripContextValue | null>(null)
@@ -69,6 +72,12 @@ export function TripProvider({
   const members = membersQuery.data
   const me = members?.find((m) => m.user_id === session?.user.id)
 
+  // One presence channel per open trip, subscribed here so every consumer of
+  // the trip context shares it. Subscribing per-component instead would open a
+  // second channel on the same topic — supabase-js reuses the channel by topic
+  // and then throws "cannot add `presence` callbacks … after `subscribe()`".
+  const activeIds = useTripPresence(trip?.id, me?.id)
+
   const value = React.useMemo<TripContextValue | null>(() => {
     if (!trip || !members || !me) return null
     return {
@@ -77,8 +86,9 @@ export function TripProvider({
       membersById: new Map(members.map((m) => [m.id, m])),
       me,
       isOwner: me.role === 'owner',
+      activeIds,
     }
-  }, [trip, members, me])
+  }, [trip, members, me, activeIds])
 
   if (tripQuery.isLoading || membersQuery.isLoading) return <>{fallback}</>
   // RLS returns no row when you're not a member — same as not-found.
