@@ -30,6 +30,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { searchAnchorId } from '@/features/search/anchor'
+import { LinkChip } from '@/features/itinerary/links'
 import { cn, isMobileViewport, timeAgo } from '@/lib/utils'
 import type { PollCategory } from '@/types'
 
@@ -54,6 +55,24 @@ const pollSchema = z
       .array(
         z.object({
           value: z.string().trim().max(120, 'Keep options under 120 characters'),
+          image_url: z
+            .string()
+            .trim()
+            .max(2000, 'That link is too long')
+            .optional()
+            .nullable()
+            .refine((v) => !v || /^https?:\/\/.+/i.test(v), {
+              message: 'Must be a full http(s) link',
+            }),
+          link_url: z
+            .string()
+            .trim()
+            .max(2000, 'That link is too long')
+            .optional()
+            .nullable()
+            .refine((v) => !v || /^https?:\/\/.+/i.test(v), {
+              message: 'Must be a full http(s) link',
+            }),
         })
       )
       .min(2)
@@ -67,6 +86,22 @@ const pollSchema = z
 type PollFormValues = z.input<typeof pollSchema>
 
 /* ── Poll card ──────────────────────────────────────────────────────────── */
+
+/** Thumbnail for a poll option that has an image. Hides itself if the image
+    fails to load, so a broken URL never leaves a broken-image icon. */
+function OptionThumb({ url }: { url: string }) {
+  const [failed, setFailed] = React.useState(false)
+  if (failed) return null
+  return (
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      className="size-11 shrink-0 rounded-lg border border-line object-cover"
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
   const { trip, me, isOwner, membersById } = useTripContext()
@@ -149,44 +184,53 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
             const isMine = myVote?.option_id === option.id
             const isWinner = !open && optionVotes.length > 0 && optionVotes.length === maxVotes
             return (
-              <button
-                key={option.id}
-                type="button"
-                disabled={!open || vote.isPending}
-                onClick={() => vote.mutate({ poll, optionId: option.id })}
-                className={cn(
-                  'relative w-full overflow-hidden rounded-xl border px-4 py-3 text-left transition-all',
-                  open && 'cursor-pointer hover:border-primary/50',
-                  isMine ? 'border-primary' : 'border-line',
-                  isWinner && 'border-accent'
-                )}
-              >
-                <span
+              <div key={option.id} className="space-y-1.5">
+                <button
+                  type="button"
+                  disabled={!open || vote.isPending}
+                  onClick={() => vote.mutate({ poll, optionId: option.id })}
                   className={cn(
-                    'absolute inset-y-0 left-0 transition-all duration-500',
-                    isWinner ? 'bg-accent-soft' : 'bg-primary-faint'
+                    'relative w-full overflow-hidden rounded-xl border px-4 py-3 text-left transition-all',
+                    open && 'cursor-pointer hover:border-primary/50',
+                    isMine ? 'border-primary' : 'border-line',
+                    isWinner && 'border-accent'
                   )}
-                  style={{ width: `${share}%` }}
-                />
-                <span className="relative flex items-center justify-between gap-3">
-                  <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                    {isWinner && <Crown className="size-4 shrink-0 text-accent" />}
-                    {isMine && <Check className="size-4 shrink-0 text-primary" />}
-                    <span className="truncate">{option.label}</span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <span className="flex -space-x-1">
-                      {optionVotes.slice(0, 3).map((v) => {
-                        const m = membersById.get(v.member_id)
-                        return m ? (
-                          <MemberAvatar key={v.id} name={m.display_name} color={m.color} size="xs" />
-                        ) : null
-                      })}
+                >
+                  <span
+                    className={cn(
+                      'absolute inset-y-0 left-0 transition-all duration-500',
+                      isWinner ? 'bg-accent-soft' : 'bg-primary-faint'
+                    )}
+                    style={{ width: `${share}%` }}
+                  />
+                  <span className="relative flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                      {isWinner && <Crown className="size-4 shrink-0 text-accent" />}
+                      {isMine && <Check className="size-4 shrink-0 text-primary" />}
+                      {option.image_url && <OptionThumb url={option.image_url} />}
+                      <span className="truncate">{option.label}</span>
                     </span>
-                    <span className="text-xs tabular-nums text-muted">{optionVotes.length}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="flex -space-x-1">
+                        {optionVotes.slice(0, 3).map((v) => {
+                          const m = membersById.get(v.member_id)
+                          return m ? (
+                            <MemberAvatar key={v.id} name={m.display_name} color={m.color} size="xs" />
+                          ) : null
+                        })}
+                      </span>
+                      <span className="text-xs tabular-nums text-muted">{optionVotes.length}</span>
+                    </span>
                   </span>
-                </span>
-              </button>
+                </button>
+                {/* Link lives outside the vote button — an anchor nested in a
+                    button is invalid and would hijack the vote tap. */}
+                {option.link_url && (
+                  <div className="pl-1">
+                    <LinkChip url={option.link_url} />
+                  </div>
+                )}
+              </div>
             )
           })}
         </div>
@@ -215,11 +259,12 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   const { trip, me } = useTripContext()
   const createPoll = useCreatePoll(trip.id, me.id)
 
+  const emptyOption = { value: '', image_url: '', link_url: '' }
   const empty: PollFormValues = {
     question: '',
     category: 'general',
     closes_at: '',
-    options: [{ value: '' }, { value: '' }],
+    options: [{ ...emptyOption }, { ...emptyOption }],
   }
   const form = useForm<PollFormValues>({
     resolver: zodResolver(pollSchema),
@@ -238,7 +283,13 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
         question: values.question.trim(),
         category: values.category as PollCategory,
         closes_at: values.closes_at ? new Date(values.closes_at).toISOString() : null,
-        options: values.options.map((o) => o.value.trim()).filter(Boolean),
+        options: values.options
+          .filter((o) => o.value.trim())
+          .map((o) => ({
+            label: o.value.trim(),
+            image_url: o.image_url?.trim() || null,
+            link_url: o.link_url?.trim() || null,
+          })),
       })
       onOpenChange(false)
       toast.success('Poll created')
@@ -295,26 +346,58 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           </div>
           <div className="space-y-1.5">
             <Label>Options</Label>
-            <div className="space-y-2">
-              {fields.map((field, i) => (
-                <div key={field.id} className="flex gap-2">
-                  <Input
-                    placeholder={`Option ${i + 1}`}
-                    {...form.register(`options.${i}.value` as const)}
-                  />
-                  {fields.length > 2 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Remove option"
-                      onClick={() => remove(i)}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
-              ))}
+            <div className="space-y-3">
+              {fields.map((field, i) => {
+                const optErr = err.options?.[i]
+                return (
+                  <div key={field.id} className="rounded-xl border border-line p-3">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={`Option ${i + 1}`}
+                        aria-label={`Option ${i + 1}`}
+                        {...form.register(`options.${i}.value` as const)}
+                      />
+                      {fields.length > 2 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove option ${i + 1}`}
+                          onClick={() => remove(i)}
+                        >
+                          <X />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Input
+                          inputMode="url"
+                          placeholder="Image URL (optional)"
+                          aria-label={`Option ${i + 1} image URL`}
+                          aria-invalid={optErr?.image_url ? true : undefined}
+                          {...form.register(`options.${i}.image_url` as const)}
+                        />
+                        {optErr?.image_url && (
+                          <p className="text-xs text-danger">{optErr.image_url.message}</p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <Input
+                          inputMode="url"
+                          placeholder="Link (optional)"
+                          aria-label={`Option ${i + 1} link`}
+                          aria-invalid={optErr?.link_url ? true : undefined}
+                          {...form.register(`options.${i}.link_url` as const)}
+                        />
+                        {optErr?.link_url && (
+                          <p className="text-xs text-danger">{optErr.link_url.message}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             {(err.options?.root?.message ?? err.options?.message) && (
               <p className="text-xs text-danger">
@@ -327,7 +410,7 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
                 variant="soft"
                 size="sm"
                 className="mt-1"
-                onClick={() => append({ value: '' })}
+                onClick={() => append({ ...emptyOption })}
               >
                 <Plus /> Add option
               </Button>

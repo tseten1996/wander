@@ -37,7 +37,7 @@ export function useCreatePoll(tripId: string, memberId: string) {
       question: string
       category: PollCategory
       closes_at: string | null
-      options: string[]
+      options: { label: string; image_url: string | null; link_url: string | null }[]
     }) => {
       const { data: poll, error } = await supabase
         .from('polls')
@@ -52,11 +52,13 @@ export function useCreatePoll(tripId: string, memberId: string) {
         .single()
       if (error) throw error
       const { error: optError } = await supabase.from('poll_options').insert(
-        input.options.map((label, position) => ({
+        input.options.map((option, position) => ({
           trip_id: tripId,
           poll_id: poll.id,
-          label,
+          label: option.label,
           position,
+          image_url: option.image_url,
+          link_url: option.link_url,
         }))
       )
       if (optError) throw optError

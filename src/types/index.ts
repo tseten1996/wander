@@ -62,6 +62,8 @@ export interface PollOption {
   poll_id: string
   label: string
   position: number
+  image_url: string | null
+  link_url: string | null
 }
 
 export interface Vote {
