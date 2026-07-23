@@ -12,19 +12,25 @@
  * This uses the `playwright` library directly (like scripts/screenshot.mjs)
  * with plain assertions, so it needs no extra test-runner dependency.
  *
- * Usage:
- *   npm run build && npm test              # spawns `vite preview` itself
- *   BASE_URL=http://localhost:4173 npm test  # reuse an already-running server
+ * It expects the built app to already be served (the CI job and the local
+ * recipe below background `vite preview` first — the same pattern the
+ * screenshot harness uses):
+ *
+ *   npm run build
+ *   npm run preview -- --port 4173 --strictPort &
+ *   # wait for http://localhost:4173 to answer, then:
+ *   npm test
+ *
+ * Env:
+ *   BASE_URL                  app under test (default http://localhost:4173)
+ *   PLAYWRIGHT_CHROMIUM_PATH  optional Chromium executable (sandboxes that
+ *                             ship a browser at a fixed path); CI installs it
+ *                             at the default location and leaves this unset.
  */
-import { spawn } from 'node:child_process'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { chromium } from 'playwright'
 
 const SUPABASE_HOST = 'qqmfxbcroxunvtgxxray.supabase.co'
-const PORT = 4173
-const OWN_BASE_URL = `http://localhost:${PORT}`
-const BASE_URL = process.env.BASE_URL ?? OWN_BASE_URL
-const START_SERVER = !process.env.BASE_URL
+const BASE_URL = process.env.BASE_URL ?? 'http://localhost:4173'
 
 // ── Canned identities & rows the stub hands back ──────────────────────────
 const TRIP_ID = '11111111-1111-4111-8111-111111111111'
@@ -185,7 +191,6 @@ async function newContext(browser, initSession) {
       ['wander_auth', JSON.stringify(initSession)]
     )
   }
-  // Fail loudly on any uncaught page exception during a flow.
   return context
 }
 
@@ -196,7 +201,7 @@ async function runSignIn(browser) {
   const errors = []
   page.on('pageerror', (e) => errors.push(e))
   try {
-    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'networkidle' })
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
     await page.getByPlaceholder('you@example.com').fill('traveller@example.com')
     await page.getByRole('button', { name: 'Email me a magic link' }).click()
     await page.getByText('Check your inbox').waitFor({ state: 'visible', timeout: 10_000 })
@@ -213,7 +218,7 @@ async function runJoin(browser) {
   const context = await newContext(browser)
   const page = await context.newPage()
   try {
-    await page.goto(`${BASE_URL}/#/join/lisbon2026`, { waitUntil: 'networkidle' })
+    await page.goto(`${BASE_URL}/#/join/lisbon2026`, { waitUntil: 'domcontentloaded' })
     // Anonymous session + NAME_REQUIRED + preview all resolved → the form shows.
     await page.getByText('Lisbon in Spring').waitFor({ state: 'visible', timeout: 10_000 })
     ok('invite preview renders after the anonymous session is created')
@@ -231,7 +236,7 @@ async function runCreateTrip(browser) {
   const context = await newContext(browser, OWNER_SESSION)
   const page = await context.newPage()
   try {
-    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'networkidle' })
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
     await page.getByRole('button', { name: 'New trip' }).first().click()
     await page.locator('#trip-name').waitFor({ state: 'visible', timeout: 10_000 })
     ok('create-trip dialog opens for a signed-in owner')
@@ -247,35 +252,12 @@ async function runCreateTrip(browser) {
   }
 }
 
-// ── Optional: spawn `vite preview` and wait for it to answer ──────────────
-async function waitForServer(url, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return
-    } catch {
-      // not up yet
-    }
-    await sleep(500)
-  }
-  throw new Error(`Server at ${url} did not become ready within ${timeoutMs}ms`)
-}
-
 async function main() {
-  let server
-  if (START_SERVER) {
-    console.log(`Starting \`vite preview\` on :${PORT} …`)
-    server = spawn('npm', ['run', 'preview', '--', '--port', String(PORT), '--strictPort'], {
-      stdio: 'inherit',
-      env: process.env,
-    })
-    await waitForServer(OWN_BASE_URL)
-  } else {
-    console.log(`Using existing server at ${BASE_URL}`)
-  }
-
-  const browser = await chromium.launch()
+  console.log(`Smoke test against ${BASE_URL}`)
+  // Honour a pre-installed browser when one is provided (e.g. sandboxes that
+  // ship Chromium at a fixed path); CI installs it at the default location.
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined
+  const browser = await chromium.launch({ executablePath })
   try {
     await runSignIn(browser)
     await runJoin(browser)
@@ -283,13 +265,10 @@ async function main() {
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()
-    if (server) server.kill('SIGTERM')
   }
 }
 
 main().catch((err) => {
   console.error('\n✗ smoke test failed:', err)
-  process.exitCode = 1
-  // Ensure a spawned preview server doesn't keep the process alive.
-  setTimeout(() => process.exit(1), 100).unref?.()
+  process.exit(1)
 })

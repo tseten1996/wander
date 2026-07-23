@@ -38,5 +38,17 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - run: npm run build
-      - name: Smoke test (stubbed Supabase)
-        run: npm test
+      - name: Serve the built app and run the smoke test
+        run: |
+          npm run preview -- --port 4173 --strictPort > preview.log 2>&1 &
+          PREVIEW_PID=$!
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:4173/ >/dev/null && break
+            sleep 1
+          done
+          npm test
+          STATUS=$?
+          kill "$PREVIEW_PID" 2>/dev/null || true
+          exit $STATUS
+        env:
+          BASE_URL: http://localhost:4173
