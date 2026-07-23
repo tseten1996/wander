@@ -58,7 +58,9 @@ npm test                                        # Playwright smoke (hermetic, st
 
 3. Check CI on the PR's head commit via the GitHub MCP (check runs / commit statuses). **Red CI is an automatic BLOCKER** even if local verification passed — local env and CI env can diverge, and a human merging a red PR is exactly what this gate exists to prevent. **Pending CI** → skip this PR this run without a verdict; you will be fired again when CI completes.
 
-4. Walk the checklist:
+4. **Ingest advisory-reviewer findings (CodeRabbit etc.) as evidence, not verdicts.** Read whatever advisory review comments exist on the PR at this moment — do not wait for more. Verify each against the actual code: a confirmed finding enters the severity classification below like any finding of your own; an unconfirmed one is noted in your review as checked-and-rejected (one line, so the human sees it was not ignored) and never influences the verdict. You own the verdict alone — an advisory reviewer can add to your findings, never veto or approve.
+
+5. Walk the checklist:
 
 ## Correctness & Scope
 - Every acceptance criterion in the issue is actually satisfied — check each one against the code, not the PR description.
@@ -88,7 +90,7 @@ npm test                                        # Playwright smoke (hermetic, st
 
 On a re-review after a bounce, your scope is exactly: (a) each finding from your previous review — resolved, or credibly rebutted on the thread; (b) regressions introduced by the fix commits; (c) code newly added since your last reviewed SHA. Do NOT raise new MAJOR or MINOR objections against unchanged code you already reviewed — if it passed once, it passes again. The single exception is a missed **BLOCKER** (security, money-equivalent, data loss): raise it, but explicitly labeled `missed in prior review`, because safety outranks convergence. This rule is what makes the bounce cycle terminate.
 
-5. Classify every finding:
+6. Classify every finding:
 - **BLOCKER** — invariant violation, red build or red CI, unmet acceptance criterion, RLS/cross-trip/security defect, data-loss path, missing migration note.
 - **MAJOR** — correctness risk, missing smoke coverage on an auth/join-path change, broken mobile/theme floor, misleading PR description.
 - **MINOR** — style, naming, small refactor opportunities. Comment only; minors alone never bounce a PR.
