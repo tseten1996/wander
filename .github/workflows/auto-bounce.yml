@@ -1,0 +1,78 @@
+# Makes the human's manual bounce atomic. Adding `needs-changes` to an
+# improve/* PR is the single human action; this workflow performs the issue
+# label swap (add queue:in-progress, then remove queue:in-review — crash-safe
+# ordering) and fires the Build & Ship routine directly.
+#
+# Why it fires the routine itself: label changes made with GITHUB_TOKEN do
+# not trigger other workflows (GitHub's recursion guard), so fire-build.yml
+# would never see this swap.
+#
+# When the Code Review routine bounces (it authenticates as a real user, not
+# GITHUB_TOKEN), this workflow also runs and repeats the same swap — all
+# operations are idempotent and same-direction, so the duplication is
+# harmless, and the build routine's run lease absorbs the duplicate fire.
+#
+# Required repo secrets (shared with fire-build.yml):
+#   WANDER_BUILD_ROUTINE_ID / WANDER_BUILD_ROUTINE_TOKEN
+name: Auto-bounce on needs-changes
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  bounce:
+    if: >-
+      github.event.label.name == 'needs-changes' &&
+      startsWith(github.event.pull_request.head.ref, 'improve/')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: wander-auto-bounce-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Swap issue labels (add in-progress, then remove in-review)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request
+            const m =
+              pr.head.ref.match(/^improve\/(\d+)-/) ||
+              (pr.body || '').match(/[Cc]loses #(\d+)/)
+            if (!m) {
+              core.notice('No linked issue found on this PR — nothing to bounce')
+              return
+            }
+            const issue_number = Number(m[1])
+            const { owner, repo } = context.repo
+            const issue = await github.rest.issues.get({ owner, repo, issue_number })
+            if (issue.data.state !== 'open') {
+              core.notice(`Issue #${issue_number} is not open — nothing to bounce`)
+              return
+            }
+            // Transition rule: add first, then remove — a crash mid-swap must
+            // leave a detectable dual-label, never a label-less issue.
+            await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['queue:in-progress'] })
+            try {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'queue:in-review' })
+            } catch (e) {
+              if (e.status !== 404) throw e // already absent = fine (idempotent)
+            }
+            core.notice(`Bounced issue #${issue_number} to queue:in-progress`)
+
+      - name: Fire Build & Ship (GITHUB_TOKEN label events don't trigger fire-build.yml)
+        env:
+          ROUTINE_ID: ${{ secrets.WANDER_BUILD_ROUTINE_ID }}
+          ROUTINE_TOKEN: ${{ secrets.WANDER_BUILD_ROUTINE_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          BODY=$(jq -n --arg t "GitHub event: needs-changes added to PR #${PR_NUMBER} (${BRANCH}) — bounced for fixes. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
+          curl -sS --fail -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$BODY"

@@ -10,6 +10,9 @@ export const MEMBER_COLORS = [
   '#4f46e5', // indigo
 ] as const
 
+// Neutral fallback for members whose colour is missing (stone-400).
+export const FALLBACK_MEMBER_COLOR = '#a8a29e'
+
 export function randomMemberColor(): string {
   return MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)]
 }

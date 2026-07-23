@@ -1,8 +1,11 @@
-# Fires the "Wander Build & Ship" Claude routine the moment an issue gains a
-# queue label:
-#   - queue:ready    — the discovery routine (or the human) staged new work
-#   - queue:in-progress — the Code Review routine restored it on a bounce
-#     (review-response mode), or the build routine promoted its own pick
+# Fires the "Wander Build & Ship" Claude routine whenever build work may be
+# actionable:
+#   - an issue gains queue:ready (discovery/human staged work) or
+#     queue:in-progress (review bounced, or build promoted its own pick)
+#   - a PR from an improve/* branch closes (merged or abandoned) — build
+#     capacity freed; without this the queue stalls silently, because a
+#     staged issue's label event fires only once
+#   - manual dispatch (operational kick / testing the wiring)
 # The routine re-verifies all state itself (run lease, governor, state
 # doctor), so a spurious or self-triggered fire is a cheap no-op.
 #
@@ -15,10 +18,20 @@ name: Fire Wander Build & Ship
 on:
   issues:
     types: [labeled]
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+permissions: {}
 
 jobs:
   fire:
-    if: contains(fromJSON('["queue:ready", "queue:in-progress"]'), github.event.label.name)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+        contains(fromJSON('["queue:ready", "queue:in-progress"]'), github.event.label.name)) ||
+      (github.event_name == 'pull_request' &&
+        startsWith(github.event.pull_request.head.ref, 'improve/'))
     runs-on: ubuntu-latest
     concurrency:
       group: wander-fire-build
@@ -28,11 +41,14 @@ jobs:
         env:
           ROUTINE_ID: ${{ secrets.WANDER_BUILD_ROUTINE_ID }}
           ROUTINE_TOKEN: ${{ secrets.WANDER_BUILD_ROUTINE_TOKEN }}
-          LABEL: ${{ github.event.label.name }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
+          DETAIL: >-
+            ${{ github.event_name == 'issues'
+                && format('issue #{0} ({1}) was labeled {2}', github.event.issue.number, github.event.issue.title, github.event.label.name)
+                || (github.event_name == 'pull_request'
+                    && format('PR #{0} ({1}) closed — build capacity may have freed for staged work', github.event.number, github.event.pull_request.head.ref)
+                    || 'manual dispatch') }}
         run: |
-          BODY=$(jq -n --arg t "GitHub event: issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) was labeled ${LABEL}. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
+          BODY=$(jq -n --arg t "GitHub event: ${DETAIL}. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
           curl -sS --fail -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
             -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
             -H "anthropic-version: 2023-06-01" \
