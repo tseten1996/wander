@@ -66,7 +66,24 @@ queue:in-review ──(review PASS, human merges; `Closes #` fires)──► clo
 | `queue:ready` | discovery, human (deliberate override) | build (on promotion), discovery (hygiene) |
 | `queue:in-progress` | **build only** — plus review, on a bounce | build (handoff), discovery (post-merge cleanup) |
 | `queue:in-review` | **build only** (handoff) | review (bounce), discovery (post-merge cleanup) |
-| `needs-changes` (on PR) | **review only** | build (findings addressed) |
+| `needs-changes` (on PR) | review routine; human (manual bounce, below) | build (findings addressed) |
+
+### Manual bounce (human)
+
+To send an open PR back for fixes yourself — e.g. CodeRabbit or your own
+reading found something the routine passed — apply the labels **in this
+order**, because `needs-changes` on the PR is the only signal that
+distinguishes your bounce from a crashed handoff (which build repairs by
+reverting the labels):
+
+1. Add `needs-changes` to the **PR** (state what you want fixed in a PR
+   comment or by leaving the CodeRabbit threads unresolved)
+2. Add `queue:in-progress` to the **issue** (this fires Build & Ship)
+3. Remove `queue:in-review` from the issue
+
+Build & Ship enters review-response mode and treats every unresolved review
+thread on the PR — routine, CodeRabbit, or yours — as the work order. A
+human bounce does not consume the review routine's two-bounce budget.
 
 ### Wake sources (liveness table)
 
@@ -102,6 +119,7 @@ output; only the last row goes to the human:
 | `queue:in-progress` + `queue:in-review` | open PR, **no** `needs-changes` | remove `queue:in-progress` (handoff crashed) | build or review |
 | `queue:in-progress` + `queue:in-review` | open PR **with** `needs-changes` | remove `queue:in-review` (bounce crashed) | build |
 | `queue:in-progress`, open PR, no `needs-changes` | handoff never finished | add `queue:in-review`, then remove `queue:in-progress` | build |
+| | | *This repair is why a manual bounce MUST label the PR `needs-changes` first — without it, build reads the state as a crashed handoff and reverts the bounce.* | |
 | anything else contradictory | no single provable cause | comment + flag for human; touch nothing | any (observe only) |
 
 ## Untrusted content rule (all routines)

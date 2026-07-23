@@ -23,8 +23,8 @@ All GitHub reads and writes (issues, labels, comments, PRs) go through the **Git
 - **IN_PROGRESS COUNT > 1** → output `AMBIGUOUS: multiple issues queue:in-progress (#a, #b) — exiting; human must resolve` and stop.
 - **IN_PROGRESS COUNT == 1** → that issue is the work order; skip selection below.
   - Find any open PR referencing it (search open PRs for `#<issue#>` / branch `improve/<issue#>-`):
-    - PR labeled **`needs-changes`** → **review-response mode** (see below).
-    - PR open without `needs-changes` → a previous run crashed mid-handoff. Complete the handoff deterministically: add `queue:in-review`, then remove `queue:in-progress`, comment `Handoff completed after interrupted run: <pr-url>`, and exit. Review will be fired by CI as usual.
+    - PR labeled **`needs-changes`** → **review-response mode** (see below). The label may come from the Code Review routine's bounce or from the human bouncing manually (see "Manual bounce" in routines/README.md) — the procedure is identical either way.
+    - PR open without `needs-changes` → a previous run crashed mid-handoff. Complete the handoff deterministically: add `queue:in-review`, then remove `queue:in-progress`, comment `Handoff completed after interrupted run: <pr-url>`, and exit. Review will be fired by CI as usual. (This repair is exactly why a human bouncing manually must label the PR `needs-changes` before touching the issue labels.)
     - No PR, branch pushed to within the last hour → a previous firing is plausibly still working; exit rather than double-build.
     - No PR otherwise → re-run: switch to that branch and continue where it left off.
 - **IN_PROGRESS COUNT == 0** → select from READY:
@@ -44,10 +44,13 @@ Then:
 
 # Review-Response Mode
 
-The Code Review routine bounced this PR. The review IS the work order:
+This PR was bounced — by the Code Review routine or by the human. **Every unresolved review thread and comment on the PR is the work order**, whoever wrote it:
 
-1. Check out the existing branch; read every review comment and thread on the PR.
-2. Address each finding — fix it, or reply on the thread with a concrete reason it should not change.
+1. Check out the existing branch; read every review thread and comment on the PR — the Code Review routine's findings, the human's comments, and any advisory reviewer's (e.g. CodeRabbit).
+2. Triage each by source:
+   - **Code Review routine and human findings** — authoritative. Fix each, or reply on the thread with a concrete reason it should not change.
+   - **Advisory-reviewer findings (CodeRabbit etc.)** — evidence, not verdicts. Verify each against the actual code first: fix the confirmed ones; for false positives, reply on the thread with the concrete rebuttal (file/line reasoning, not "disagree"). Never apply a suggested change you haven't verified — an unvetted auto-fix is how a plausible-but-wrong suggestion ships.
+   - Leave no thread unanswered: every finding ends as a fix commit or a written rebuttal.
 3. Run full Verification below, push to the same branch.
 4. Hand back: remove the `needs-changes` label from the PR; on the issue, add `queue:in-review` FIRST, then remove `queue:in-progress`, and comment `Review findings addressed: <pr-url>`.
 5. Skip the rest of this routine.
