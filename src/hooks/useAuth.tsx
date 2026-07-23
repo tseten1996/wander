@@ -2,7 +2,7 @@ import * as React from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { getDeviceId } from '@/lib/device'
-import { purgePersistedCache } from '@/lib/queryClient'
+import { purgePersistedCache, cancelPendingPurge } from '@/lib/queryClient'
 
 interface AuthContextValue {
   session: Session | null
@@ -38,6 +38,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // trip data lingers in localStorage or re-hydrates for the next user
         // on a shared browser (issue #55 review).
         purgePersistedCache()
+      } else if (s) {
+        // A new session started — cancel any trailing purge still pending from a
+        // prior sign-out so it can't wipe this account's freshly-persisted cache.
+        cancelPendingPurge()
       }
     })
     return () => sub.subscription.unsubscribe()

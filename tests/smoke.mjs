@@ -264,7 +264,7 @@ async function runOffline(browser) {
       timeout: 10_000,
     })
     const banner = page.getByText('Offline — showing saved data')
-    await banner.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {})
+    await banner.waitFor({ state: 'hidden', timeout: 2_000 })
 
     // setOffline flips navigator.onLine and fires the 'offline' event.
     await context.setOffline(true)

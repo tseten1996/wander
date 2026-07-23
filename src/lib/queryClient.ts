@@ -63,10 +63,32 @@ export const persister = createSyncStoragePersister({
  * later, so we remove the client immediately AND once more past that window —
  * leaving not even an empty snapshot at rest.
  */
+/** Handle for the trailing purge timer, so a new session can cancel it. */
+let pendingPurgeTimer: number | undefined
+
+/**
+ * Cancel a still-pending trailing purge. Called when a new session starts (see
+ * useAuth) so a prior sign-out's delayed removeClient() can't wipe the incoming
+ * account's freshly-persisted snapshot (issue #55 review, CodeRabbit).
+ */
+export function cancelPendingPurge(): void {
+  if (pendingPurgeTimer !== undefined) {
+    window.clearTimeout(pendingPurgeTimer)
+    pendingPurgeTimer = undefined
+  }
+}
+
 export function purgePersistedCache(): void {
   queryClient.clear()
   void persister.removeClient()
   if (typeof window !== 'undefined') {
-    window.setTimeout(() => void persister.removeClient(), PERSIST_THROTTLE + 300)
+    // Supersede any earlier pending purge, then schedule one past the throttle
+    // window to sweep the empty snapshot the provider re-persists after clear().
+    // Tracked so a sign-in before it fires can cancel it (cancelPendingPurge).
+    cancelPendingPurge()
+    pendingPurgeTimer = window.setTimeout(() => {
+      pendingPurgeTimer = undefined
+      void persister.removeClient()
+    }, PERSIST_THROTTLE + 300)
   }
 }
