@@ -22,6 +22,7 @@ export function useTrips(enabled: boolean) {
 export interface CreateTripInput {
   name: string
   destination?: string
+  cover_url?: string | null
   start_date?: string | null
   end_date?: string | null
   estimated_budget?: number | null
@@ -44,6 +45,7 @@ export function useCreateTrip() {
         .insert({
           name: input.name,
           destination: input.destination || null,
+          cover_url: input.cover_url || null,
           start_date: input.start_date || null,
           end_date: input.end_date || null,
           estimated_budget: input.estimated_budget ?? null,

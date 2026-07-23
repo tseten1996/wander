@@ -22,6 +22,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
+import { CoverPicker } from '@/features/trips/CoverPicker'
+import { isPresetCover } from '@/features/trips/covers'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -42,7 +44,9 @@ const tripInfoSchema = z
       .trim()
       .max(2000, 'That link is too long')
       .optional()
-      .refine((v) => !v || /^https?:\/\/.+/i.test(v), { message: 'Must be a valid http(s) link' }),
+      .refine((v) => !v || /^https?:\/\/.+/i.test(v) || isPresetCover(v), {
+        message: 'Must be a valid http(s) link',
+      }),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
     estimated_budget: z.coerce
@@ -149,18 +153,20 @@ function TripInfoCard() {
             {err.description && <p className="text-xs text-danger">{err.description.message}</p>}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="s-cover">Cover photo URL</Label>
-            <Input
-              id="s-cover"
-              type="url"
-              placeholder="https://images.unsplash.com/…"
-              aria-invalid={err.cover_url ? true : undefined}
-              {...form.register('cover_url')}
+            <Label htmlFor="s-cover">Cover</Label>
+            <Controller
+              control={form.control}
+              name="cover_url"
+              render={({ field }) => (
+                <CoverPicker
+                  id="s-cover"
+                  value={field.value ?? ''}
+                  onChange={field.onChange}
+                  aria-invalid={err.cover_url ? true : undefined}
+                />
+              )}
             />
             {err.cover_url && <p className="text-xs text-danger">{err.cover_url.message}</p>}
-            <p className="text-xs text-faint">
-              Tip: right-click any photo on the web and “Copy image address”.
-            </p>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="space-y-1.5">

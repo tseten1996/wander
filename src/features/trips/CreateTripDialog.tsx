@@ -10,6 +10,8 @@ import { friendlyError } from '@/lib/errors'
 import { MEMBER_COLORS } from '@/lib/colors'
 import { cn, isMobileViewport } from '@/lib/utils'
 import { useCreateTrip, type CreatedTrip } from './api'
+import { CoverPicker } from './CoverPicker'
+import { isPresetCover } from './covers'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
@@ -24,6 +26,14 @@ const schema = z
   .object({
     name: z.string().trim().min(1, 'Give the trip a name').max(80),
     destination: z.string().trim().max(120).optional(),
+    cover_url: z
+      .string()
+      .trim()
+      .max(2000, 'That link is too long')
+      .optional()
+      .refine((v) => !v || /^https?:\/\/.+/i.test(v) || isPresetCover(v), {
+        message: 'Must be a valid http(s) link',
+      }),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
     estimated_budget: z.coerce.number().positive().optional().or(z.literal('')),
@@ -146,6 +156,7 @@ export function CreateTripDialog({
       const result = await createTrip.mutateAsync({
         name: values.name!,
         destination: values.destination,
+        cover_url: values.cover_url?.trim() || null,
         start_date: values.start_date || null,
         end_date: values.end_date || null,
         estimated_budget:
@@ -215,6 +226,22 @@ export function CreateTripDialog({
                     />
                   )}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="trip-cover">Cover</Label>
+                <Controller
+                  control={form.control}
+                  name="cover_url"
+                  render={({ field }) => (
+                    <CoverPicker
+                      id="trip-cover"
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      aria-invalid={err.cover_url ? true : undefined}
+                    />
+                  )}
+                />
+                {err.cover_url && <p className="text-xs text-danger">{err.cover_url.message}</p>}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
