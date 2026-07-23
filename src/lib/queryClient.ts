@@ -33,6 +33,12 @@ export const queryClient = new QueryClient({
   },
 })
 
+/** localStorage key the persisted snapshot is written under. */
+export const PERSIST_CACHE_KEY = 'wander_query_cache'
+
+/** How long persistence writes are throttled/coalesced. */
+export const PERSIST_THROTTLE = 1000
+
 /**
  * Synchronous localStorage persister. `storage: undefined` (e.g. SSR / a
  * locked-down browser) makes it a no-op instead of throwing — the app simply
@@ -40,6 +46,27 @@ export const queryClient = new QueryClient({
  */
 export const persister = createSyncStoragePersister({
   storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  key: 'wander_query_cache',
-  throttleTime: 1000,
+  key: PERSIST_CACHE_KEY,
+  throttleTime: PERSIST_THROTTLE,
 })
+
+/**
+ * Purge every trace of cached server state. Used on sign-out (see useAuth) so
+ * one account's private trip data — trip names, member emails, notes, budget —
+ * can't survive on disk or re-hydrate for the next account signing in on a
+ * shared browser (query keys are not user-scoped). RLS still guards every
+ * server read; this closes the client-side data-at-rest gap the persisted
+ * cache opened (issue #55 review).
+ *
+ * Clearing the in-memory cache makes PersistQueryClientProvider's throttled
+ * subscription re-persist one more (now-empty) snapshot up to PERSIST_THROTTLE
+ * later, so we remove the client immediately AND once more past that window —
+ * leaving not even an empty snapshot at rest.
+ */
+export function purgePersistedCache(): void {
+  queryClient.clear()
+  void persister.removeClient()
+  if (typeof window !== 'undefined') {
+    window.setTimeout(() => void persister.removeClient(), PERSIST_THROTTLE + 300)
+  }
+}

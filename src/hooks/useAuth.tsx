@@ -2,6 +2,7 @@ import * as React from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { getDeviceId } from '@/lib/device'
+import { purgePersistedCache } from '@/lib/queryClient'
 
 interface AuthContextValue {
   session: Session | null
@@ -29,9 +30,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(data.session)
       setLoading(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s)
       setLoading(false)
+      if (event === 'SIGNED_OUT') {
+        // Purge the persisted query cache so no signed-out account's private
+        // trip data lingers in localStorage or re-hydrates for the next user
+        // on a shared browser (issue #55 review).
+        purgePersistedCache()
+      }
     })
     return () => sub.subscription.unsubscribe()
   }, [])

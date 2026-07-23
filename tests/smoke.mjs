@@ -279,6 +279,47 @@ async function runOffline(browser) {
   }
 }
 
+async function runSignOut(browser) {
+  console.log('\n▶ sign-out purges the persisted query cache')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const CACHE_KEY = 'wander_query_cache'
+  const readCache = () => page.evaluate((k) => localStorage.getItem(k), CACHE_KEY)
+  try {
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
+    // The signed-in home fires the trips query; once it settles the persister
+    // writes the snapshot (throttled ~1s), so the cache key appears.
+    const signOutBtn = page.getByRole('button', { name: 'Sign out' })
+    await signOutBtn.waitFor({ state: 'visible', timeout: 10_000 })
+    await page.waitForFunction(
+      (k) => localStorage.getItem(k) !== null,
+      CACHE_KEY,
+      { timeout: 10_000 }
+    )
+    ok('persisted query cache is written while signed in')
+
+    // Signing out must clear the in-memory cache AND purge the snapshot, so no
+    // account's private data survives on disk or re-hydrates for the next user.
+    await signOutBtn.click()
+    // Back on the signed-out (magic-link) screen.
+    await page.getByPlaceholder('you@example.com').waitFor({ state: 'visible', timeout: 10_000 })
+    // The persister's throttled subscription may re-persist one last (empty)
+    // snapshot up to ~1s after clear(); the sign-out purge removes that trailing
+    // write too. Wait past that window, then assert the key is stably absent.
+    await page.waitForTimeout(2_000)
+    if ((await readCache()) !== null) {
+      throw new Error('wander_query_cache present 2s after sign-out')
+    }
+    await page.waitForTimeout(1_000)
+    if ((await readCache()) !== null) {
+      throw new Error('wander_query_cache reappeared after sign-out')
+    }
+    ok('sign-out purges wander_query_cache from localStorage')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -290,6 +331,7 @@ async function main() {
     await runJoin(browser)
     await runCreateTrip(browser)
     await runOffline(browser)
+    await runSignOut(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()
