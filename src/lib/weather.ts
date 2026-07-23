@@ -31,7 +31,7 @@ export interface DailyWeather {
   date: string // YYYY-MM-DD, in the destination's local timezone
   tempMax: number
   tempMin: number
-  code: number // WMO weather-interpretation code
+  code: number // WMO weather-interpretation code (-1 = unknown/missing)
 }
 
 export interface Coordinates {
@@ -133,7 +133,9 @@ export async function fetchDailyForecast(
     const code = codes[i]
     if (typeof date !== 'string' || typeof tempMax !== 'number' || typeof tempMin !== 'number')
       continue
-    days.push({ date, tempMax, tempMin, code: typeof code === 'number' ? code : 0 })
+    // -1 is a non-WMO sentinel: a missing/invalid code should read as the
+    // neutral "Cloudy" default, not be mislabelled "Clear" (WMO 0).
+    days.push({ date, tempMax, tempMin, code: typeof code === 'number' ? code : -1 })
   }
   return days
 }

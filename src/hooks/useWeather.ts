@@ -2,6 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchTripWeather, type DailyWeather } from '@/lib/weather'
 import type { Trip } from '@/types'
 
+// Module-level so React Query keeps a stable `select` identity and only
+// rebuilds the Map when the underlying forecast data actually changes.
+const toWeatherMap = (days: DailyWeather[]) => new Map(days.map((d) => [d.date, d]))
+
 /**
  * Daily forecast for a trip's destination over its date range, keyed by
  * `YYYY-MM-DD` for O(1) lookup from any day cell. Shared by Calendar and
@@ -14,7 +18,7 @@ import type { Trip } from '@/types'
  */
 export function useTripWeather(trip: Trip) {
   return useQuery({
-    queryKey: ['weather', trip.destination, trip.start_date, trip.end_date],
+    queryKey: ['weather', trip.id, trip.destination, trip.start_date, trip.end_date],
     queryFn: ({ signal }) =>
       fetchTripWeather(
         {
@@ -31,6 +35,6 @@ export function useTripWeather(trip: Trip) {
     gcTime: 6 * 60 * 60 * 1000,
     retry: false,
     refetchOnWindowFocus: false,
-    select: (days: DailyWeather[]) => new Map(days.map((d) => [d.date, d])),
+    select: toWeatherMap,
   })
 }
