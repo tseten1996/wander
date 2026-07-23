@@ -252,6 +252,33 @@ async function runCreateTrip(browser) {
   }
 }
 
+async function runOffline(browser) {
+  console.log('\n▶ offline read-only banner')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
+    // Wait for the signed-in home to render before dropping the connection.
+    await page.getByRole('button', { name: 'New trip' }).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    const banner = page.getByText('Offline — showing saved data')
+    await banner.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {})
+
+    // setOffline flips navigator.onLine and fires the 'offline' event.
+    await context.setOffline(true)
+    await banner.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('offline banner appears when the device goes offline')
+
+    await context.setOffline(false)
+    await banner.waitFor({ state: 'hidden', timeout: 10_000 })
+    ok('offline banner clears when the device comes back online')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -262,6 +289,7 @@ async function main() {
     await runSignIn(browser)
     await runJoin(browser)
     await runCreateTrip(browser)
+    await runOffline(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()

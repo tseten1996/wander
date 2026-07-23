@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Wander \u2014 collaborative trip planning for you and your friends",
+  "description": "Wander — collaborative trip planning for you and your friends",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -31,7 +31,9 @@
     "@radix-ui/react-tabs": "^1.1.9",
     "@radix-ui/react-tooltip": "^1.2.4",
     "@supabase/supabase-js": "^2.49.4",
+    "@tanstack/query-sync-storage-persister": "^5.101.4",
     "@tanstack/react-query": "^5.74.4",
+    "@tanstack/react-query-persist-client": "^5.101.4",
     "canvas-confetti": "^1.9.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
