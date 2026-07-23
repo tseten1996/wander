@@ -18,8 +18,14 @@ function gradientUri(from: string, to: string): string {
     `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
     `<stop offset='0' stop-color='${from}'/><stop offset='1' stop-color='${to}'/>` +
     `</linearGradient></defs>` +
-    `<rect width='800' height='400' fill='url(%23g)'/></svg>`
-  return `data:image/svg+xml,${svg.replace(/</g, '%3C').replace(/>/g, '%3E').replace(/'/g, '%27')}`
+    `<rect width='800' height='400' fill='url(#g)'/></svg>`
+  // '#' MUST be escaped — an unencoded one terminates the data: URI as a
+  // URL fragment and every hex stop-color after it is silently dropped.
+  return `data:image/svg+xml,${svg
+    .replace(/</g, '%3C')
+    .replace(/>/g, '%3E')
+    .replace(/'/g, '%27')
+    .replace(/#/g, '%23')}`
 }
 
 // Hues picked to sit comfortably with the app palette (ocean teal, sunset
