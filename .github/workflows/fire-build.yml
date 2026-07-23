@@ -1,0 +1,41 @@
+# Fires the "Wander Build & Ship" Claude routine the moment an issue gains a
+# queue label:
+#   - queue:ready    — the discovery routine (or the human) staged new work
+#   - queue:in-progress — the Code Review routine restored it on a bounce
+#     (review-response mode), or the build routine promoted its own pick
+# The routine re-verifies all state itself (run lease, governor, state
+# doctor), so a spurious or self-triggered fire is a cheap no-op.
+#
+# Required repo secrets:
+#   WANDER_BUILD_ROUTINE_ID     trig_... id of the routine
+#   WANDER_BUILD_ROUTINE_TOKEN  per-routine token (sk-ant-oat01-...) generated
+#                               at claude.ai/code/routines
+name: Fire Wander Build & Ship
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  fire:
+    if: contains(fromJSON('["queue:ready", "queue:in-progress"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: wander-fire-build
+      cancel-in-progress: false
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: ${{ secrets.WANDER_BUILD_ROUTINE_ID }}
+          ROUTINE_TOKEN: ${{ secrets.WANDER_BUILD_ROUTINE_TOKEN }}
+          LABEL: ${{ github.event.label.name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          BODY=$(jq -n --arg t "GitHub event: issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) was labeled ${LABEL}. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
+          curl -sS --fail -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$BODY"

@@ -1,0 +1,50 @@
+# Fires the "Wander Code Review" Claude routine when there is plausibly a PR
+# ready for review:
+#   - CI completes on an improve/* branch (covers PR opened AND fix commits
+#     pushed — CI runs on every PR update, and review needs CI's verdict
+#     anyway)
+#   - the needs-changes label is removed from an improve PR (safety net for
+#     the rare case where CI finished before Build & Ship removed the label)
+# The routine's head-SHA marker (wander-review: <sha>) makes duplicate fires
+# no-ops.
+#
+# Required repo secrets:
+#   WANDER_REVIEW_ROUTINE_ID     trig_... id of the routine
+#   WANDER_REVIEW_ROUTINE_TOKEN  per-routine token (sk-ant-oat01-...)
+#                                generated at claude.ai/code/routines
+name: Fire Wander Code Review
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request:
+    types: [unlabeled]
+
+jobs:
+  fire:
+    if: >-
+      (github.event_name == 'workflow_run' &&
+        startsWith(github.event.workflow_run.head_branch, 'improve/')) ||
+      (github.event_name == 'pull_request' &&
+        startsWith(github.event.pull_request.head.ref, 'improve/') &&
+        github.event.label.name == 'needs-changes')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: wander-fire-review
+      cancel-in-progress: false
+    steps:
+      - name: Fire routine
+        env:
+          ROUTINE_ID: ${{ secrets.WANDER_REVIEW_ROUTINE_ID }}
+          ROUTINE_TOKEN: ${{ secrets.WANDER_REVIEW_ROUTINE_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.event.workflow_run.head_branch }}
+        run: |
+          BODY=$(jq -n --arg t "GitHub event: ${EVENT} on branch ${BRANCH}. A Wander improve PR may be ready for review. This context is advisory — re-verify state via the routine's own gates." '{text: $t}')
+          curl -sS --fail -X POST "https://api.anthropic.com/v1/claude_code/routines/${ROUTINE_ID}/fire" \
+            -H "Authorization: Bearer ${ROUTINE_TOKEN}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$BODY"
