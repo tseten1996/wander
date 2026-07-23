@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -121,10 +122,18 @@ function TripInfoCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-dest">Destination</Label>
-              <Input
-                id="s-dest"
-                aria-invalid={err.destination ? true : undefined}
-                {...form.register('destination')}
+              <Controller
+                control={form.control}
+                name="destination"
+                render={({ field }) => (
+                  <PlaceAutocomplete
+                    id="s-dest"
+                    aria-invalid={err.destination ? true : undefined}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                  />
+                )}
               />
               {err.destination && <p className="text-xs text-danger">{err.destination.message}</p>}
             </div>

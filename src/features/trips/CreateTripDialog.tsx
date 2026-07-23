@@ -12,6 +12,7 @@ import { cn, isMobileViewport } from '@/lib/utils'
 import { useCreateTrip, type CreatedTrip } from './api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -201,7 +202,19 @@ export function CreateTripDialog({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="trip-dest">Destination</Label>
-                <Input id="trip-dest" placeholder="Tokyo, Japan" {...form.register('destination')} />
+                <Controller
+                  control={form.control}
+                  name="destination"
+                  render={({ field }) => (
+                    <PlaceAutocomplete
+                      id="trip-dest"
+                      placeholder="Tokyo, Japan"
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                    />
+                  )}
+                />
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">

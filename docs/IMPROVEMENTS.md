@@ -168,54 +168,112 @@ it before finishing.** Never re-implement anything in the Shipped list.
   committed — see the P3 idea below) that opens each of the five dialogs/
   inputs and submits invalid input to confirm the inline error renders;
   screenshots in docs/screenshots/ (`w1280_*` prefix).
+- 2026-07-21 — Loading/error states audit (#10): every content page (12 of
+  them, incl. Dashboard which previously had none) now renders a retryable
+  `ErrorState` — role="alert", "Try again" wired to the query's `refetch` —
+  instead of silently falling through to the empty state on a failed load.
+- 2026-07-21 — Fix: a chat message the user had typed was discarded on a
+  failed send (composer cleared before the await); draft + reply-to context
+  now restore on failure so the user can retry instead of retyping (#12).
+- 2026-07-21 — Fix: Calendar seeded `selected` from "today" while `month`
+  was seeded from the trip's start date, so a future trip opened with the
+  highlighted day off-screen and the detail panel describing today; both
+  now seed from the same date (#11).
+- 2026-07-22 — Fix: the dashboard's planning-progress bar counted a poll as
+  done only via its `closed` flag, never via an elapsed `closes_at`, so a
+  naturally-expired poll could pin progress below 100% forever and block
+  the completion confetti; now shares `isPollOpen` with the Polls page (#13).
+- 2026-07-22 — Replaced native date inputs with a shared `DateInput`: a
+  Radix-popover month calendar (keyboard-navigable) on desktop, unchanged
+  native `<input type="date">` on mobile where the OS sheet is better —
+  now used by all seven date fields app-wide (#40).
+- 2026-07-22 — Itinerary items gained an optional `url` field (migration),
+  auto-detected http(s) links in title/notes render as favicon+hostname
+  chips, and any location renders an "Open in Google Maps" chip (#41).
+- 2026-07-22 — Empty-checklist onboarding: a one-tap starter pack (flights,
+  stay, insurance, passports, packing) on a brand-new empty checklist,
+  dismissible per trip via a member-callable RPC (migration) (#42).
+- 2026-07-22 — Expense settlement: a "Settle up" card on Budget computes
+  each member's net balance from `paid_by`/`actual` and suggests a minimal
+  set of transfers to square up; pure client-side math, no schema change (#45).
+- 2026-07-22 — ICS export: a client-side `.ics` generator downloads the
+  itinerary (timed, all-day, and skipped-if-unscheduled events) for import
+  into Apple/Google Calendar; no server, no schema change (#49).
+- 2026-07-22 — Global search (⌘K): one dialog searches polls/chat/checklist/
+  notes/ideas from the already-cached TanStack Query data (no new network
+  calls) and deep-links + flashes the matched item on its page (#50).
+- 2026-07-22 — Unread indicators: per-feature "new since last visit" nav
+  dots, storing `max(device now, newest content timestamp)` on visit so a
+  server clock ahead of the device can't keep a just-seen dot lit (#43).
+- 2026-07-22 — Accessibility pass: dialogs move focus into the sheet (not
+  body) on mobile open and restore it via document-level opener tracking on
+  close (dialogs opened from dropdown items now restore correctly too); an
+  aria-live region announces poll vote-count changes; every text-on-surface
+  token pair re-tuned to pass WCAG AA in both themes; itinerary drag-reorder
+  gained a full dnd-kit keyboard alternative (#44).
+- 2026-07-22 — Fix: opening any mobile dialog briefly summoned the OS
+  keyboard over the bottom sheet (Radix's autofocus + several dialogs'
+  explicit `autoFocus` both landed on a text field); both now gate on a
+  shared `isMobileViewport()` check, desktop autofocus unchanged.
+- 2026-07-22 — Ops: a GitHub Actions workflow now applies pending
+  `supabase/migrations/**` on push to main (`supabase db push`), closing the
+  gap where a merged PR could ship UI ahead of its own schema; migration
+  filenames aligned to the CLI's timestamp convention to match the remote
+  history.
+- 2026-07-22 — Place autocomplete for the trip destination (create-trip +
+  settings) and itinerary location fields: debounced, keyless suggestions
+  from Photon (OSM), selecting one normalizes the text to "City, Country";
+  the field is a plain controlled text input underneath, so a slow/offline/
+  unreachable geocoder just closes the dropdown rather than breaking the
+  field (#46). Verified with `npm run build`, a pure-logic check of the
+  label-formatting/parsing (9/9 passed, incl. dedup and the non-OK-response
+  path), and a mocked-Supabase + mocked-Photon Playwright pass driving the
+  real create-trip dialog (9/9 passed: debounce gating, suggestions
+  rendering, keyboard nav + Enter-to-select, dropdown close, and a failed
+  lookup leaving typed free text intact). Screenshots in docs/screenshots/
+  (`w1280_place-autocomplete.png`, `w375_place-autocomplete.png`).
 
 ## Backlog
 
+**Note (2026-07-22):** the backlog has effectively moved to **GitHub Issues**
+(label `improvement`, each scored 1–5 on impact/frequency/differentiation/
+ease/safety; `epic` for multi-slice ideas that are never picked directly;
+`blocked` when it needs a secret/paid API/human call; `queue:ready` marks
+issues staged for the next build). Several sessions filed and shipped work
+straight from issues without updating this section — see Shipped above for
+the reconciliation done today. Treat **both** this list and the open
+`improvement`-labeled issues as the backlog; check GitHub issues first for
+the current scores and staging state. All P1 items below are shipped.
+
 ### P1 — polish what exists
-- [ ] Replace native date inputs with a styled popover calendar widget
-      (build on the Calendar page's grid; keep native inputs on mobile)
-- [ ] Itinerary links: URL field on items; auto-detect pasted URLs in
-      title/notes; show favicon + hostname chip that opens the restaurant/
-      hotel page; "Open in Google Maps" link built from the location field
-- [ ] Empty-trip onboarding: first-visit checklist template offer
-      ("Book flights, reserve stay, travel insurance…" one-tap starter pack)
-- [ ] Unread indicators: per-feature "new since last visit" dots in the nav
-      (store last-seen timestamps locally)
-- [ ] Loading/error states audit: every query error currently fails silent —
-      add toast + retry affordance
-- [ ] Accessibility pass: focus management in dialogs, aria-live for vote
-      counts, contrast check in both themes, keyboard drag alternative for
-      itinerary reorder
+_(all shipped — see dates above)_
 
 ### P2 — new capability, still simple
-- [ ] Expense settlement: "who owes who" math from paid_by amounts with a
-      per-member balance card on the Budget page
-- [ ] Place autocomplete for itinerary/trip destination via a free geocoder
-      (Photon/komoot or Nominatim — check usage policy, debounce, no key
-      needed; degrade gracefully offline)
 - [ ] Trip cover picker: curated gradient presets + paste-URL preview
-      (skip API keys; Unsplash source URLs work without auth)
+      (skip API keys; Unsplash source URLs work without auth) — issue #47,
+      `queue:ready`
 - [ ] Poll options with images/links (e.g. Airbnb candidates side by side)
-- [ ] ICS export: download the itinerary as a .ics file so it lands in
-      Apple/Google Calendar
-- [ ] Search: one search box over polls/messages/checklist/notes/ideas
-      (client-side over cached queries is enough at this scale)
+      — issue #48, `queue:ready`
 - [ ] Chat images: Supabase Storage bucket + RLS, paste/drop upload,
-      lightbox view [needs migration apply + storage setup]
+      lightbox view [needs migration apply + storage setup] — issue #51
 - [ ] Realtime presence: "who's looking at the plan right now" avatars via
-      Supabase presence channels
+      Supabase presence channels — issue #52
+- [ ] Map view (epic): render geocoded itinerary items as pins on an OSM map
+      (Leaflet/MapLibre, no API key) — issue #60 (epic) / #61 (first slice,
+      degrades gracefully without stored coordinates until a geocoder
+      capture step exists)
 
 ### P3 — infrastructure & quality
 - [ ] Playwright smoke test (sign-in stubbed, join flow, create trip) run in
-      CI on PRs; typecheck job on PRs
+      CI on PRs; typecheck job on PRs — issue #53
 - [ ] Bundle split: framer-motion + supabase into separate chunks (main
-      chunk is ~860 kB pre-gzip)
+      chunk is ~860 kB pre-gzip) — issue #54
 - [ ] Offline read cache: persist TanStack Query cache to localStorage so a
-      trip opens read-only without network
+      trip opens read-only without network — issue #55
 - [ ] RLS regression tests as SQL (pgTAP or plain scripts) covering the
-      permission matrix in ARCHITECTURE.md
+      permission matrix in ARCHITECTURE.md — issue #56
 - [ ] Error reporting: lightweight window.onerror → Supabase table so broken
-      deploys surface without user reports
+      deploys surface without user reports — issue #57
 - [ ] Commit a reusable mock-Supabase screenshot/test harness (scripts/
       screenshot-mock.mjs): every sandboxed session that needs a screenshot
       of a data-bearing page currently re-derives its own throwaway
@@ -223,7 +281,7 @@ it before finishing.** Never re-implement anything in the Shipped list.
       trip/member/content rows, because this environment can't reach the
       real Supabase project. A committed, parameterized version (pick
       tables + rows via args) would save that rework and could double as
-      the base for the Playwright smoke test above.
+      the base for the Playwright smoke test above. — issue #58
 
 ### Blocked / decided against (do not revisit without a human decision)
 - Turnstile CAPTCHA on auth — decided against 2026-07-19: friends-only app,
