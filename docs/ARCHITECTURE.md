@@ -156,6 +156,12 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
   the shell + dashboard only.
 * TanStack Query caches per `[table, tripId]`; realtime events invalidate
   instead of refetch-on-focus storms.
+* The query cache is **persisted to `localStorage`** (`src/lib/queryClient.ts`,
+  `PersistQueryClientProvider`) so a previously-visited trip renders read-only
+  when the device is offline; an `OfflineBanner` makes the read-only state
+  explicit. Only successful queries are dehydrated, and the snapshot is
+  **purged on sign-out** (`useAuth`) so no account's data survives on disk or
+  re-hydrates for the next user on a shared browser.
 * Images (covers, inspiration) are plain `<img loading="lazy">` with URL
   sources — nothing is proxied or stored (free tier friendly).
 
