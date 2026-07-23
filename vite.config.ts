@@ -40,5 +40,16 @@ export default defineConfig({
   build: {
     target: 'es2020',
     chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        // Split heavy, independently-cacheable libraries out of the main
+        // chunk so first load ships less JS and these rarely-changing deps
+        // stay cached across app deploys.
+        manualChunks: {
+          'framer-motion': ['framer-motion'],
+          supabase: ['@supabase/supabase-js'],
+        },
+      },
+    },
   },
 })
