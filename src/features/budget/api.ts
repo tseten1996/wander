@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { friendlyError } from '@/lib/errors'
+import { fetchRates } from '@/lib/rates'
 import type { BudgetCategory, BudgetEntry } from '@/types'
 
 export function useBudget(tripId: string) {
@@ -30,9 +31,32 @@ export interface BudgetInput {
   category: BudgetCategory
   estimated: number | null
   actual: number | null
+  /** Original currency; null when the entry is in the trip currency. */
+  currency: string | null
+  estimated_converted: number | null
+  actual_converted: number | null
+  exchange_rate: number | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null
+}
+
+/**
+ * ECB reference rates based on the trip currency, cached for the session.
+ * Rates move slowly and are only used to seed the converted amount as a member
+ * types, so a 6-hour cache is plenty; `retry: false` means the Budget form
+ * degrades to trip-currency-only entry the moment rates are unreachable rather
+ * than hammering the API.
+ */
+export function useRates(tripCurrency: string) {
+  return useQuery({
+    queryKey: ['rates', tripCurrency],
+    queryFn: ({ signal }) => fetchRates(tripCurrency, signal),
+    staleTime: 6 * 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
 }
 
 export function useCreateBudgetEntry(tripId: string, memberId: string) {
