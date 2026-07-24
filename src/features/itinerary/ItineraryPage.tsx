@@ -13,8 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  CalendarArrowDown, GripVertical, MapPin, MoreHorizontal, Pencil, Plus,
-  TriangleAlert, Trash2,
+  CalendarArrowDown, ClipboardPaste, GripVertical, MapPin, MoreHorizontal,
+  Pencil, Plus, TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -25,6 +25,7 @@ import {
 } from './api'
 import { ITINERARY_META } from './meta'
 import { overlapsByItem } from './overlap'
+import { parseBooking, type ParsedBooking } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -35,7 +36,7 @@ import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -275,10 +276,17 @@ function ItemDialog({
   open,
   onOpenChange,
   item,
+  prefill,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   item?: ItineraryItem
+  /**
+   * Create-mode seed values (from a pasted booking, #77). Only the detected
+   * fields are present; the rest fall back to the empty-form defaults. Ignored
+   * when editing an existing `item`.
+   */
+  prefill?: Partial<ItineraryFormValues>
 }) {
   const { trip, me } = useTripContext()
   const createItem = useCreateItineraryItem(trip.id, me.id)
@@ -315,11 +323,11 @@ function ItemDialog({
               notes: item.notes ?? '',
               cost: item.cost ?? '',
             }
-          : empty
+          : { ...empty, ...prefill }
       )
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, item])
+  }, [open, item, prefill])
 
   async function onSubmit(values: ItineraryFormValues) {
     const payload: ItineraryInput = {
@@ -481,12 +489,102 @@ function ItemDialog({
   )
 }
 
+/** Keep only the fields the parser actually detected, so undetected ones fall
+ *  through to the create form's own defaults (e.g. day = the trip start). */
+function toPrefill(p: ParsedBooking): Partial<ItineraryFormValues> {
+  const pf: Partial<ItineraryFormValues> = {}
+  if (p.title) pf.title = p.title
+  if (p.category) pf.category = p.category
+  if (p.day) pf.day = p.day
+  if (p.start_time) pf.start_time = p.start_time
+  if (p.end_time) pf.end_time = p.end_time
+  if (p.location) pf.location = p.location
+  if (p.notes) pf.notes = p.notes
+  return pf
+}
+
+/**
+ * Paste-a-booking entry point (#77). Collects raw confirmation text and hands
+ * it to the heuristic parser; the caller opens the pre-filled create form. This
+ * dialog never saves anything itself — it only prepares the form.
+ */
+function PasteBookingDialog({
+  open,
+  onOpenChange,
+  onParsed,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onParsed: (parsed: ParsedBooking) => void
+}) {
+  const [text, setText] = React.useState('')
+
+  React.useEffect(() => {
+    if (open) setText('')
+  }, [open])
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    onParsed(parseBooking(text))
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Paste a booking</DialogTitle>
+          <DialogDescription>
+            Paste a flight, hotel, or restaurant confirmation and we&rsquo;ll pre-fill a new
+            itinerary item with whatever we can read. You review and confirm before it&rsquo;s saved.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="paste-booking">Confirmation text</Label>
+            <Textarea
+              id="paste-booking"
+              className="min-h-40"
+              autoFocus={!isMobileViewport()}
+              placeholder={
+                'Paste here, e.g.\n\nFlight confirmation — United UA 837\nDeparts July 24, 2026 at 10:30 AM\nSFO to NRT'
+              }
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </div>
+          <Button type="submit" size="lg" className="w-full" disabled={!text.trim()}>
+            Review pre-filled item
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export default function ItineraryPage() {
   const { trip } = useTripContext()
   const itinerary = useItinerary(trip.id)
   const weather = useTripWeather(trip)
   const [newOpen, setNewOpen] = React.useState(false)
+  const [pasteOpen, setPasteOpen] = React.useState(false)
+  const [prefill, setPrefill] = React.useState<Partial<ItineraryFormValues> | undefined>(undefined)
   const [exporting, setExporting] = React.useState(false)
+
+  function openBlankCreate() {
+    setPrefill(undefined)
+    setNewOpen(true)
+  }
+
+  function handleParsed(parsed: ParsedBooking) {
+    setPrefill(toPrefill(parsed))
+    setPasteOpen(false)
+    setNewOpen(true)
+    if (parsed.matched) {
+      toast.success('Filled in what we found — review and save')
+    } else {
+      toast('Couldn’t read that automatically — added it to the notes')
+    }
+  }
 
   const items = itinerary.data ?? []
 
@@ -529,7 +627,18 @@ export default function ItineraryPage() {
             >
               <CalendarArrowDown /> Export
             </Button>
-            <Button onClick={() => setNewOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setPasteOpen(true)}
+              aria-label="Paste a booking confirmation"
+            >
+              <ClipboardPaste />
+              {/* Short label below the app's md breakpoint so the three-action
+                  row never overflows a 375px header; full label from sm up. */}
+              <span className="sm:hidden">Paste</span>
+              <span className="hidden sm:inline">Paste a booking</span>
+            </Button>
+            <Button onClick={openBlankCreate}>
               <Plus /> Add item
             </Button>
           </div>
@@ -549,9 +658,14 @@ export default function ItineraryPage() {
           title="The itinerary is empty"
           description="Add flights, stays, restaurants and activities — they'll organize themselves by day."
           action={
-            <Button onClick={() => setNewOpen(true)}>
-              <Plus /> Add the first item
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button onClick={openBlankCreate}>
+                <Plus /> Add the first item
+              </Button>
+              <Button variant="secondary" onClick={() => setPasteOpen(true)}>
+                <ClipboardPaste /> Paste a booking
+              </Button>
+            </div>
           }
         />
       ) : (
@@ -570,7 +684,8 @@ export default function ItineraryPage() {
           ))}
         </motion.div>
       )}
-      <ItemDialog open={newOpen} onOpenChange={setNewOpen} />
+      <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
+      <ItemDialog open={newOpen} onOpenChange={setNewOpen} prefill={prefill} />
     </div>
   )
 }
