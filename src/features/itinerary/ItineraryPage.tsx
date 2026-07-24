@@ -13,8 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  CalendarArrowDown, ClipboardPaste, GripVertical, MapPin, MoreHorizontal,
-  Pencil, Plus, TriangleAlert, Trash2,
+  CalendarArrowDown, ClipboardPaste, GripVertical, List, Map as MapIcon, MapPin,
+  MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -35,6 +35,7 @@ import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -49,6 +50,10 @@ import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
+// Leaflet + the map view load only when the Map tab is opened, keeping the
+// map library out of the itinerary page's initial chunk (bundle budget).
+const ItineraryMap = React.lazy(() => import('./ItineraryMap'))
+
 const itinerarySchema = z
   .object({
     title: z.string().trim().min(1, 'Give it a title').max(120, 'Keep it under 120 characters'),
@@ -57,6 +62,10 @@ const itinerarySchema = z
     start_time: z.string().optional().nullable(),
     end_time: z.string().optional().nullable(),
     location: z.string().trim().max(160, 'Keep it under 160 characters').optional().nullable(),
+    // Coordinates are never typed by hand — they come from selecting a place
+    // suggestion, and are cleared when the location text is edited manually.
+    latitude: z.number().nullable().optional(),
+    longitude: z.number().nullable().optional(),
     url: z
       .string()
       .trim()
@@ -299,6 +308,8 @@ function ItemDialog({
     start_time: '',
     end_time: '',
     location: '',
+    latitude: null,
+    longitude: null,
     url: '',
     notes: '',
     cost: '',
@@ -319,6 +330,8 @@ function ItemDialog({
               start_time: item.start_time ?? '',
               end_time: item.end_time ?? '',
               location: item.location ?? '',
+              latitude: item.latitude ?? null,
+              longitude: item.longitude ?? null,
               url: item.url ?? '',
               notes: item.notes ?? '',
               cost: item.cost ?? '',
@@ -330,13 +343,18 @@ function ItemDialog({
   }, [open, item, prefill])
 
   async function onSubmit(values: ItineraryFormValues) {
+    const location = values.location?.trim() || null
     const payload: ItineraryInput = {
       title: values.title.trim(),
       category: values.category as ItineraryCategory,
       day: values.day || null,
       start_time: values.start_time || null,
       end_time: values.end_time || null,
-      location: values.location?.trim() || null,
+      location,
+      // Coordinates only mean anything with a location; a cleared location
+      // drops its pin rather than stranding stale coordinates on the map.
+      latitude: location ? values.latitude ?? null : null,
+      longitude: location ? values.longitude ?? null : null,
       url: values.url?.trim() || null,
       notes: values.notes?.trim() || null,
       cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
@@ -436,7 +454,17 @@ function ItemDialog({
                     placeholder="Toyosu, Tokyo"
                     aria-invalid={err.location ? true : undefined}
                     value={field.value ?? ''}
-                    onChange={field.onChange}
+                    onChange={(v) => {
+                      field.onChange(v)
+                      // Typing invalidates a previously-picked pin; selecting a
+                      // suggestion re-sets it via onSelectPlace right after.
+                      form.setValue('latitude', null)
+                      form.setValue('longitude', null)
+                    }}
+                    onSelectPlace={(place) => {
+                      form.setValue('latitude', place.lat)
+                      form.setValue('longitude', place.lon)
+                    }}
                     onBlur={field.onBlur}
                   />
                 )}
@@ -576,6 +604,9 @@ export default function ItineraryPage() {
   const [pasteOpen, setPasteOpen] = React.useState(false)
   const [prefill, setPrefill] = React.useState<Partial<ItineraryFormValues> | undefined>(undefined)
   const [exporting, setExporting] = React.useState(false)
+  // Selecting a pin (or an unlocated row) in the Map view opens this item for
+  // editing — the map has no cards of its own to host a per-item dialog.
+  const [editItem, setEditItem] = React.useState<ItineraryItem | null>(null)
 
   function openBlankCreate() {
     setPrefill(undefined)
@@ -677,23 +708,45 @@ export default function ItineraryPage() {
           }
         />
       ) : (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="space-y-8"
-        >
-          {days.map((day) => (
-            <DaySection
-              key={day ?? 'unscheduled'}
-              day={day}
-              items={byDay.get(day)!}
-              weather={day ? weather.data?.get(day) : undefined}
-            />
-          ))}
-        </motion.div>
+        <Tabs defaultValue="list">
+          <TabsList className="mb-5">
+            <TabsTrigger value="list">
+              <List className="size-4" /> List
+            </TabsTrigger>
+            <TabsTrigger value="map">
+              <MapIcon className="size-4" /> Map
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="list">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="space-y-8"
+            >
+              {days.map((day) => (
+                <DaySection
+                  key={day ?? 'unscheduled'}
+                  day={day}
+                  items={byDay.get(day)!}
+                  weather={day ? weather.data?.get(day) : undefined}
+                />
+              ))}
+            </motion.div>
+          </TabsContent>
+          <TabsContent value="map">
+            <React.Suspense fallback={<Skeleton className="h-[22rem] rounded-2xl sm:h-[28rem]" />}>
+              <ItineraryMap items={items} onSelect={setEditItem} />
+            </React.Suspense>
+          </TabsContent>
+        </Tabs>
       )}
       <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
       <ItemDialog open={newOpen} onOpenChange={setNewOpen} prefill={prefill} />
+      <ItemDialog
+        open={editItem !== null}
+        onOpenChange={(o) => !o && setEditItem(null)}
+        item={editItem ?? undefined}
+      />
     </div>
   )
 }
