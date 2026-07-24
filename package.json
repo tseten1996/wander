@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test": "node tests/smoke.mjs",
+    "test:unit": "node --test tests/*.test.mjs",
+    "test": "node --test tests/*.test.mjs && node tests/smoke.mjs",
     "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
