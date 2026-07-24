@@ -13,7 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  CalendarArrowDown, GripVertical, MapPin, MoreHorizontal, Pencil, Plus, Trash2,
+  CalendarArrowDown, GripVertical, MapPin, MoreHorizontal, Pencil, Plus,
+  TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -23,6 +24,7 @@ import {
   useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
 } from './api'
 import { ITINERARY_META } from './meta'
+import { overlapsByItem } from './overlap'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -78,7 +80,21 @@ const itinerarySchema = z
 
 type ItineraryFormValues = z.input<typeof itinerarySchema>
 
-function SortableItemCard({ item }: { item: ItineraryItem }) {
+/** "Lunch (3:00 PM – 4:00 PM)" — names a conflicting item with its time. */
+function conflictLabel(item: ItineraryItem): string {
+  const range = item.end_time
+    ? `${formatTime(item.start_time)} – ${formatTime(item.end_time)}`
+    : formatTime(item.start_time)
+  return range ? `${item.title} (${range})` : item.title
+}
+
+function SortableItemCard({
+  item,
+  conflicts,
+}: {
+  item: ItineraryItem
+  conflicts?: ItineraryItem[]
+}) {
   const { trip, me, isOwner } = useTripContext()
   const deleteItem = useDeleteItineraryItem(trip.id)
   const [editOpen, setEditOpen] = React.useState(false)
@@ -134,6 +150,14 @@ function SortableItemCard({ item }: { item: ItineraryItem }) {
               </span>
             )
           })()}
+          {conflicts && conflicts.length > 0 && (
+            <p className="mt-1.5 flex items-start gap-1 text-xs text-danger" role="note">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+              <span>
+                Overlaps with {conflicts.map(conflictLabel).join(', ')}
+              </span>
+            </p>
+          )}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -175,6 +199,12 @@ function DaySection({
 }) {
   const { trip } = useTripContext()
   const reorder = useReorderItinerary(trip.id)
+  // Same-day timed items whose intervals intersect are flagged inline. Skipped
+  // for the "Not scheduled yet" bucket, where items share no actual day.
+  const conflicts = React.useMemo(
+    () => (day ? overlapsByItem(items) : new Map<string, ItineraryItem[]>()),
+    [day, items]
+  )
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
@@ -227,7 +257,7 @@ function DaySection({
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
             {items.map((item) => (
-              <SortableItemCard key={item.id} item={item} />
+              <SortableItemCard key={item.id} item={item} conflicts={conflicts.get(item.id)} />
             ))}
           </div>
         </SortableContext>
