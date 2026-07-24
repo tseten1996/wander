@@ -1,0 +1,101 @@
+{
+  "//": "Example fixture for scripts/screenshot-mock.mjs. Copy this, add rows to the tables you need, and point FIXTURE at your copy. Tables absent here just render their empty state. See the header of screenshot-mock.mjs for the full schema.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de300000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z"
+      }
+    ],
+    "itinerary_items": [
+      {
+        "id": "17300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "title": "Fushimi Inari at dawn",
+        "category": "activity",
+        "day": "2026-11-15",
+        "start_time": "06:30",
+        "end_time": "09:00",
+        "location": "Fushimi Inari Taisha",
+        "notes": "Beat the crowds up the torii gates.",
+        "cost": 0,
+        "position": 1,
+        "created_at": "2026-07-03T00:00:00Z"
+      },
+      {
+        "id": "17300000-0000-4000-8000-000000000002",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444402",
+        "title": "Nishiki Market lunch crawl",
+        "category": "restaurant",
+        "day": "2026-11-15",
+        "start_time": "12:30",
+        "end_time": "14:00",
+        "location": "Nishiki Market",
+        "notes": null,
+        "cost": 25,
+        "position": 2,
+        "created_at": "2026-07-03T00:00:00Z"
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de300000-0000-4000-8000-000000000001",
+    "get_invite_preview": [
+      {
+        "trip_name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "cover_url": null,
+        "member_count": 2,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21"
+      }
+    ]
+  },
+  "routes": ["/", "/trip/{trip}", "/trip/{trip}/itinerary"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
