@@ -7,6 +7,15 @@ export interface PlaceAutocompleteProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
   value: string
   onChange: (value: string) => void
+  /**
+   * Fired when the user picks a suggestion (not on plain typing), carrying the
+   * chosen place's coordinates alongside its label. Callers that need the
+   * lat/lon — e.g. the itinerary form persisting a pin for the Map view (#61) —
+   * opt in with this; the plain destination fields ignore it. Manual typing
+   * emits only `onChange`, so a caller can treat "onChange without a following
+   * onSelectPlace" as "coordinates no longer apply".
+   */
+  onSelectPlace?: (place: PlaceSuggestion) => void
 }
 
 /*
@@ -17,7 +26,7 @@ export interface PlaceAutocompleteProps
   or erroring the field, since free text is always a valid value here.
 */
 export function PlaceAutocomplete({
-  value, onChange, className, id, onFocus, onBlur, ...rest
+  value, onChange, onSelectPlace, className, id, onFocus, onBlur, ...rest
 }: PlaceAutocompleteProps) {
   const [suggestions, setSuggestions] = React.useState<PlaceSuggestion[]>([])
   const [open, setOpen] = React.useState(false)
@@ -65,6 +74,7 @@ export function PlaceAutocomplete({
 
   function select(s: PlaceSuggestion) {
     onChange(s.label)
+    onSelectPlace?.(s)
     setOpen(false)
     setSuggestions([])
   }
