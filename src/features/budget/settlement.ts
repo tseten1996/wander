@@ -1,4 +1,5 @@
 import type { BudgetEntry, Member } from '@/types'
+import { tripActual } from './amounts'
 
 /**
  * "Who owes who" settlement math for the Budget page.
@@ -8,6 +9,10 @@ import type { BudgetEntry, Member } from '@/types'
  * That pool is split evenly across all current trip members; a member's net is
  * what they fronted minus their equal share. Positive = they're owed money,
  * negative = they owe. Shared / not-yet-paid entries never create a debt.
+ *
+ * Amounts are always taken in the *trip currency* (via `tripActual`), so a
+ * multi-currency trip settles correctly — an EUR hotel and a USD flight are
+ * compared on the same converted footing, never as raw mixed numbers.
  */
 
 export interface Balance {
@@ -33,10 +38,11 @@ export function computeBalances(entries: BudgetEntry[], members: Member[]): Bala
   const paid = new Map<string, number>(members.map((m) => [m.id, 0]))
   let pool = 0
   for (const e of entries) {
-    if (e.actual == null || !e.paid_by) continue
+    const amount = tripActual(e)
+    if (amount == null || !e.paid_by) continue
     if (!paid.has(e.paid_by)) continue // payer is no longer a member — skip
-    paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + e.actual)
-    pool += e.actual
+    paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + amount)
+    pool += amount
   }
 
   const share = pool / members.length

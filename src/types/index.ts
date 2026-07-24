@@ -142,6 +142,14 @@ export interface BudgetEntry {
   category: BudgetCategory
   estimated: number | null
   actual: number | null
+  /** Original ISO currency the amounts were logged in. null = trip currency. */
+  currency: string | null
+  /** `estimated`/`actual` expressed in the trip currency, frozen at entry time.
+   *  null when the entry is already in the trip currency — read `converted ?? raw`. */
+  estimated_converted: number | null
+  actual_converted: number | null
+  /** original→trip rate used, kept so historical entries don't drift. */
+  exchange_rate: number | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null

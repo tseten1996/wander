@@ -7,9 +7,11 @@ import { ArrowRight, MoreHorizontal, Pencil, PiggyBank, Plus, Scale, Trash2 } fr
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useBudget, useCreateBudgetEntry, useDeleteBudgetEntry, useUpdateBudgetEntry,
+  useBudget, useCreateBudgetEntry, useDeleteBudgetEntry, useRates, useUpdateBudgetEntry,
   type BudgetInput,
 } from './api'
+import { CURRENCIES, conversionRate, toCents, type RateTable } from '@/lib/rates'
+import { isForeignEntry, tripActual, tripEstimated } from './amounts'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -60,6 +62,13 @@ const budgetSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal('')),
+  currency: z.string().trim().length(3, 'Use a 3-letter code'),
+  rate: z.coerce
+    .number({ invalid_type_error: 'Enter a rate' })
+    .positive('Rate must be positive')
+    .optional()
+    .nullable()
+    .or(z.literal('')),
   paid_by: z.string().optional().nullable(),
   entry_date: z.string().optional().nullable(),
   notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
@@ -79,16 +88,27 @@ function EntryDialog({
   const { trip, me, members } = useTripContext()
   const createEntry = useCreateBudgetEntry(trip.id, me.id)
   const updateEntry = useUpdateBudgetEntry(trip.id)
+  const rates = useRates(trip.currency)
+  const tripCurrency = trip.currency.toUpperCase()
 
-  const empty: BudgetFormValues = {
-    title: '',
-    category: 'other',
-    estimated: '',
-    actual: '',
-    paid_by: SHARED,
-    entry_date: '',
-    notes: '',
-  }
+  // Whether the member has hand-typed a rate — once true we stop re-seeding it
+  // from the live table so their override sticks.
+  const [rateEdited, setRateEdited] = React.useState(false)
+
+  const empty = React.useMemo<BudgetFormValues>(
+    () => ({
+      title: '',
+      category: 'other',
+      estimated: '',
+      actual: '',
+      currency: tripCurrency,
+      rate: '',
+      paid_by: SHARED,
+      entry_date: '',
+      notes: '',
+    }),
+    [tripCurrency]
+  )
   const form = useForm<BudgetFormValues>({
     resolver: zodResolver(budgetSchema),
     defaultValues: empty,
@@ -96,6 +116,7 @@ function EntryDialog({
 
   React.useEffect(() => {
     if (open) {
+      setRateEdited(!!entry?.currency) // a saved entry keeps its frozen rate
       form.reset(
         entry
           ? {
@@ -103,6 +124,8 @@ function EntryDialog({
               category: entry.category,
               estimated: entry.estimated ?? '',
               actual: entry.actual ?? '',
+              currency: (entry.currency ?? tripCurrency).toUpperCase(),
+              rate: entry.exchange_rate ?? '',
               paid_by: entry.paid_by ?? SHARED,
               entry_date: entry.entry_date ?? '',
               notes: entry.notes ?? '',
@@ -113,12 +136,65 @@ function EntryDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entry])
 
+  const selectedCurrency = (form.watch('currency') || tripCurrency).toUpperCase()
+  const isForeign = selectedCurrency !== tripCurrency
+  const rateTable: RateTable | undefined = rates.data
+  const ratesReady = rates.isSuccess && !!rateTable
+
+  // Seed the rate from the live table whenever the picked currency changes,
+  // unless the member has overridden it. Foreign → auto rate; back to trip
+  // currency → clear.
+  React.useEffect(() => {
+    if (!open) return
+    if (!isForeign) {
+      form.setValue('rate', '')
+      setRateEdited(false)
+      return
+    }
+    if (rateEdited || !rateTable) return
+    const r = conversionRate(selectedCurrency, rateTable)
+    if (r != null) form.setValue('rate', toCents(r * 10000) / 10000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedCurrency, isForeign, rateTable])
+
+  // The trip-currency options a member may pick: the trip currency itself, the
+  // ECB set when live rates loaded, plus whatever currency a saved entry already
+  // uses (so an existing foreign entry still renders even if rates are down).
+  const currencyOptions = React.useMemo(() => {
+    const codes = new Set<string>([tripCurrency])
+    if (ratesReady && rateTable) {
+      for (const c of CURRENCIES) if (rateTable[c.code]) codes.add(c.code)
+    }
+    if (entry?.currency) codes.add(entry.currency.toUpperCase())
+    return [...codes].sort()
+  }, [ratesReady, rateTable, tripCurrency, entry])
+
+  const rateNum = Number(form.watch('rate'))
+  const estNum = Number(form.watch('estimated'))
+  const actNum = Number(form.watch('actual'))
+  const hasRate = isForeign && Number.isFinite(rateNum) && rateNum > 0
+  const previewEst = hasRate && estNum > 0 ? toCents(estNum * rateNum) : null
+  const previewAct = hasRate && actNum > 0 ? toCents(actNum * rateNum) : null
+
   async function onSubmit(values: BudgetFormValues) {
+    const currency = (values.currency || tripCurrency).toUpperCase()
+    const foreign = currency !== tripCurrency
+    const rate = foreign ? Number(values.rate) : null
+    if (foreign && !(Number.isFinite(rate!) && rate! > 0)) {
+      form.setError('rate', { message: 'Enter a positive rate' })
+      return
+    }
+    const estimated = values.estimated === '' || values.estimated == null ? null : Number(values.estimated)
+    const actual = values.actual === '' || values.actual == null ? null : Number(values.actual)
     const payload: BudgetInput = {
       title: values.title.trim(),
       category: values.category as BudgetCategory,
-      estimated: values.estimated === '' || values.estimated == null ? null : Number(values.estimated),
-      actual: values.actual === '' || values.actual == null ? null : Number(values.actual),
+      estimated,
+      actual,
+      currency: foreign ? currency : null,
+      exchange_rate: foreign ? rate : null,
+      estimated_converted: foreign && estimated != null ? toCents(estimated * rate!) : null,
+      actual_converted: foreign && actual != null ? toCents(actual * rate!) : null,
       paid_by: !values.paid_by || values.paid_by === SHARED ? null : values.paid_by,
       entry_date: values.entry_date || null,
       notes: values.notes?.trim() || null,
@@ -186,6 +262,34 @@ function EntryDialog({
               />
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label>Currency</Label>
+            <Controller
+              control={form.control}
+              name="currency"
+              render={({ field }) => (
+                <Select
+                  value={(field.value || tripCurrency).toUpperCase()}
+                  onValueChange={field.onChange}
+                  disabled={currencyOptions.length <= 1}
+                >
+                  <SelectTrigger aria-label="Entry currency"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {currencyOptions.map((code) => (
+                      <SelectItem key={code} value={code}>
+                        {code}{code === tripCurrency ? ' · trip currency' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {rates.isError && (
+              <p className="text-xs text-muted">
+                Live rates unavailable — entries use {tripCurrency} for now.
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="b-est">Estimated</Label>
@@ -196,6 +300,9 @@ function EntryDialog({
                 {...form.register('estimated')}
               />
               {err.estimated && <p className="text-xs text-danger">{err.estimated.message}</p>}
+              {previewEst != null && (
+                <p className="text-xs text-muted tabular-nums">≈ {formatMoney(previewEst, tripCurrency)}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="b-act">Actually paid</Label>
@@ -206,8 +313,32 @@ function EntryDialog({
                 {...form.register('actual')}
               />
               {err.actual && <p className="text-xs text-danger">{err.actual.message}</p>}
+              {previewAct != null && (
+                <p className="text-xs text-muted tabular-nums">≈ {formatMoney(previewAct, tripCurrency)}</p>
+              )}
             </div>
           </div>
+          {isForeign && (
+            <div className="space-y-1.5">
+              <Label htmlFor="b-rate">
+                Rate — 1 {selectedCurrency} = ? {tripCurrency}
+              </Label>
+              <Input
+                id="b-rate"
+                type="number" inputMode="decimal" min="0" step="0.0001" placeholder="0.0000"
+                aria-invalid={err.rate ? true : undefined}
+                {...form.register('rate', { onChange: () => setRateEdited(true) })}
+              />
+              {err.rate ? (
+                <p className="text-xs text-danger">{err.rate.message}</p>
+              ) : (
+                <p className="text-xs text-muted">
+                  Auto-filled from today’s ECB rate — edit if you got a different one.
+                  All totals and settle-up use the {tripCurrency} value.
+                </p>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Paid by</Label>
             <Controller
@@ -251,6 +382,7 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   const [editOpen, setEditOpen] = React.useState(false)
   const payer = entry.paid_by ? membersById.get(entry.paid_by) : null
   const canDelete = isOwner || entry.created_by === me.id
+  const foreign = isForeignEntry(entry, trip.currency)
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -265,8 +397,13 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
       {payer && <MemberAvatar name={payer.display_name} color={payer.color} size="sm" />}
       <div className="w-24 text-right">
         <p className={cn('text-sm font-semibold tabular-nums', entry.actual == null && 'text-muted')}>
-          {formatMoney(entry.actual ?? entry.estimated, trip.currency)}
+          {formatMoney(tripActual(entry) ?? tripEstimated(entry), trip.currency)}
         </p>
+        {foreign && (
+          <p className="text-[10px] tabular-nums text-muted">
+            {formatMoney(entry.actual ?? entry.estimated, entry.currency ?? trip.currency)}
+          </p>
+        )}
         <p className="text-[10px] uppercase tracking-wide text-faint">
           {entry.actual != null ? 'paid' : 'estimated'}
         </p>
@@ -394,8 +531,10 @@ export default function BudgetPage() {
   const [newOpen, setNewOpen] = React.useState(false)
 
   const entries = budget.data ?? []
-  const planned = entries.reduce((s, e) => s + (e.actual ?? e.estimated ?? 0), 0)
-  const spent = entries.reduce((s, e) => s + (e.actual ?? 0), 0)
+  // All roll-ups run on the trip-currency amount (converted ?? raw) so a
+  // multi-currency trip totals correctly — see ./amounts.
+  const planned = entries.reduce((s, e) => s + (tripActual(e) ?? tripEstimated(e) ?? 0), 0)
+  const spent = entries.reduce((s, e) => s + (tripActual(e) ?? 0), 0)
   const target = trip.estimated_budget
   const remaining = target != null ? target - spent : null
   const over = remaining != null && remaining < 0
@@ -405,7 +544,7 @@ export default function BudgetPage() {
     ...c,
     total: entries
       .filter((e) => e.category === c.value)
-      .reduce((s, e) => s + (e.actual ?? e.estimated ?? 0), 0),
+      .reduce((s, e) => s + (tripActual(e) ?? tripEstimated(e) ?? 0), 0),
   })).filter((c) => c.total > 0)
   const maxCategory = Math.max(1, ...byCategory.map((c) => c.total))
 
