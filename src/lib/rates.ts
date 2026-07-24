@@ -99,7 +99,12 @@ export function conversionRate(from: string, rates: RateTable): number | null {
   return 1 / per
 }
 
-/** Round to cents the same way the settlement math does, avoiding fp dust. */
+/**
+ * Round to cents the same way the settlement math does, avoiding fp dust. The
+ * `Number.EPSILON` nudge prevents binary under-rounding at exact half-cent
+ * boundaries — e.g. `1.005 * 100` is `100.49999…` in IEEE-754, which would
+ * otherwise floor a converted amount one cent low.
+ */
 export function toCents(amount: number): number {
-  return Math.round(amount * 100) / 100
+  return Math.round((amount + Number.EPSILON) * 100) / 100
 }
