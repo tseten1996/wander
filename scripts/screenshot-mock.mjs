@@ -445,6 +445,11 @@ async function main() {
         reducedMotion: 'reduce',
       })
       await context.route((url) => url.hostname === SUPABASE_HOST, stub)
+      // Realtime opens a WebSocket, which context.route() does not cover. Absorb
+      // it with a no-op handler (never connectToServer) so the app's realtime
+      // client can't reach the real, unreachable host — otherwise offline
+      // captures of a trip page emit connection errors and reconnect noise.
+      await context.routeWebSocket((url) => url.hostname === SUPABASE_HOST, () => {})
       // Hand the app its session + theme before it boots.
       await context.addInitScript(
         ([value, theme]) => {
@@ -461,7 +466,9 @@ async function main() {
         const page = await context.newPage()
         await page.goto(`${BASE_URL}/#${path}`, { waitUntil: 'networkidle' })
         await page.waitForTimeout(1500) // data fetch + entrance animations
-        const slug = path.replaceAll('/', '_').replace(/[^a-zA-Z0-9_-]/g, '') || 'home'
+        // Leading '_' is the separator before the route in the filename, so the
+        // home route must keep it: '/' → '_home' → e.g. desktop_home_light.png.
+        const slug = path === '/' ? '_home' : path.replaceAll('/', '_').replace(/[^a-zA-Z0-9_-]/g, '')
         const file = `${OUT_DIR}/${bp.name}${slug}_${colorScheme}.png`
         await page.screenshot({ path: file, fullPage: bp.width >= 1024 })
         written.push(file)
