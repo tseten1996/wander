@@ -97,3 +97,5 @@ name, color)` RPC so invite codes are validated server-side. Full schema in
 | `npm run build` | Type-check + production build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | Type-check only |
+| `npm run screenshot` | Screenshot pages against the **live** Supabase project (needs network) |
+| `npm run screenshot:mock` | Screenshot pages against a **stubbed** Supabase from a fixture — no network, works in sandboxes ([scripts/screenshot-mock.mjs](scripts/screenshot-mock.mjs)) |

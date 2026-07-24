@@ -11,7 +11,8 @@
     "typecheck": "tsc -b --noEmit",
     "test:unit": "node --test tests/*.test.mjs",
     "test": "node --test tests/*.test.mjs && node tests/smoke.mjs",
-    "screenshot": "node scripts/screenshot.mjs"
+    "screenshot": "node scripts/screenshot.mjs",
+    "screenshot:mock": "node scripts/screenshot-mock.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
