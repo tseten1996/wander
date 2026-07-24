@@ -106,6 +106,12 @@ const INVITE_PREVIEW = {
   end_date: null,
 }
 
+// The `flaky` invite drops every join_trip call (a real network failure) until
+// the retry test flips this to true right before clicking "Try again" — proving
+// the retryable state recovers in place. The test controls the flip so the
+// assertion is deterministic no matter how many times the effect re-runs.
+let flakyRecovered = false
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -150,6 +156,18 @@ async function routeSupabase(route) {
 
   // ── RPCs ──
   if (pathname.endsWith('/rest/v1/rpc/join_trip')) {
+    // A revoked/regenerated invite: join_trip raises INVALID_INVITE. The client
+    // must dead-end this one ("ask for a fresh link").
+    if (body.p_invite_code === 'deadlink') {
+      return json({ code: 'P0001', message: 'INVALID_INVITE', details: null, hint: null }, 400)
+    }
+    // A flaky connection: the join_trip request never reaches the server. The
+    // client must NOT read a network drop as a dead link. Once the retry test
+    // flips `flakyRecovered`, the call falls through to the normal
+    // NAME_REQUIRED → form path, proving recovery in place.
+    if (body.p_invite_code === 'flaky' && !flakyRecovered) {
+      return route.abort('failed')
+    }
     // Mirrors join_trip: a blank display name means "show the name form".
     if (!body.p_display_name) {
       return json({ code: 'P0001', message: 'NAME_REQUIRED', details: null, hint: null }, 400)
@@ -233,6 +251,47 @@ async function runJoin(browser) {
     await page.getByRole('button', { name: 'Join the trip' }).click()
     await page.waitForURL((url) => url.hash.includes(`/trip/${TRIP_ID}`), { timeout: 10_000 })
     ok('joining navigates into the trip')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runJoinDeadLink(browser) {
+  console.log('\n▶ join: a genuinely invalid invite still dead-ends')
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/join/deadlink`, { waitUntil: 'domcontentloaded' })
+    // INVALID_INVITE from the server → the honest "ask for a fresh link" screen.
+    await page
+      .getByText('This invite link doesn’t work')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a real INVALID_INVITE still shows the "ask for a fresh link" screen')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runJoinTransientError(browser) {
+  console.log('\n▶ join: a transient failure is retryable, not a dead link')
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/join/flaky`, { waitUntil: 'domcontentloaded' })
+    // A non-INVALID_INVITE failure must land on the retryable "couldn’t connect"
+    // state — never the dead-end that tells a friend to give up on a good link.
+    await page.getByText('Couldn’t connect').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a network/auth failure shows the retryable "couldn’t connect" state')
+    if (await page.getByText('This invite link doesn’t work').isVisible()) {
+      throw new Error('a transient failure was misdiagnosed as a dead invite link')
+    }
+    ok('a transient failure is not blamed on the invite link')
+    // Let the next join_trip through, then retry: it must recover in place (no
+    // full reload) → the name form appears.
+    flakyRecovered = true
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await page.getByText('Lisbon in Spring').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('Try again recovers into the join form without a full reload')
   } finally {
     await context.close()
   }
@@ -367,6 +426,8 @@ async function main() {
   try {
     await runSignIn(browser)
     await runJoin(browser)
+    await runJoinDeadLink(browser)
+    await runJoinTransientError(browser)
     await runCreateTrip(browser)
     await runOffline(browser)
     await runSignOut(browser)
