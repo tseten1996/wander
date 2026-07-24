@@ -41,8 +41,23 @@ function prefersReducedMotion(): boolean {
   )
 }
 
-/** A round, numbered pin drawn from design tokens (no raw colours, no image). */
+/**
+ * A round, numbered pin drawn from design tokens (no raw colours, no image).
+ * The visible dot stays a compact 26px, but it is centred inside a 44px
+ * transparent wrapper so the *tap area* meets the mobile 44px floor — the pin
+ * is the primary way to open a located item on the Map tab, and on mobile there
+ * is no larger alternative target for it.
+ */
 function pinIcon(n: number): L.DivIcon {
+  const wrap = document.createElement('div')
+  wrap.style.cssText = [
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'width:44px',
+    'height:44px',
+  ].join(';')
+
   const el = document.createElement('div')
   el.textContent = String(n)
   el.style.cssText = [
@@ -60,11 +75,15 @@ function pinIcon(n: number): L.DivIcon {
     'border:2px solid var(--surface)',
     'box-shadow:var(--shadow-soft)',
   ].join(';')
+  wrap.appendChild(el)
+
   return L.divIcon({
     className: '',
-    html: el.outerHTML,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    html: wrap.outerHTML,
+    // 44px hit area; anchor at its centre. The popup still points at the top of
+    // the visible 26px dot (9px inset within the 44px box → 22 − 9 = 13).
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
     popupAnchor: [0, -13],
   })
 }
@@ -100,7 +119,14 @@ function popupContent(item: ItineraryItem, onOpen: () => void): HTMLElement {
   btn.style.cssText = [
     'margin-top:8px',
     'width:100%',
-    'padding:6px 10px',
+    // ≥44px tall to meet the mobile tap-target floor (box-sizing keeps the
+    // padding + min-height honest regardless of Leaflet's popup line-height).
+    'box-sizing:border-box',
+    'min-height:44px',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'padding:8px 10px',
     'border-radius:8px',
     'background:var(--primary)',
     'color:var(--on-primary)',
@@ -132,7 +158,9 @@ export default function ItineraryMap({
   // Keep marker/popup click handlers pointing at the latest onSelect without
   // rebuilding every marker when the parent re-renders.
   const onSelectRef = React.useRef(onSelect)
-  onSelectRef.current = onSelect
+  React.useLayoutEffect(() => {
+    onSelectRef.current = onSelect
+  })
 
   // Create the Leaflet map once there is at least one pin to show.
   React.useEffect(() => {
