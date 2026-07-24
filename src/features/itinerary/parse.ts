@@ -230,7 +230,11 @@ export function parseBooking(
     start_time,
     end_time,
     location,
-    notes: detectReference(text),
+    // Prefer a detected confirmation code; otherwise fall back to the raw
+    // pasted text so a matched parse never silently drops the parts we didn't
+    // structure (seat, terminal, fare rules), consistent with the "never a
+    // silent loss" guarantee the unmatched path already gives.
+    notes: detectReference(text) ?? (raw ? raw.slice(0, 2000) : null),
     matched: true,
   }
 }

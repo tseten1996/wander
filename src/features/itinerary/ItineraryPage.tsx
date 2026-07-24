@@ -517,6 +517,7 @@ function PasteBookingDialog({
   onOpenChange: (o: boolean) => void
   onParsed: (parsed: ParsedBooking) => void
 }) {
+  const { trip } = useTripContext()
   const [text, setText] = React.useState('')
 
   React.useEffect(() => {
@@ -525,7 +526,13 @@ function PasteBookingDialog({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    onParsed(parseBooking(text))
+    // Year-less dates ("Jul 24") adopt the trip's own year, not today's, so a
+    // trip in a different calendar year doesn't silently mis-date. Falls back
+    // to the parser's wall-clock default when the trip has no start date.
+    const referenceYear = trip.start_date
+      ? new Date(trip.start_date).getFullYear()
+      : undefined
+    onParsed(parseBooking(text, referenceYear))
   }
 
   return (
@@ -633,10 +640,11 @@ export default function ItineraryPage() {
               aria-label="Paste a booking confirmation"
             >
               <ClipboardPaste />
-              {/* Short label below the app's md breakpoint so the three-action
-                  row never overflows a 375px header; full label from sm up. */}
-              <span className="sm:hidden">Paste</span>
-              <span className="hidden sm:inline">Paste a booking</span>
+              {/* Short label below the app's md breakpoint (768px, the same
+                  mobile/desktop boundary as isMobileViewport) so the
+                  three-action row never overflows a 375px header. */}
+              <span className="md:hidden">Paste</span>
+              <span className="hidden md:inline">Paste a booking</span>
             </Button>
             <Button onClick={openBlankCreate}>
               <Plus /> Add item

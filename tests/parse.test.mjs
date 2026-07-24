@@ -56,6 +56,24 @@ test('a hotel confirmation reads check-in date, time and address', () => {
   assert.equal(r.location, 'Kamogawa Nijo-Ohashi Hotori, Kyoto')
   // Skips the generic header line, picks the property name as the title.
   assert.equal(r.title, 'The Ritz-Carlton Kyoto')
+  // No confirmation code here, so the raw text is preserved in notes rather
+  // than being silently dropped on the matched path.
+  assert.equal(r.notes, text)
+})
+
+test('a matched parse without a reference code keeps the raw text in notes', () => {
+  const text = [
+    'Dinner at Narisawa',
+    'Aug 15, 2026 at 7:30 PM',
+    'Party of 4 — window table, tasting menu',
+  ].join('\n')
+  const r = parseBooking(text, YEAR)
+  assert.equal(r.matched, true)
+  // Detected fields still populate…
+  assert.equal(r.day, '2026-08-15')
+  assert.equal(r.start_time, '19:30')
+  // …and nothing pasted is lost: with no confirmation code, notes holds the raw text.
+  assert.equal(r.notes, text)
 })
 
 test('ISO dates and 24-hour times parse without a meridiem', () => {
