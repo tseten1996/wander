@@ -14,6 +14,14 @@
 --   • trip-currency row: all four columns null (every pre-existing row), or
 --   • foreign row: a 3-letter ISO `currency` and a positive `exchange_rate`.
 --
+-- The foreign branch guards `currency`/`exchange_rate` with explicit
+-- `is not null` checks: a CHECK constraint rejects a row only when the predicate
+-- is FALSE, and passes it when the predicate is NULL (SQL three-valued logic).
+-- Without the guards, a half-populated foreign row (`currency='EUR'` with a null
+-- `exchange_rate`) makes `exchange_rate > 0` evaluate to NULL, so
+-- `FALSE or NULL = NULL` and the malformed row would be accepted — exactly the
+-- corruption this constraint exists to reject.
+--
 -- It intentionally does NOT assert `estimated_converted = round(estimated *
 -- exchange_rate, 2)`: that equality can't see the trip currency (it lives on
 -- `trips`, not this table) and would reject legitimate client writes on
@@ -28,13 +36,16 @@
 do $$
 begin
   if not exists (
-    select 1 from pg_constraint where conname = 'budget_entries_currency_consistency'
+    select 1 from pg_constraint
+    where conname = 'budget_entries_currency_consistency'
+      and conrelid = 'public.budget_entries'::regclass
   ) then
     alter table public.budget_entries
       add constraint budget_entries_currency_consistency check (
         (currency is null and exchange_rate is null
            and estimated_converted is null and actual_converted is null)
-        or (currency ~ '^[A-Z]{3}$' and exchange_rate > 0)
+        or (currency is not null and currency ~ '^[A-Z]{3}$'
+            and exchange_rate is not null and exchange_rate > 0)
       );
   end if;
 end $$;
