@@ -70,6 +70,7 @@ const budgetSchema = z.object({
     .nullable()
     .or(z.literal('')),
   paid_by: z.string().optional().nullable(),
+  participants: z.array(z.string()).min(1, 'Pick at least one person who shared this'),
   entry_date: z.string().optional().nullable(),
   notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
 })
@@ -95,6 +96,7 @@ function EntryDialog({
   // from the live table so their override sticks.
   const [rateEdited, setRateEdited] = React.useState(false)
 
+  const allMemberIds = React.useMemo(() => members.map((m) => m.id), [members])
   const empty = React.useMemo<BudgetFormValues>(
     () => ({
       title: '',
@@ -104,10 +106,11 @@ function EntryDialog({
       currency: tripCurrency,
       rate: '',
       paid_by: SHARED,
+      participants: allMemberIds,
       entry_date: '',
       notes: '',
     }),
-    [tripCurrency]
+    [tripCurrency, allMemberIds]
   )
   const form = useForm<BudgetFormValues>({
     resolver: zodResolver(budgetSchema),
@@ -127,6 +130,12 @@ function EntryDialog({
               currency: (entry.currency ?? tripCurrency).toUpperCase(),
               rate: entry.exchange_rate ?? '',
               paid_by: entry.paid_by ?? SHARED,
+              // Restrict a saved subset to members still on the trip; a null /
+              // empty set (or one whose members all left) shows as everyone.
+              participants:
+                entry.participants?.filter((id) => allMemberIds.includes(id)).length
+                  ? entry.participants.filter((id) => allMemberIds.includes(id))
+                  : allMemberIds,
               entry_date: entry.entry_date ?? '',
               notes: entry.notes ?? '',
             }
@@ -186,6 +195,18 @@ function EntryDialog({
     }
     const estimated = values.estimated === '' || values.estimated == null ? null : Number(values.estimated)
     const actual = values.actual === '' || values.actual == null ? null : Number(values.actual)
+    // Store the canonical "everyone" as null (not the full id list) so a member
+    // who joins later is automatically included and settlement keeps the
+    // historic default. A real subset is stored verbatim, in member order.
+    //
+    // Canonicalize against *current* members first: if someone leaves while the
+    // dialog is open, a stale id lingers in the form's selection. Comparing the
+    // raw picked length to members.length could then read a real subset as
+    // "everyone" (e.g. picked A+C, C leaves, members A+B — both length 2) and
+    // wrongly persist null, charging a member who never shared the cost. Filter
+    // to current members, then decide everyone-vs-subset on the cleaned set.
+    const picked = members.filter((m) => (values.participants ?? []).includes(m.id)).map((m) => m.id)
+    const participants = picked.length === members.length ? null : picked
     const payload: BudgetInput = {
       title: values.title.trim(),
       category: values.category as BudgetCategory,
@@ -196,6 +217,7 @@ function EntryDialog({
       estimated_converted: foreign && estimated != null ? toCents(estimated * rate!) : null,
       actual_converted: foreign && actual != null ? toCents(actual * rate!) : null,
       paid_by: !values.paid_by || values.paid_by === SHARED ? null : values.paid_by,
+      participants,
       entry_date: values.entry_date || null,
       notes: values.notes?.trim() || null,
     }
@@ -357,6 +379,77 @@ function EntryDialog({
               )}
             />
           </div>
+          <Controller
+            control={form.control}
+            name="participants"
+            render={({ field }) => {
+              const value = field.value ?? []
+              const selected = new Set(value)
+              const everyone = value.length === members.length
+              const inMemberOrder = (ids: Set<string>) =>
+                members.filter((m) => ids.has(m.id)).map((m) => m.id)
+              const toggle = (id: string) => {
+                const next = new Set(selected)
+                if (next.has(id)) next.delete(id)
+                else next.add(id)
+                field.onChange(inMemberOrder(next))
+              }
+              return (
+                <div className="space-y-2">
+                  <Label id="b-split-label">Split between</Label>
+                  <div
+                    role="group"
+                    aria-labelledby="b-split-label"
+                    className="flex flex-wrap gap-2"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={everyone}
+                      onClick={() => field.onChange(allMemberIds)}
+                      className={cn(
+                        'inline-flex min-h-11 items-center rounded-full border px-3.5 text-sm font-medium transition-colors',
+                        everyone
+                          ? 'border-primary bg-primary-faint text-primary'
+                          : 'border-line bg-surface text-ink-soft hover:border-line-strong hover:bg-sunken'
+                      )}
+                    >
+                      Everyone
+                    </button>
+                    {members.map((m) => {
+                      const on = selected.has(m.id)
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => toggle(m.id)}
+                          className={cn(
+                            'inline-flex min-h-11 items-center gap-2 rounded-full border pl-1.5 pr-3.5 text-sm font-medium transition-colors',
+                            on
+                              ? 'border-primary bg-primary-faint text-primary'
+                              : 'border-line bg-surface text-ink-soft hover:border-line-strong hover:bg-sunken'
+                          )}
+                        >
+                          <MemberAvatar name={m.display_name} color={m.color} size="sm" />
+                          {m.display_name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p aria-live="polite" className="text-xs text-muted">
+                    {everyone
+                      ? 'Shared by everyone on the trip.'
+                      : value.length === 0
+                        ? 'Pick who shared this expense.'
+                        : `Split ${value.length} ${value.length === 1 ? 'way' : 'ways'}.`}
+                  </p>
+                  {err.participants && (
+                    <p className="text-xs text-danger">{err.participants.message}</p>
+                  )}
+                </div>
+              )
+            }}
+          />
           <div className="space-y-1.5">
             <Label htmlFor="b-notes">Notes</Label>
             <Textarea
