@@ -27,7 +27,7 @@ import { ITINERARY_META } from './meta'
 import { buildDayIndex, type DayInfo } from './days'
 import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
-import { parseBooking, type ParsedBooking } from './parse'
+import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -357,16 +357,23 @@ function ItemDialog({
   onOpenChange,
   item,
   prefill,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   item?: ItineraryItem
   /**
-   * Create-mode seed values (from a pasted booking, #77). Only the detected
-   * fields are present; the rest fall back to the empty-form defaults. Ignored
-   * when editing an existing `item`.
+   * Create-mode seed values (from a pasted booking, #77/#103). Only the
+   * detected fields are present; the rest fall back to the empty-form defaults.
+   * Ignored when editing an existing `item`.
    */
   prefill?: Partial<ItineraryFormValues>
+  /**
+   * Called after a successful *create* (never on edit). When provided, the
+   * parent decides whether to close the dialog or advance to the next queued
+   * draft (a flight/lodging paste yields two, confirmed one at a time, #103).
+   */
+  onCreated?: () => void
 }) {
   const { trip, me } = useTripContext()
   const createItem = useCreateItineraryItem(trip.id, me.id)
@@ -431,9 +438,16 @@ function ItemDialog({
       cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
     }
     try {
-      if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
-      else await createItem.mutateAsync(payload)
-      onOpenChange(false)
+      if (item) {
+        await updateItem.mutateAsync({ id: item.id, ...payload })
+        onOpenChange(false)
+      } else {
+        await createItem.mutateAsync(payload)
+        // On create, let the parent advance a multi-draft queue (or close);
+        // fall back to closing when no queue handler is wired in.
+        if (onCreated) onCreated()
+        else onOpenChange(false)
+      }
     } catch {
       // toasted by the mutation's onError
     }
@@ -614,7 +628,7 @@ function PasteBookingDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  onParsed: (parsed: ParsedBooking) => void
+  onParsed: (parsed: ReservationParse) => void
 }) {
   const { trip } = useTripContext()
   const [text, setText] = React.useState('')
@@ -631,7 +645,7 @@ function PasteBookingDialog({
     const referenceYear = trip.start_date
       ? new Date(trip.start_date).getFullYear()
       : undefined
-    onParsed(parseBooking(text, referenceYear))
+    onParsed(parseReservation(text, referenceYear))
   }
 
   return (
@@ -673,7 +687,12 @@ export default function ItineraryPage() {
   const weather = useTripWeather(trip)
   const [newOpen, setNewOpen] = React.useState(false)
   const [pasteOpen, setPasteOpen] = React.useState(false)
-  const [prefill, setPrefill] = React.useState<Partial<ItineraryFormValues> | undefined>(undefined)
+  // A pasted booking can produce several drafts (a flight that lands past
+  // midnight, or a hotel's check-in + check-out — #103). They're confirmed one
+  // at a time in the create form: the head of this queue seeds the open dialog,
+  // and each successful create shifts it until the queue drains.
+  const [prefillQueue, setPrefillQueue] = React.useState<Partial<ItineraryFormValues>[]>([])
+  const prefill = prefillQueue[0]
   const [exporting, setExporting] = React.useState(false)
   // Selecting a pin (or an unlocated row) in the Map view opens this item for
   // editing — the map has no cards of its own to host a per-item dialog.
@@ -687,19 +706,31 @@ export default function ItineraryPage() {
   )
 
   function openBlankCreate() {
-    setPrefill(undefined)
+    setPrefillQueue([])
     setNewOpen(true)
   }
 
-  function handleParsed(parsed: ParsedBooking) {
-    setPrefill(toPrefill(parsed))
+  function handleParsed(result: ReservationParse) {
+    setPrefillQueue(result.drafts.map(toPrefill))
     setPasteOpen(false)
     setNewOpen(true)
-    if (parsed.matched) {
-      toast.success('Filled in what we found — review and save')
-    } else {
+    if (!result.matched) {
       toast('Couldn’t read that automatically — added it to the notes')
+    } else if (result.drafts.length > 1) {
+      toast.success(`Found ${result.drafts.length} items — review and save each`)
+    } else {
+      toast.success('Filled in what we found — review and save')
     }
+  }
+
+  // Advance the draft queue after a successful create: keep the dialog open and
+  // re-seed it with the next draft, or close once the last one is saved.
+  function handleItemCreated() {
+    setPrefillQueue((queue) => {
+      const rest = queue.slice(1)
+      if (rest.length === 0) setNewOpen(false)
+      return rest
+    })
   }
 
   const items = itinerary.data ?? []
@@ -831,7 +862,17 @@ export default function ItineraryPage() {
         </Tabs>
       )}
       <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
-      <ItemDialog open={newOpen} onOpenChange={setNewOpen} prefill={prefill} />
+      <ItemDialog
+        open={newOpen}
+        // Closing (Escape/backdrop/last save) abandons any remaining drafts so
+        // a half-confirmed queue never lingers into the next create.
+        onOpenChange={(o) => {
+          setNewOpen(o)
+          if (!o) setPrefillQueue([])
+        }}
+        prefill={prefill}
+        onCreated={handleItemCreated}
+      />
       <ItemDialog
         open={editItem !== null}
         onOpenChange={(o) => !o && setEditItem(null)}
