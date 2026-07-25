@@ -251,6 +251,39 @@ async function runJoin(browser) {
     await page.getByRole('button', { name: 'Join the trip' }).click()
     await page.waitForURL((url) => url.hash.includes(`/trip/${TRIP_ID}`), { timeout: 10_000 })
     ok('joining navigates into the trip')
+
+    // Post-join install nudge (#99). Headless Chromium won't fire a real
+    // `beforeinstallprompt`, so synthesize one (with the deferred-prompt shape
+    // the hook consumes) to exercise the Chromium install path deterministically.
+    await page.evaluate(() => {
+      const e = new Event('beforeinstallprompt')
+      // The hook calls preventDefault(), then later prompt() + userChoice.
+      e.prompt = async () => {}
+      e.userChoice = Promise.resolve({ outcome: 'dismissed' })
+      window.dispatchEvent(e)
+    })
+    const nudge = page.getByRole('dialog', { name: 'Add Wander to your home screen' })
+    await nudge.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a captured install prompt after join surfaces the "keep your spot" nudge')
+
+    // Dismissing it persists per-device and never blocks the trip.
+    await nudge.getByRole('button', { name: 'Not now' }).click()
+    await nudge.waitFor({ state: 'hidden', timeout: 10_000 })
+    const dismissed = await page.evaluate(() =>
+      localStorage.getItem('wander_install_nudge_dismissed')
+    )
+    if (dismissed !== '1') throw new Error('dismissing the nudge did not persist per device')
+    ok('dismissing the nudge persists so it will not nag again')
+
+    // A second captured prompt must not resurrect a dismissed nudge.
+    await page.evaluate(() => {
+      const e = new Event('beforeinstallprompt')
+      e.prompt = async () => {}
+      e.userChoice = Promise.resolve({ outcome: 'dismissed' })
+      window.dispatchEvent(e)
+    })
+    if (await nudge.isVisible()) throw new Error('a dismissed nudge reappeared on a later prompt')
+    ok('a dismissed nudge stays dismissed on a later install prompt')
   } finally {
     await context.close()
   }

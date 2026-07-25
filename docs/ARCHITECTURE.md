@@ -43,8 +43,12 @@ Two kinds of people, one mechanism:
 | Friend | Supabase **anonymous sign-in**, created invisibly when they open an invite link | nothing — they just type a display name |
 
 Every person therefore has a real `auth.uid()`, which is what RLS policies
-check. The anonymous session is persisted in Local Storage (alongside a
-`wander_device_id`), so friends stay recognized on their device.
+check. The anonymous session — persisted in Local Storage — is what keeps
+friends recognized on their device. A `wander_device_id` is also generated and
+stored on first load, but it is currently **inert**: nothing reads it yet (it's
+reserved for the identity-persistence work in epic #97, e.g. helping a returning
+friend recover a session Safari has evicted). The session, not this id, is the
+credential today.
 
 Joining is done by a `SECURITY DEFINER` RPC — `join_trip(invite_code, name,
 color)` — which validates the invite code server-side and inserts a

@@ -5,6 +5,7 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/hooks/useAuth'
 import { OfflineBanner } from '@/components/layout/OfflineBanner'
+import { InstallNudge } from '@/components/layout/InstallNudge'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
 import App from './App'
 import './index.css'
@@ -29,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <App />
         </HashRouter>
         <OfflineBanner />
+        <InstallNudge />
         <Toaster
           position="top-center"
           toastOptions={{
