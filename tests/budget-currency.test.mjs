@@ -129,6 +129,20 @@ test('computeBalances: an entry splits across only its participants (#104)', () 
   assert.equal(byId.e.net, 0)
 })
 
+test('computeBalances: duplicate participant ids are deduped (no double share)', () => {
+  // `participants` is client-written and any trip member can craft a raw array
+  // via PostgREST, so a repeated id must not slip through as a weighted split
+  // (out of scope for this slice). ['a','a','b'] must settle exactly like
+  // ['a','b'] — A and B each bear half of the $100, not A two-thirds.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const e = entry({ actual: 100, paid_by: 'a', participants: ['a', 'a', 'b'] })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // fronted 100, own share 50 (not 100 * 2/3)
+  assert.equal(byId.b.net, -50) // owes half, not a third
+})
+
 test('computeBalances: null / empty participants keep the shared-by-all default', () => {
   // Both encodings of "everyone" must settle identically to the pre-#104 pool
   // split — this is what guarantees existing rows need no backfill.

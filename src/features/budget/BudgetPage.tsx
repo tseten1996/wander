@@ -198,9 +198,15 @@ function EntryDialog({
     // Store the canonical "everyone" as null (not the full id list) so a member
     // who joins later is automatically included and settlement keeps the
     // historic default. A real subset is stored verbatim, in member order.
-    const picked = values.participants ?? []
-    const everyone = picked.length === members.length
-    const participants = everyone ? null : members.filter((m) => picked.includes(m.id)).map((m) => m.id)
+    //
+    // Canonicalize against *current* members first: if someone leaves while the
+    // dialog is open, a stale id lingers in the form's selection. Comparing the
+    // raw picked length to members.length could then read a real subset as
+    // "everyone" (e.g. picked A+C, C leaves, members A+B — both length 2) and
+    // wrongly persist null, charging a member who never shared the cost. Filter
+    // to current members, then decide everyone-vs-subset on the cleaned set.
+    const picked = members.filter((m) => (values.participants ?? []).includes(m.id)).map((m) => m.id)
+    const participants = picked.length === members.length ? null : picked
     const payload: BudgetInput = {
       title: values.title.trim(),
       category: values.category as BudgetCategory,

@@ -56,7 +56,14 @@ export function computeBalances(entries: BudgetEntry[], members: Member[]): Bala
     // members, or everyone when unset/empty (the historic default). If every
     // named participant has since left, fall back to everyone so the amount is
     // still accounted for rather than dropped.
-    const named = (e.participants ?? []).filter((id) => isMember.has(id))
+    //
+    // `participants` is client-written and `budget_update` is gated only by
+    // `is_trip_member`, so any member can hand-craft the array via PostgREST.
+    // Dedupe before splitting: a repeated id like ['a','a','b'] would otherwise
+    // give A a double share — the arbitrary-weighted split this slice scopes
+    // out — with no UI trace. A `CHECK` on the column backs this at the DB
+    // boundary; the `Set` here keeps the math correct regardless of row content.
+    const named = [...new Set((e.participants ?? []).filter((id) => isMember.has(id)))]
     const sharers = named.length > 0 ? named : memberIds
 
     paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + amount)
