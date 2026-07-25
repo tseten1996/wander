@@ -114,6 +114,60 @@ test('computeBalances: payments by a non-member are excluded from the pool', () 
   assert.equal(byId.b.net, -30)
 })
 
+test('computeBalances: an entry splits across only its participants (#104)', () => {
+  // A $150 dinner shared by 3 of the 5 members, paid by A. Only A, B, C owe a
+  // $50 share; D and E — who didn't go — owe nothing.
+  const members = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id }))
+  const dinner = entry({ actual: 150, paid_by: 'a', participants: ['a', 'b', 'c'] })
+  const byId = Object.fromEntries(
+    computeBalances([dinner], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 100) // fronted 150, own share 50
+  assert.equal(byId.b.net, -50)
+  assert.equal(byId.c.net, -50)
+  assert.equal(byId.d.net, 0) // didn't share it
+  assert.equal(byId.e.net, 0)
+})
+
+test('computeBalances: null / empty participants keep the shared-by-all default', () => {
+  // Both encodings of "everyone" must settle identically to the pre-#104 pool
+  // split — this is what guarantees existing rows need no backfill.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  for (const participants of [null, []]) {
+    const e = entry({ actual: 80, paid_by: 'a', participants })
+    const byId = Object.fromEntries(
+      computeBalances([e], members).map((b) => [b.member.id, b]),
+    )
+    assert.equal(byId.a.net, 40) // pool 80, split evenly across both
+    assert.equal(byId.b.net, -40)
+  }
+})
+
+test('computeBalances: a participant who left redistributes among the rest', () => {
+  // Dinner split three ways, but C has since left the trip. The cost now
+  // divides across the two remaining participants (A, B), not the original 3.
+  const members = ['a', 'b', 'd'].map((id) => ({ id, name: id }))
+  const dinner = entry({ actual: 150, paid_by: 'a', participants: ['a', 'b', 'c'] })
+  const byId = Object.fromEntries(
+    computeBalances([dinner], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 75) // fronted 150, share now 75
+  assert.equal(byId.b.net, -75)
+  assert.equal(byId.d.net, 0) // never a participant
+})
+
+test('computeBalances: if every participant left, the cost falls back to everyone', () => {
+  // A degenerate subset whose members all departed must not silently drop the
+  // amount — it reverts to a shared-by-all split so the payer is still made whole.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const e = entry({ actual: 100, paid_by: 'a', participants: ['x', 'y'] })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // shared across all current members
+  assert.equal(byId.b.net, -50)
+})
+
 test('conversionRate inverts the trip-based table; missing currency → null', () => {
   // Table is keyed by the trip currency (USD): 1 USD = 0.9 EUR, 150 JPY.
   const rates = { USD: 1, EUR: 0.9, JPY: 150 }

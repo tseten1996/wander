@@ -36,6 +36,8 @@ export interface BudgetInput {
   estimated_converted: number | null
   actual_converted: number | null
   exchange_rate: number | null
+  /** Members who share this cost; null = shared by all current members. */
+  participants: string[] | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null

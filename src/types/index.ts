@@ -152,6 +152,9 @@ export interface BudgetEntry {
   actual_converted: number | null
   /** original→trip rate used, kept so historical entries don't drift. */
   exchange_rate: number | null
+  /** Member ids that share this cost in settle-up. null / empty = shared by all
+   *  current members (the historic default) — see settlement.ts. */
+  participants: string[] | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null

@@ -1,0 +1,26 @@
+-- #104: split an expense among only some members (subset shares in settle-up).
+--
+-- Until now settle-up divided every expense evenly across *all* current trip
+-- members (`settlement.ts`: `share = pool / members.length`). That is wrong for
+-- the most common group-travel expense — the one only some people shared (three
+-- of five at a $150 dinner). This adds an explicit participant set per entry.
+--
+-- Design:
+--   • `participants` — the members who actually share this cost, as an array of
+--     `members.id`. NULL or an empty array means "shared by all current members"
+--     — which is exactly today's behaviour, so every pre-existing row keeps its
+--     current settlement semantics and NO backfill is needed.
+--
+-- Why uuid[] and not a join table: the set is small (a trip's members), always
+-- read together with the entry, and never queried independently. An array keeps
+-- it one column on a table members already write, so RLS and the realtime
+-- publication for budget_entries need no change — the existing
+-- is_trip_member / is_trip_owner policies cover the new column automatically,
+-- same as the #79 currency columns.
+--
+-- No element-level foreign key is possible on a Postgres array; a participant
+-- who later leaves the trip is handled in the settlement math (their per-entry
+-- share redistributes among the remaining participants — see settlement.ts),
+-- so a dangling id degrades gracefully rather than corrupting a balance.
+alter table public.budget_entries
+  add column if not exists participants uuid[];
