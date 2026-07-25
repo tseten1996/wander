@@ -24,6 +24,7 @@ import {
   useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
 } from './api'
 import { ITINERARY_META } from './meta'
+import { buildDayIndex, type DayInfo } from './days'
 import { overlapsByItem } from './overlap'
 import { parseBooking, type ParsedBooking } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
@@ -101,9 +102,15 @@ function conflictLabel(item: ItineraryItem): string {
 function SortableItemCard({
   item,
   conflicts,
+  selected,
+  onSelect,
 }: {
   item: ItineraryItem
   conflicts?: ItineraryItem[]
+  /** True when this item is the shared list↔map selection. */
+  selected: boolean
+  /** Toggle this item as the shared selection (used to sync with the map). */
+  onSelect: (id: string) => void
 }) {
   const { trip, me, isOwner } = useTripContext()
   const deleteItem = useDeleteItineraryItem(trip.id)
@@ -114,18 +121,53 @@ function SortableItemCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id })
 
+  // Compose the dnd node ref with a local one so we can scroll this row into
+  // view when it becomes the selection (e.g. after selecting its pin on the map
+  // and switching back to the List tab).
+  const rowRef = React.useRef<HTMLDivElement | null>(null)
+  const setRefs = React.useCallback(
+    (el: HTMLDivElement | null) => {
+      rowRef.current = el
+      setNodeRef(el)
+    },
+    [setNodeRef]
+  )
+  React.useEffect(() => {
+    if (!selected || !rowRef.current) return
+    const reduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    rowRef.current.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+  }, [selected])
+
   return (
     <div
-      ref={setNodeRef}
+      ref={setRefs}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn('relative', isDragging && 'z-10 opacity-80')}
     >
-      <Card className="flex items-center gap-3 p-3.5">
+      <Card
+        className={cn(
+          'flex items-center gap-3 p-3.5',
+          selected && 'ring-2 ring-primary'
+        )}
+      >
+        {/* Transparent overlay makes the whole card a "select / show on map"
+            target. It sits above the passive title/meta but below the real
+            controls (grip, links, menu) which are raised to z-20 so they stay
+            independently clickable — a valid alternative to nesting buttons. */}
+        <button
+          type="button"
+          onClick={() => onSelect(item.id)}
+          aria-pressed={selected}
+          aria-label={`${selected ? 'Deselect' : 'Show'} ${item.title} on the map`}
+          className="absolute inset-0 z-10 rounded-[inherit]"
+        />
         <button
           type="button"
           {...attributes}
           {...listeners}
-          className="cursor-grab touch-none text-faint hover:text-muted active:cursor-grabbing"
+          className="relative z-20 cursor-grab touch-none text-faint hover:text-muted active:cursor-grabbing"
           aria-label={`Reorder ${item.title}`}
         >
           <GripVertical className="size-4" />
@@ -154,7 +196,7 @@ function SortableItemCard({
             )]
             if (urls.length === 0 && !item.location) return null
             return (
-              <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="relative z-20 mt-1.5 flex flex-wrap items-center gap-1.5">
                 {urls.map((u) => <LinkChip key={u} url={u} />)}
                 {item.location && <MapsChip location={item.location} />}
               </span>
@@ -171,7 +213,12 @@ function SortableItemCard({
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Itinerary item actions">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative z-20"
+              aria-label="Itinerary item actions"
+            >
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
@@ -202,10 +249,17 @@ function DaySection({
   day,
   items,
   weather,
+  dayInfo,
+  selectedId,
+  onSelect,
 }: {
   day: string | null
   items: ItineraryItem[]
   weather?: DailyWeather
+  /** Day number + colour, matching the map's pins/legend (absent when undated). */
+  dayInfo?: DayInfo
+  selectedId: string | null
+  onSelect: (id: string) => void
 }) {
   const { trip } = useTripContext()
   const reorder = useReorderItinerary(trip.id)
@@ -243,6 +297,16 @@ function DaySection({
   return (
     <section>
       <h2 className="mb-2.5 flex items-baseline gap-2 font-display text-base font-semibold">
+        {dayInfo && (
+          <span
+            className="flex size-5 shrink-0 items-center justify-center self-center rounded-full text-[10px] font-bold text-white"
+            style={{ backgroundColor: dayInfo.color }}
+            title={dayInfo.label}
+          >
+            {dayInfo.number}
+            <span className="sr-only">{dayInfo.label}</span>
+          </span>
+        )}
         {day ? longDate(day) : 'Not scheduled yet'}
         <span className="text-xs font-normal text-faint">
           {items.length} {items.length === 1 ? 'item' : 'items'}
@@ -267,7 +331,13 @@ function DaySection({
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
             {items.map((item) => (
-              <SortableItemCard key={item.id} item={item} conflicts={conflicts.get(item.id)} />
+              <SortableItemCard
+                key={item.id}
+                item={item}
+                conflicts={conflicts.get(item.id)}
+                selected={item.id === selectedId}
+                onSelect={onSelect}
+              />
             ))}
           </div>
         </SortableContext>
@@ -607,6 +677,13 @@ export default function ItineraryPage() {
   // Selecting a pin (or an unlocated row) in the Map view opens this item for
   // editing — the map has no cards of its own to host a per-item dialog.
   const [editItem, setEditItem] = React.useState<ItineraryItem | null>(null)
+  // The one item highlighted across the List and Map tabs (map epic slice 2).
+  // A pin click sets it; a list row toggles it; both views sync to this value.
+  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const toggleSelect = React.useCallback(
+    (id: string) => setSelectedId((cur) => (cur === id ? null : id)),
+    []
+  )
 
   function openBlankCreate() {
     setPrefill(undefined)
@@ -625,6 +702,9 @@ export default function ItineraryPage() {
   }
 
   const items = itinerary.data ?? []
+  // Day -> {number, colour, label}, shared by the list day-headers and the
+  // map's pins + legend so both speak the same "Day N" language.
+  const dayIndex = React.useMemo(() => buildDayIndex(items), [items])
 
   async function exportCalendar() {
     setExporting(true)
@@ -729,13 +809,22 @@ export default function ItineraryPage() {
                   day={day}
                   items={byDay.get(day)!}
                   weather={day ? weather.data?.get(day) : undefined}
+                  dayInfo={day ? dayIndex.get(day) : undefined}
+                  selectedId={selectedId}
+                  onSelect={toggleSelect}
                 />
               ))}
             </motion.div>
           </TabsContent>
           <TabsContent value="map">
             <React.Suspense fallback={<Skeleton className="h-[22rem] rounded-2xl sm:h-[28rem]" />}>
-              <ItineraryMap items={items} onSelect={setEditItem} />
+              <ItineraryMap
+                items={items}
+                dayIndex={dayIndex}
+                selectedId={selectedId}
+                onSelectItem={setSelectedId}
+                onOpenItem={setEditItem}
+              />
             </React.Suspense>
           </TabsContent>
         </Tabs>

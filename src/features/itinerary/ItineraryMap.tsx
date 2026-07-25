@@ -3,22 +3,29 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapPinOff } from 'lucide-react'
 import { ITINERARY_META } from './meta'
+import { dayInfoFor, type DayInfo } from './days'
+import { ON_MEMBER_COLOR } from '@/lib/colors'
 import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { ItineraryItem } from '@/types'
 
 /**
- * Map view (#61) — the first slice of the Map-view epic (#60). Renders every
- * itinerary item that has coordinates as a numbered pin on an OpenStreetMap
- * map via Leaflet (no API key, consistent with the free-tier stack), and lists
- * the items that lack coordinates in a clearly-labeled strip so nothing is
- * silently dropped. Clicking a pin (or an unlocated row) opens that item.
+ * Map view — slice 2 of the Map-view epic (#60). Builds on the pins shipped in
+ * #61 and adds the two things that turn a picture into a planning surface:
+ *
+ *  - **Day encoding** — each located item's pin is coloured and numbered by its
+ *    itinerary day (see `days.ts`), with a legend, so "what belongs to which
+ *    day" is answerable at a glance. Number + colour together keep it legible
+ *    without relying on colour alone.
+ *  - **Two-way selection sync** — a single "selected item" id is shared with the
+ *    list (owned by `ItineraryPage`). Selecting a pin highlights it, pans to it,
+ *    and marks the matching list row; selecting a list row pans/highlights the
+ *    pin here.
  *
  * Leaflet is imported here and this component is lazy-loaded by ItineraryPage,
- * so the map library lands in its own async chunk and never weighs down the
- * initial bundle. Pins are `divIcon`s styled from CSS design tokens — no
- * external marker images are requested (only the OSM tiles themselves, the
- * same keyless-network pattern the app already uses for weather/geocoding).
+ * so the map library lands in its own async chunk. Pins are `divIcon`s styled
+ * from palette data / CSS tokens — no external marker images are requested
+ * (only the OSM tiles, the same keyless-network pattern used elsewhere).
  */
 
 /** An item is "located" only when both coordinates are real finite numbers. */
@@ -42,13 +49,15 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * A round, numbered pin drawn from design tokens (no raw colours, no image).
- * The visible dot stays a compact 26px, but it is centred inside a 44px
- * transparent wrapper so the *tap area* meets the mobile 44px floor — the pin
- * is the primary way to open a located item on the Map tab, and on mobile there
- * is no larger alternative target for it.
+ * A round pin drawn from palette data (no external image). It carries the day
+ * *number* (or "·" when the item has no day) over the day *colour*, so the day
+ * is encoded twice — colour and glyph — and stays distinguishable for
+ * colour-vision deficiency. The visible dot is centred inside a 44px
+ * transparent wrapper so the *tap area* meets the mobile 44px floor. A selected
+ * pin grows and gains a ring so it reads as the focused one against its peers.
  */
-function pinIcon(n: number): L.DivIcon {
+function pinIcon(info: DayInfo, selected: boolean): L.DivIcon {
+  const dot = selected ? 32 : 26
   const wrap = document.createElement('div')
   wrap.style.cssText = [
     'display:flex',
@@ -59,37 +68,40 @@ function pinIcon(n: number): L.DivIcon {
   ].join(';')
 
   const el = document.createElement('div')
-  el.textContent = String(n)
+  el.textContent = info.number != null ? String(info.number) : '·'
   el.style.cssText = [
     'display:flex',
     'align-items:center',
     'justify-content:center',
-    'width:26px',
-    'height:26px',
+    `width:${dot}px`,
+    `height:${dot}px`,
     'border-radius:9999px',
-    'background:var(--primary)',
-    'color:var(--on-primary)',
-    'font-weight:600',
+    `background:${info.color}`,
+    `color:${ON_MEMBER_COLOR}`,
+    'font-weight:700',
     'font-size:12px',
     'line-height:1',
     'border:2px solid var(--surface)',
-    'box-shadow:var(--shadow-soft)',
+    // Selected pins gain an extra coloured halo on top of the soft shadow.
+    selected
+      ? `box-shadow:0 0 0 3px var(--surface),0 0 0 5px ${info.color},var(--shadow-lift)`
+      : 'box-shadow:var(--shadow-soft)',
   ].join(';')
   wrap.appendChild(el)
 
   return L.divIcon({
     className: '',
     html: wrap.outerHTML,
-    // 44px hit area; anchor at its centre. The popup still points at the top of
-    // the visible 26px dot (9px inset within the 44px box → 22 − 9 = 13).
+    // 44px hit area; anchor at its centre (the dot's centre). The popup points
+    // just above the top of the visible dot — i.e. one radius up from centre.
     iconSize: [44, 44],
     iconAnchor: [22, 22],
-    popupAnchor: [0, -13],
+    popupAnchor: [0, -(dot / 2)],
   })
 }
 
 /** Popup content for a pin — built as DOM (textContent) so user text is safe. */
-function popupContent(item: ItineraryItem, onOpen: () => void): HTMLElement {
+function popupContent(item: ItineraryItem, info: DayInfo, onOpen: () => void): HTMLElement {
   const root = document.createElement('div')
   root.style.minWidth = '150px'
 
@@ -99,6 +111,7 @@ function popupContent(item: ItineraryItem, onOpen: () => void): HTMLElement {
   root.appendChild(title)
 
   const meta = [
+    info.label,
     item.start_time
       ? `${formatTime(item.start_time)}${item.end_time ? ` – ${formatTime(item.end_time)}` : ''}`
       : null,
@@ -141,25 +154,79 @@ function popupContent(item: ItineraryItem, onOpen: () => void): HTMLElement {
   return root
 }
 
+/** The day legend explaining the pin colours — only the days that have pins. */
+function DayLegend({ days }: { days: DayInfo[] }) {
+  if (days.length === 0) return null
+  return (
+    <ul
+      aria-label="Map day legend"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted"
+    >
+      {days.map((d) => (
+        <li key={d.label} className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
+            style={{ backgroundColor: d.color }}
+          >
+            {d.number ?? '·'}
+          </span>
+          <span>{d.label}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export default function ItineraryMap({
   items,
-  onSelect,
+  dayIndex,
+  selectedId,
+  onSelectItem,
+  onOpenItem,
 }: {
   items: ItineraryItem[]
-  onSelect: (item: ItineraryItem) => void
+  dayIndex: Map<string, DayInfo>
+  selectedId: string | null
+  /** Set the shared selection (a pin was clicked). */
+  onSelectItem: (id: string | null) => void
+  /** Open an item's edit dialog (the popup's "Open item" button). */
+  onOpenItem: (item: ItineraryItem) => void
 }) {
   const located = React.useMemo(() => items.filter(isLocated), [items])
   const unlocated = React.useMemo(() => items.filter((i) => !isLocated(i)), [items])
   const hasPins = located.length > 0
 
+  // Distinct days present among the pins, in day order, for the legend.
+  const legendDays = React.useMemo(() => {
+    const seen = new Map<string, DayInfo>()
+    for (const item of located) {
+      const info = dayInfoFor(item, dayIndex)
+      seen.set(info.label, info)
+    }
+    return [...seen.values()].sort((a, b) => {
+      // Numbered days first (in order); the "No day" bucket sinks to the end.
+      if (a.number == null) return 1
+      if (b.number == null) return -1
+      return a.number - b.number
+    })
+  }, [located, dayIndex])
+
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const mapRef = React.useRef<L.Map | null>(null)
   const layerRef = React.useRef<L.LayerGroup | null>(null)
-  // Keep marker/popup click handlers pointing at the latest onSelect without
-  // rebuilding every marker when the parent re-renders.
-  const onSelectRef = React.useRef(onSelect)
+  // Markers by item id so the selection effect can restyle / pan to one without
+  // rebuilding the whole layer.
+  const markersRef = React.useRef<Map<string, { marker: L.Marker; item: ItineraryItem; info: DayInfo }>>(
+    new Map()
+  )
+  // Keep click handlers pointing at the latest callbacks without rebuilding
+  // every marker when the parent re-renders.
+  const onSelectRef = React.useRef(onSelectItem)
+  const onOpenRef = React.useRef(onOpenItem)
   React.useLayoutEffect(() => {
-    onSelectRef.current = onSelect
+    onSelectRef.current = onSelectItem
+    onOpenRef.current = onOpenItem
   })
 
   // Create the Leaflet map once there is at least one pin to show.
@@ -184,26 +251,32 @@ export default function ItineraryMap({
       map.remove()
       mapRef.current = null
       layerRef.current = null
+      markersRef.current = new Map()
     }
   }, [hasPins])
 
-  // (Re)draw pins whenever the located set changes.
+  // (Re)draw pins whenever the located set or the day encoding changes.
   React.useEffect(() => {
     const map = mapRef.current
     const layer = layerRef.current
     if (!map || !layer) return
     layer.clearLayers()
+    markersRef.current = new Map()
     const points: L.LatLngExpression[] = []
-    located.forEach((item, i) => {
+    located.forEach((item) => {
+      const info = dayInfoFor(item, dayIndex)
       const latlng: L.LatLngExpression = [item.latitude, item.longitude]
       points.push(latlng)
       const marker = L.marker(latlng, {
-        icon: pinIcon(i + 1),
-        title: item.title,
+        icon: pinIcon(info, item.id === selectedId),
+        title: `${item.title} — ${info.label}`,
         keyboard: true,
       })
-      marker.bindPopup(() => popupContent(item, () => onSelectRef.current(item)))
-      layer.addLayer(marker)
+      marker.bindPopup(() => popupContent(item, info, () => onOpenRef.current(item)))
+      // Clicking a pin selects it (shared with the list); the popup still opens.
+      marker.on('click', () => onSelectRef.current(item.id))
+      marker.addTo(layer)
+      markersRef.current.set(item.id, { marker, item, info })
     })
     if (points.length > 0) {
       map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 15 })
@@ -211,19 +284,45 @@ export default function ItineraryMap({
     // Content mounts on tab-switch, so the container may have just gained its
     // size — recompute so tiles fill it instead of a 0×0 sliver.
     map.invalidateSize()
-  }, [located])
+    // selectedId is intentionally omitted: the selection effect below restyles
+    // the affected pins so a selection change doesn't rebuild the whole layer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [located, dayIndex])
+
+  // Reflect the shared selection: restyle every pin, then pan to / open the
+  // selected one. Runs on mount too, so a selection made on the List tab is
+  // honoured the moment the map appears.
+  React.useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    markersRef.current.forEach(({ marker, item, info }) => {
+      const selected = item.id === selectedId
+      marker.setIcon(pinIcon(info, selected))
+      marker.setZIndexOffset(selected ? 1000 : 0)
+    })
+    if (selectedId) {
+      const entry = markersRef.current.get(selectedId)
+      if (entry) {
+        map.panTo(entry.marker.getLatLng(), { animate: !prefersReducedMotion() })
+        entry.marker.openPopup()
+      }
+    }
+  }, [selectedId, located])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {hasPins ? (
-        <div
-          ref={containerRef}
-          role="region"
-          aria-label="Map of itinerary locations"
-          // `isolate` confines Leaflet's internal high z-index panes to this
-          // container's stacking context, so they never paint over app dialogs.
-          className="relative isolate h-[22rem] w-full overflow-hidden rounded-2xl border border-line sm:h-[28rem]"
-        />
+        <>
+          <DayLegend days={legendDays} />
+          <div
+            ref={containerRef}
+            role="region"
+            aria-label="Map of itinerary locations"
+            // `isolate` confines Leaflet's internal high z-index panes to this
+            // container's stacking context, so they never paint over app dialogs.
+            className="relative isolate h-[22rem] w-full overflow-hidden rounded-2xl border border-line sm:h-[28rem]"
+          />
+        </>
       ) : (
         <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line bg-sunken/40 px-6 py-12 text-center">
           <MapPinOff className="size-7 text-faint" aria-hidden />
@@ -250,7 +349,7 @@ export default function ItineraryMap({
                 <li key={item.id}>
                   <button
                     type="button"
-                    onClick={() => onSelect(item)}
+                    onClick={() => onOpenItem(item)}
                     className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface p-3 text-left transition-colors hover:border-line-strong"
                   >
                     <span
