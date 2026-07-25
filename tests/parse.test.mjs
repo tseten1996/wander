@@ -17,7 +17,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseBooking } from '../src/features/itinerary/parse.ts'
+import { parseBooking, parseBookings } from '../src/features/itinerary/parse.ts'
 
 const YEAR = 2026
 
@@ -150,4 +150,102 @@ test('long raw text is preserved but title/location caps hold on matched input',
   const r = parseBooking(`${longTitle}\nActivity on 2026-07-24 at 10:00`, YEAR)
   assert.equal(r.matched, true)
   assert.equal(r.title.length, 120)
+})
+
+/* ----------------------------- parseBookings ------------------------------ *
+ * Format-aware flight/lodging detectors (issue #103) layered over the #77
+ * generic parser. parseBookings returns one prefill per itinerary point.
+ * -------------------------------------------------------------------------- */
+
+test('a flight paste yields one point titled from the flight number and route', () => {
+  const text = [
+    'Flight confirmation — United UA 837',
+    'Departs 10:30 AM — Arrives 2:45 PM',
+    'SFO to NRT',
+    'Confirmation code: ABC123',
+    'Departure: July 24, 2026',
+  ].join('\n')
+  const [r, ...rest] = parseBookings(text, YEAR)
+  assert.equal(rest.length, 0)
+  assert.equal(r.category, 'flight')
+  assert.equal(r.title, 'UA837 SFO→NRT')
+  assert.equal(r.day, '2026-07-24')
+  assert.equal(r.start_time, '10:30')
+  // Same-day arrival lands as the end time.
+  assert.equal(r.end_time, '14:45')
+  assert.equal(r.location, 'SFO → NRT')
+  assert.equal(r.notes, 'Confirmation: ABC123')
+})
+
+test('a red-eye flight rolls the arrival to the next day in notes, not a bad end_time', () => {
+  const text = [
+    'AA 148',
+    'JFK to LHR',
+    'Departs 11:30 PM on 2026-07-24',
+    'Arrives 6:45 AM',
+    'Record locator: XYZ99',
+  ].join('\n')
+  const [r] = parseBookings(text, YEAR)
+  assert.equal(r.title, 'AA148 JFK→LHR')
+  assert.equal(r.day, '2026-07-24')
+  assert.equal(r.start_time, '23:30')
+  // The arrival is earlier than the departure, so it can't be a same-day
+  // end_time; it's recorded on the next day in notes instead.
+  assert.equal(r.end_time, null)
+  assert.match(r.notes, /Arrives 2026-07-25 06:45 \(LHR\)/)
+  assert.match(r.notes, /Confirmation: XYZ99/)
+})
+
+test('a lodging paste yields a check-in and a check-out point sharing the property', () => {
+  const text = [
+    'Your reservation is confirmed',
+    'Grand Hyatt Tokyo',
+    'Check-in: July 24, 2026 at 3:00 PM',
+    'Check-out: July 27, 2026 at 11:00 AM',
+    'Confirmation number: HYT12345',
+  ].join('\n')
+  const points = parseBookings(text, YEAR)
+  assert.equal(points.length, 2)
+  const [checkIn, checkOut] = points
+  assert.equal(checkIn.category, 'hotel')
+  assert.equal(checkIn.title, 'Check-in · Grand Hyatt Tokyo')
+  assert.equal(checkIn.day, '2026-07-24')
+  assert.equal(checkIn.start_time, '15:00')
+  assert.equal(checkIn.location, 'Grand Hyatt Tokyo')
+  assert.equal(checkOut.title, 'Check-out · Grand Hyatt Tokyo')
+  assert.equal(checkOut.day, '2026-07-27')
+  assert.equal(checkOut.start_time, '11:00')
+  assert.equal(checkOut.location, 'Grand Hyatt Tokyo')
+  // The shared confirmation rides on both points.
+  assert.equal(checkIn.notes, 'Confirmation: HYT12345')
+  assert.equal(checkOut.notes, 'Confirmation: HYT12345')
+})
+
+test('a lodging paste with only a check-in yields a single anchored point', () => {
+  const text = ['The Ritz-Carlton Kyoto', 'Check-in: 15 Aug 2026 at 3:00 PM'].join('\n')
+  const points = parseBookings(text, YEAR)
+  assert.equal(points.length, 1)
+  assert.equal(points[0].category, 'hotel')
+  assert.equal(points[0].day, '2026-08-15')
+  assert.equal(points[0].start_time, '15:00')
+  // No confirmation code, so the raw paste is preserved on the check-in point.
+  assert.equal(points[0].notes, text)
+})
+
+test('unrecognized formats fall through to the single-item generic parser', () => {
+  const text = 'Dinner at Narisawa\nAug 15, 2026 at 7:30 PM\nParty of 4'
+  const points = parseBookings(text, YEAR)
+  assert.equal(points.length, 1)
+  assert.equal(points[0].category, 'restaurant')
+  assert.equal(points[0].day, '2026-08-15')
+  // Same object the generic parseBooking would have produced.
+  assert.deepEqual(points[0], parseBooking(text, YEAR))
+})
+
+test('low-confidence input still degrades to one unmatched prefill, raw text kept', () => {
+  const text = 'just some unstructured trip musings, nothing to parse'
+  const points = parseBookings(text, YEAR)
+  assert.equal(points.length, 1)
+  assert.equal(points[0].matched, false)
+  assert.equal(points[0].notes, text)
 })

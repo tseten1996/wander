@@ -27,7 +27,7 @@ import { ITINERARY_META } from './meta'
 import { buildDayIndex, type DayInfo } from './days'
 import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
-import { parseBooking, type ParsedBooking } from './parse'
+import { parseBookings, type ParsedBooking } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -357,6 +357,7 @@ function ItemDialog({
   onOpenChange,
   item,
   prefill,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
@@ -367,6 +368,14 @@ function ItemDialog({
    * when editing an existing `item`.
    */
   prefill?: Partial<ItineraryFormValues>
+  /**
+   * Called after a successful *create* (never on edit). When provided it owns
+   * what happens next — closing the dialog, or advancing a multi-item paste
+   * queue (a lodging stay's check-in then check-out, #103) by swapping in the
+   * next prefill while the dialog stays open. When omitted, a create just
+   * closes the dialog.
+   */
+  onCreated?: () => void
 }) {
   const { trip, me } = useTripContext()
   const createItem = useCreateItineraryItem(trip.id, me.id)
@@ -431,9 +440,16 @@ function ItemDialog({
       cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
     }
     try {
-      if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
-      else await createItem.mutateAsync(payload)
-      onOpenChange(false)
+      if (item) {
+        await updateItem.mutateAsync({ id: item.id, ...payload })
+        onOpenChange(false)
+      } else {
+        await createItem.mutateAsync(payload)
+        // On create, `onCreated` (when present) decides whether to close or
+        // advance a multi-item paste queue; otherwise just close.
+        if (onCreated) onCreated()
+        else onOpenChange(false)
+      }
     } catch {
       // toasted by the mutation's onError
     }
@@ -614,7 +630,7 @@ function PasteBookingDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  onParsed: (parsed: ParsedBooking) => void
+  onParsed: (parsed: ParsedBooking[]) => void
 }) {
   const { trip } = useTripContext()
   const [text, setText] = React.useState('')
@@ -631,7 +647,7 @@ function PasteBookingDialog({
     const referenceYear = trip.start_date
       ? new Date(trip.start_date).getFullYear()
       : undefined
-    onParsed(parseBooking(text, referenceYear))
+    onParsed(parseBookings(text, referenceYear))
   }
 
   return (
@@ -674,6 +690,10 @@ export default function ItineraryPage() {
   const [newOpen, setNewOpen] = React.useState(false)
   const [pasteOpen, setPasteOpen] = React.useState(false)
   const [prefill, setPrefill] = React.useState<Partial<ItineraryFormValues> | undefined>(undefined)
+  // Prefills still to fill after the current one. A lodging paste queues the
+  // check-out point behind the check-in (#103); each is confirmed on its own
+  // and nothing is written until the user saves it.
+  const [prefillQueue, setPrefillQueue] = React.useState<Partial<ItineraryFormValues>[]>([])
   const [exporting, setExporting] = React.useState(false)
   // Selecting a pin (or an unlocated row) in the Map view opens this item for
   // editing — the map has no cards of its own to host a per-item dialog.
@@ -688,18 +708,36 @@ export default function ItineraryPage() {
 
   function openBlankCreate() {
     setPrefill(undefined)
+    setPrefillQueue([])
     setNewOpen(true)
   }
 
-  function handleParsed(parsed: ParsedBooking) {
-    setPrefill(toPrefill(parsed))
+  function handleParsed(parsed: ParsedBooking[]) {
+    const prefills = parsed.map(toPrefill)
+    setPrefill(prefills[0])
+    setPrefillQueue(prefills.slice(1))
     setPasteOpen(false)
     setNewOpen(true)
-    if (parsed.matched) {
-      toast.success('Filled in what we found — review and save')
-    } else {
+    if (!parsed[0].matched) {
       toast('Couldn’t read that automatically — added it to the notes')
+    } else if (prefills.length > 1) {
+      toast.success('Filled in what we found — save each item to add them all')
+    } else {
+      toast.success('Filled in what we found — review and save')
     }
+  }
+
+  // After a successful create, advance the paste queue: swap in the next
+  // prefill (the dialog stays open, e.g. a stay's check-out after its check-in)
+  // or close when the queue is empty. Also the create path for the plain
+  // "Add item" flow, where the queue is always empty, so it simply closes.
+  function handleCreated() {
+    if (prefillQueue.length === 0) {
+      setNewOpen(false)
+      return
+    }
+    setPrefill(prefillQueue[0])
+    setPrefillQueue((q) => q.slice(1))
   }
 
   const items = itinerary.data ?? []
@@ -831,7 +869,12 @@ export default function ItineraryPage() {
         </Tabs>
       )}
       <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
-      <ItemDialog open={newOpen} onOpenChange={setNewOpen} prefill={prefill} />
+      <ItemDialog
+        open={newOpen}
+        onOpenChange={setNewOpen}
+        prefill={prefill}
+        onCreated={handleCreated}
+      />
       <ItemDialog
         open={editItem !== null}
         onOpenChange={(o) => !o && setEditItem(null)}
