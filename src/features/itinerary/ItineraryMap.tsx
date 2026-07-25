@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import { MapPinOff } from 'lucide-react'
 import { ITINERARY_META } from './meta'
 import { dayInfoFor, type DayInfo } from './days'
-import { ON_MEMBER_COLOR } from '@/lib/colors'
+import { onColor } from '@/lib/colors'
 import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import type { ItineraryItem } from '@/types'
@@ -77,7 +77,7 @@ function pinIcon(info: DayInfo, selected: boolean): L.DivIcon {
     `height:${dot}px`,
     'border-radius:9999px',
     `background:${info.color}`,
-    `color:${ON_MEMBER_COLOR}`,
+    `color:${onColor(info.color)}`,
     'font-weight:700',
     'font-size:12px',
     'line-height:1',
@@ -166,8 +166,8 @@ function DayLegend({ days }: { days: DayInfo[] }) {
         <li key={d.label} className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
-            style={{ backgroundColor: d.color }}
+            className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold"
+            style={{ backgroundColor: d.color, color: onColor(d.color) }}
           >
             {d.number ?? '·'}
           </span>

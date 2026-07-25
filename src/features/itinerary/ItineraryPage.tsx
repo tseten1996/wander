@@ -25,6 +25,7 @@ import {
 } from './api'
 import { ITINERARY_META } from './meta'
 import { buildDayIndex, type DayInfo } from './days'
+import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
 import { parseBooking, type ParsedBooking } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
@@ -299,8 +300,8 @@ function DaySection({
       <h2 className="mb-2.5 flex items-baseline gap-2 font-display text-base font-semibold">
         {dayInfo && (
           <span
-            className="flex size-5 shrink-0 items-center justify-center self-center rounded-full text-[10px] font-bold text-white"
-            style={{ backgroundColor: dayInfo.color }}
+            className="flex size-5 shrink-0 items-center justify-center self-center rounded-full text-[10px] font-bold"
+            style={{ backgroundColor: dayInfo.color, color: onColor(dayInfo.color) }}
             title={dayInfo.label}
           >
             {dayInfo.number}
