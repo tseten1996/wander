@@ -83,6 +83,27 @@ test('an explicit distinct arrival date rolls the arrival even without a red-eye
   assert.equal(arr.start_time, '06:30')
 })
 
+test('a distinct arrival date with no arrival time still splits into two anchors', () => {
+  // Only one clock time in the paste (departure), but an explicit later arrival
+  // date — the flight is still multi-day, so it must split with the arrival
+  // anchored on its true day and no start time rather than collapse to same-day.
+  const text = [
+    'Qantas QF 12',
+    'LAX to SYD',
+    'Departure: 2026-07-24',
+    'Departs 10:00 PM',
+    'Arrival: 2026-07-26',
+  ].join('\n')
+  const r = parseReservation(text, YEAR)
+  assert.equal(r.kind, 'flight')
+  assert.equal(r.drafts.length, 2)
+  const [dep, arr] = r.drafts
+  assert.equal(dep.day, '2026-07-24')
+  assert.equal(dep.start_time, '22:00')
+  assert.equal(arr.day, '2026-07-26')
+  assert.equal(arr.start_time, null)
+})
+
 test('a hotel confirmation becomes check-in and check-out anchors', () => {
   const text = [
     'Your reservation is confirmed',

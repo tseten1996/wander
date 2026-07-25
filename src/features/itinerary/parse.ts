@@ -119,6 +119,11 @@ function parseTimes(text: string): string[] {
   return times
 }
 
+/** A route between two 3-letter airport codes: `SFO → JFK`, `SFO - JFK`,
+ *  `SFO to JFK`. Shared by `parseLocation` and the flight detector so the two
+ *  can't silently drift apart. */
+const AIRPORT_ROUTE_RE = /\b([A-Z]{3})\s*(?:→|–|-|to)\s*([A-Z]{3})\b/
+
 /** A location from an explicit label line, or a flight route between codes. */
 function parseLocation(text: string): string | null {
   for (const line of text.split(/\r?\n/)) {
@@ -126,7 +131,7 @@ function parseLocation(text: string): string | null {
     if (m && m[1].trim()) return m[1].trim().slice(0, 160)
   }
   // "JFK → NRT", "JFK - NRT", or "from JFK to NRT" — airport codes only.
-  const route = text.match(/\b([A-Z]{3})\s*(?:→|–|-|to)\s*([A-Z]{3})\b/)
+  const route = text.match(AIRPORT_ROUTE_RE)
   if (route) return `${route[1]} → ${route[2]}`
   return null
 }
@@ -239,7 +244,7 @@ export function parseBooking(
   }
 }
 
-// ── Format-aware reservation parsers (issue #103, slice 2 of epic #76) ──────
+// ── Format-aware reservation parsers (issue 103, slice 2 of epic 76) ────────
 //
 // Two detectors run *before* the generic `parseBooking` fallback and recognize
 // the two highest-value reservation *formats* rather than just their text: a
@@ -254,9 +259,6 @@ export function parseBooking(
 /** IATA airline designator (`AA`, `B6`, `9W`) directly followed by a 1–4 digit
  *  flight number, with or without a space: `AA 148`, `BA2490`, `UA837`. */
 const FLIGHT_CODE_RE = /\b([A-Z]{2}|[A-Z]\d|\d[A-Z])\s?(\d{1,4})\b/g
-
-/** A route between two 3-letter airport codes: `SFO → JFK`, `SFO to JFK`. */
-const FLIGHT_ROUTE_RE = /\b([A-Z]{3})\s*(?:→|–|-|to)\s*([A-Z]{3})\b/
 
 const DEPART_RE = /\b(?:depart|departs|departure|departing|outbound|leaves?)\b/i
 const ARRIVE_RE = /\b(?:arrive|arrives|arrival|arriving|lands?)\b/i
@@ -282,7 +284,7 @@ function parseFlightCode(text: string): string | null {
 }
 
 function parseRoute(text: string): { from: string; to: string } | null {
-  const m = text.match(FLIGHT_ROUTE_RE)
+  const m = text.match(AIRPORT_ROUTE_RE)
   return m ? { from: m[1], to: m[2] } : null
 }
 
@@ -323,11 +325,15 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
   const times = parseTimes(text)
   if (!code || !route || times.length === 0) return null
 
-  const depTime = times[0]
-  const arrTime = times[1] ?? null
-  const depDay = labeledDateTime(text, DEPART_RE, referenceYear)?.day
-    ?? parseDate(text, referenceYear)
-  const arrLabeledDay = labeledDateTime(text, ARRIVE_RE, referenceYear)?.day ?? null
+  // Bind each time to its own labeled line when the confirmation has one, so a
+  // paste that lists the arrival line before the departure line doesn't swap
+  // the two; fall back to positional order only for unlabeled lines.
+  const depLabeled = labeledDateTime(text, DEPART_RE, referenceYear)
+  const arrLabeled = labeledDateTime(text, ARRIVE_RE, referenceYear)
+  const depTime = depLabeled?.time ?? times[0]
+  const arrTime = arrLabeled?.time ?? times[1] ?? null
+  const depDay = depLabeled?.day ?? parseDate(text, referenceYear)
+  const arrLabeledDay = arrLabeled?.day ?? null
 
   const routeStr = `${route.from} → ${route.to}`
   const title = `${code} ${route.from}→${route.to}`
@@ -346,7 +352,10 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
     crosses = true
   }
 
-  if (crosses && arrTime) {
+  // A known distinct arrival day splits into two anchors even when no arrival
+  // clock time was found (arrTime stays null on the arrival draft) — a single
+  // itinerary row has one `day`, so a multi-day flight can't be one row.
+  if (crosses) {
     return [
       {
         title, category: 'flight', day: depDay, start_time: depTime,

@@ -363,7 +363,7 @@ function ItemDialog({
   onOpenChange: (o: boolean) => void
   item?: ItineraryItem
   /**
-   * Create-mode seed values (from a pasted booking, #77/#103). Only the
+   * Create-mode seed values (from a pasted booking, issues 77 / 103). Only the
    * detected fields are present; the rest fall back to the empty-form defaults.
    * Ignored when editing an existing `item`.
    */
@@ -371,7 +371,7 @@ function ItemDialog({
   /**
    * Called after a successful *create* (never on edit). When provided, the
    * parent decides whether to close the dialog or advance to the next queued
-   * draft (a flight/lodging paste yields two, confirmed one at a time, #103).
+   * draft (a flight/lodging paste yields two, confirmed one at a time, issue 103).
    */
   onCreated?: () => void
 }) {
@@ -688,7 +688,7 @@ export default function ItineraryPage() {
   const [newOpen, setNewOpen] = React.useState(false)
   const [pasteOpen, setPasteOpen] = React.useState(false)
   // A pasted booking can produce several drafts (a flight that lands past
-  // midnight, or a hotel's check-in + check-out — #103). They're confirmed one
+  // midnight, or a hotel's check-in + check-out — issue 103). They're confirmed one
   // at a time in the create form: the head of this queue seeds the open dialog,
   // and each successful create shifts it until the queue drains.
   const [prefillQueue, setPrefillQueue] = React.useState<Partial<ItineraryFormValues>[]>([])
@@ -726,11 +726,12 @@ export default function ItineraryPage() {
   // Advance the draft queue after a successful create: keep the dialog open and
   // re-seed it with the next draft, or close once the last one is saved.
   function handleItemCreated() {
-    setPrefillQueue((queue) => {
-      const rest = queue.slice(1)
-      if (rest.length === 0) setNewOpen(false)
-      return rest
-    })
+    // Keep the setPrefillQueue updater pure; drive the dialog side effect from
+    // the already-current queue in this closure (React may double-invoke the
+    // updater in dev Strict Mode, so a setState inside it can misfire).
+    const rest = prefillQueue.slice(1)
+    setPrefillQueue(rest)
+    if (rest.length === 0) setNewOpen(false)
   }
 
   const items = itinerary.data ?? []
