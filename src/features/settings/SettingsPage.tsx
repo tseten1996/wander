@@ -20,6 +20,9 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
+import { AmountInput } from '@/components/ui/amount-input'
+import { CurrencySelect } from '@/components/ui/currency-select'
+import { CURRENCIES, isSupportedCurrency } from '@/lib/rates'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { CoverPicker } from '@/features/trips/CoverPicker'
@@ -57,8 +60,7 @@ const tripInfoSchema = z
     currency: z
       .string()
       .trim()
-      .min(3, 'Use a 3-letter code (e.g. USD)')
-      .max(3, 'Use a 3-letter code (e.g. USD)'),
+      .refine(isSupportedCurrency, 'Choose a supported currency'),
   })
   .refine((v) => !v.start_date || !v.end_date || v.end_date >= v.start_date, {
     message: 'End date is before the start date',
@@ -168,7 +170,7 @@ function TripInfoCard() {
             />
             {err.cover_url && <p className="text-xs text-danger">{err.cover_url.message}</p>}
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="s-start">Start</Label>
               <Controller
@@ -202,12 +204,29 @@ function TripInfoCard() {
               {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
             </div>
             <div className="space-y-1.5">
+              <Label htmlFor="s-currency">Currency</Label>
+              <Controller
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <CurrencySelect
+                    id="s-currency"
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    aria-invalid={err.currency ? true : undefined}
+                  />
+                )}
+              />
+              {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
+            </div>
+            <div className="space-y-1.5">
               <Label htmlFor="s-budget">Budget</Label>
-              <Input
+              <AmountInput
                 id="s-budget"
                 type="number"
                 inputMode="decimal"
                 min="0"
+                currency={form.watch('currency') || trip.currency}
                 aria-invalid={err.estimated_budget ? true : undefined}
                 {...form.register('estimated_budget')}
               />
@@ -215,21 +234,38 @@ function TripInfoCard() {
                 <p className="text-xs text-danger">{err.estimated_budget.message}</p>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-currency">Currency</Label>
-              <Input
-                id="s-currency"
-                maxLength={3}
-                aria-invalid={err.currency ? true : undefined}
-                {...form.register('currency')}
-              />
-              {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
-            </div>
           </div>
           <Button type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? 'Saving…' : 'Save changes'}
           </Button>
         </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Trip currency (read-only, for non-owner members) ───────────────────── */
+
+/**
+ * Members who aren't the owner can't open the Trip details card, so without
+ * this they'd have no way to see which currency every amount on the trip is
+ * denominated in. Read-only — only the owner changes it.
+ */
+function TripCurrencyCard() {
+  const { trip } = useTripContext()
+  const code = trip.currency.toUpperCase()
+  const name = CURRENCIES.find((c) => c.code === code)?.name
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Currency</CardTitle>
+        <CardDescription>The currency every amount on this trip is shown in.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-ink">
+          <span className="font-medium">{code}</span>
+          {name && <span className="text-muted"> · {name}</span>}
+        </p>
       </CardContent>
     </Card>
   )
@@ -604,7 +640,7 @@ export default function SettingsPage() {
     <div>
       <PageHeader title="Settings" description="Trip details, members and your profile." />
       <div className="space-y-5">
-        {isOwner && <TripInfoCard />}
+        {isOwner ? <TripInfoCard /> : <TripCurrencyCard />}
         <ProfileCard />
         <InviteCard />
         <MembersCard />
