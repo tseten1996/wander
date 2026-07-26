@@ -26,6 +26,7 @@ export interface CreateTripInput {
   start_date?: string | null
   end_date?: string | null
   estimated_budget?: number | null
+  currency?: string
 }
 
 export interface CreatedTrip {
@@ -49,6 +50,7 @@ export function useCreateTrip() {
           start_date: input.start_date || null,
           end_date: input.end_date || null,
           estimated_budget: input.estimated_budget ?? null,
+          currency: input.currency?.trim().toUpperCase() || 'USD',
           owner_id: userData.user.id,
         })
         .select()

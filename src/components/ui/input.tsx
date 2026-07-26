@@ -33,6 +33,35 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
 )
 Input.displayName = 'Input'
 
+/**
+ * An Input with a static, non-interactive text affix pinned to its right edge —
+ * used to hang a currency code (e.g. `USD`) off an amount field so the unit is
+ * visible in the box itself. Number-input spin buttons are already suppressed
+ * globally (`index.css`), so the affix never collides with them. The affix is
+ * `aria-hidden` because a `<Label>` (or unit context) already names the field
+ * for assistive tech; it's purely a visual unit cue.
+ */
+export const AffixInput = React.forwardRef<
+  HTMLInputElement,
+  React.InputHTMLAttributes<HTMLInputElement> & { affix: string }
+>(({ affix, className, ...props }, ref) => (
+  <div className="relative w-full">
+    <input
+      ref={ref}
+      data-tap-target=""
+      className={cn(inputClasses, 'pr-14', className)}
+      {...props}
+    />
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-xs font-medium tabular-nums text-muted"
+    >
+      {affix}
+    </span>
+  </div>
+))
+AffixInput.displayName = 'AffixInput'
+
 export const Textarea = React.forwardRef<
   HTMLTextAreaElement,
   React.TextareaHTMLAttributes<HTMLTextAreaElement>

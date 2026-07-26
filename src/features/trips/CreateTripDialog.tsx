@@ -12,8 +12,10 @@ import { cn, isMobileViewport } from '@/lib/utils'
 import { useCreateTrip, type CreatedTrip } from './api'
 import { CoverPicker } from './CoverPicker'
 import { isPresetCover } from './covers'
+import { isSupportedCurrency } from '@/lib/rates'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Input, AffixInput } from '@/components/ui/input'
+import { CurrencySelect } from '@/components/ui/currency-select'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
@@ -37,6 +39,7 @@ const schema = z
     start_date: z.string().optional(),
     end_date: z.string().optional(),
     estimated_budget: z.coerce.number().positive().optional().or(z.literal('')),
+    currency: z.string().trim().refine(isSupportedCurrency, 'Choose a currency'),
   })
   .refine(
     (v) => !v.start_date || !v.end_date || v.end_date >= v.start_date,
@@ -148,7 +151,10 @@ export function CreateTripDialog({
 }) {
   const navigate = useNavigate()
   const createTrip = useCreateTrip()
-  const form = useForm<FormValues>({ resolver: zodResolver(schema) })
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { currency: 'USD' },
+  })
   const [created, setCreated] = React.useState<CreatedTrip | null>(null)
 
   async function onSubmit(values: FormValues) {
@@ -163,6 +169,7 @@ export function CreateTripDialog({
           values.estimated_budget === '' || values.estimated_budget == null
             ? null
             : Number(values.estimated_budget),
+        currency: values.currency,
       })
       form.reset()
       setCreated(result)
@@ -277,16 +284,36 @@ export function CreateTripDialog({
                   {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="trip-budget">Estimated budget (per person, optional)</Label>
-                <Input
-                  id="trip-budget"
-                  type="number"
-                  min="0"
-                  step="50"
-                  placeholder="1500"
-                  {...form.register('estimated_budget')}
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="trip-budget">Budget per person (optional)</Label>
+                  <AffixInput
+                    id="trip-budget"
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="50"
+                    placeholder="1500"
+                    affix={(form.watch('currency') || 'USD').toUpperCase()}
+                    {...form.register('estimated_budget')}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="trip-currency">Currency</Label>
+                  <Controller
+                    control={form.control}
+                    name="currency"
+                    render={({ field }) => (
+                      <CurrencySelect
+                        id="trip-currency"
+                        value={field.value ?? 'USD'}
+                        onValueChange={field.onChange}
+                        ariaInvalid={err.currency ? true : undefined}
+                      />
+                    )}
+                  />
+                  {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
+                </div>
               </div>
               <Button type="submit" size="lg" className="w-full" disabled={createTrip.isPending}>
                 {createTrip.isPending ? 'Creating…' : 'Create trip'}

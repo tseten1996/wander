@@ -18,8 +18,10 @@ import { MEMBER_COLORS } from '@/lib/colors'
 import { cn, randomCode } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
+import { isSupportedCurrency, CURRENCIES } from '@/lib/rates'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, AffixInput, Textarea } from '@/components/ui/input'
+import { CurrencySelect } from '@/components/ui/currency-select'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { CoverPicker } from '@/features/trips/CoverPicker'
@@ -54,11 +56,7 @@ const tripInfoSchema = z
       .positive('Must be greater than zero')
       .optional()
       .or(z.literal('')),
-    currency: z
-      .string()
-      .trim()
-      .min(3, 'Use a 3-letter code (e.g. USD)')
-      .max(3, 'Use a 3-letter code (e.g. USD)'),
+    currency: z.string().trim().refine(isSupportedCurrency, 'Choose a valid currency'),
   })
   .refine((v) => !v.start_date || !v.end_date || v.end_date >= v.start_date, {
     message: 'End date is before the start date',
@@ -203,11 +201,12 @@ function TripInfoCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-budget">Budget</Label>
-              <Input
+              <AffixInput
                 id="s-budget"
                 type="number"
                 inputMode="decimal"
                 min="0"
+                affix={(form.watch('currency') || trip.currency).toUpperCase()}
                 aria-invalid={err.estimated_budget ? true : undefined}
                 {...form.register('estimated_budget')}
               />
@@ -217,11 +216,17 @@ function TripInfoCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="s-currency">Currency</Label>
-              <Input
-                id="s-currency"
-                maxLength={3}
-                aria-invalid={err.currency ? true : undefined}
-                {...form.register('currency')}
+              <Controller
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <CurrencySelect
+                    id="s-currency"
+                    value={field.value || trip.currency}
+                    onValueChange={field.onChange}
+                    ariaInvalid={err.currency ? true : undefined}
+                  />
+                )}
               />
               {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
             </div>
@@ -230,6 +235,33 @@ function TripInfoCard() {
             {form.formState.isSubmitting ? 'Saving…' : 'Save changes'}
           </Button>
         </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Trip currency (read-only, for non-owner members) ───────────────────── */
+
+/**
+ * The owner sets the currency inside the owner-only Trip details card. Members
+ * can't edit it, but they still need to know which currency every amount on the
+ * trip is expressed in — so surface it read-only, outside the owner gate.
+ */
+function TripCurrencyCard() {
+  const { trip } = useTripContext()
+  const code = trip.currency.toUpperCase()
+  const meta = CURRENCIES.find((c) => c.code === code)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Trip currency</CardTitle>
+        <CardDescription>Every amount on this trip is shown in this currency.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm font-medium text-ink">
+          {code}
+          {meta && <span className="font-normal text-muted"> · {meta.name}</span>}
+        </p>
       </CardContent>
     </Card>
   )
@@ -604,7 +636,7 @@ export default function SettingsPage() {
     <div>
       <PageHeader title="Settings" description="Trip details, members and your profile." />
       <div className="space-y-5">
-        {isOwner && <TripInfoCard />}
+        {isOwner ? <TripInfoCard /> : <TripCurrencyCard />}
         <ProfileCard />
         <InviteCard />
         <MembersCard />

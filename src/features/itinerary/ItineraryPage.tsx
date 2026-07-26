@@ -32,7 +32,7 @@ import { extractUrls, LinkChip, MapsChip } from './links'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, AffixInput, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
@@ -558,13 +558,14 @@ function ItemDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="it-cost">Cost</Label>
-              <Input
+              <AffixInput
                 id="it-cost"
                 type="number"
                 inputMode="decimal"
                 min="0"
                 step="1"
                 placeholder="0"
+                affix={trip.currency.toUpperCase()}
                 aria-invalid={err.cost ? true : undefined}
                 {...form.register('cost')}
               />

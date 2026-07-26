@@ -15,7 +15,7 @@ import { isForeignEntry, tripActual, tripEstimated } from './amounts'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, AffixInput, Textarea } from '@/components/ui/input'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
@@ -315,9 +315,10 @@ function EntryDialog({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="b-est">Estimated</Label>
-              <Input
+              <AffixInput
                 id="b-est"
                 type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+                affix={selectedCurrency}
                 aria-invalid={err.estimated ? true : undefined}
                 {...form.register('estimated')}
               />
@@ -328,9 +329,10 @@ function EntryDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="b-act">Actually paid</Label>
-              <Input
+              <AffixInput
                 id="b-act"
                 type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+                affix={selectedCurrency}
                 aria-invalid={err.actual ? true : undefined}
                 {...form.register('actual')}
               />

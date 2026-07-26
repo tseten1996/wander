@@ -340,7 +340,29 @@ async function runCreateTrip(browser) {
     await page.locator('#trip-name').waitFor({ state: 'visible', timeout: 10_000 })
     ok('create-trip dialog opens for a signed-in owner')
     await page.locator('#trip-name').fill('Lisbon in Spring')
-    await page.getByRole('button', { name: 'Create trip' }).click()
+    // #110: the create dialog picks the trip currency, defaulting to USD so an
+    // owner who never touches it still gets a valid, USD-rendered trip.
+    const currencyPicker = page.locator('#trip-currency')
+    await currencyPicker.waitFor({ state: 'visible', timeout: 10_000 })
+    if (!((await currencyPicker.textContent()) ?? '').includes('USD')) {
+      throw new Error('create-trip currency picker did not default to USD')
+    }
+    ok('create-trip currency picker defaults to USD')
+
+    // The chosen code must reach the insert — that's what stops every trip
+    // silently starting as an unchosen default. Capture the trips POST body.
+    const [insertReq] = await Promise.all([
+      page.waitForRequest(
+        (r) => r.url().includes('/rest/v1/trips') && r.method() === 'POST',
+        { timeout: 10_000 }
+      ),
+      page.getByRole('button', { name: 'Create trip' }).click(),
+    ])
+    if (insertReq.postDataJSON()?.currency !== 'USD') {
+      throw new Error('create-trip insert did not persist the chosen currency')
+    }
+    ok('create-trip persists the chosen currency on insert')
+
     // The insert + owner-member fetch succeeded if we reach the welcome step.
     await page
       .getByText('How should we introduce you?')
