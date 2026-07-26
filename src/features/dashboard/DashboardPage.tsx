@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { useDashboard, planningProgress } from './api'
+import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
 import { celebrateOncePerTrip, resetCelebration } from '@/lib/confetti'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -89,8 +90,11 @@ export default function DashboardPage() {
     else resetCelebration(trip.id)
   }, [progress, trip.id])
 
-  const budgetPlanned = dash.data?.budget.reduce((s, b) => s + (b.actual ?? b.estimated ?? 0), 0) ?? 0
-  const budgetSpent = dash.data?.budget.reduce((s, b) => s + (b.actual ?? 0), 0) ?? 0
+  // Roll up on the trip-currency amount (converted ?? raw), identical to the
+  // Budget page (see @/features/budget/amounts) so a multi-currency trip totals
+  // correctly and the two screens can never disagree.
+  const budgetPlanned = dash.data?.budget.reduce((s, b) => s + (tripActual(b) ?? tripEstimated(b) ?? 0), 0) ?? 0
+  const budgetSpent = dash.data?.budget.reduce((s, b) => s + (tripActual(b) ?? 0), 0) ?? 0
 
   const quickLinks = [
     { to: 'polls', label: 'Polls', icon: Vote, hint: dash.data ? `${dash.data.pollsTotal - dash.data.pollsClosed} open` : '' },

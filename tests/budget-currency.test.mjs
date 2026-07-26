@@ -182,6 +182,33 @@ test('computeBalances: if every participant left, the cost falls back to everyon
   assert.equal(byId.b.net, -50)
 })
 
+test('dashboard roll-up sums the converted amount, not the raw foreign figure (#118)', () => {
+  // Regression for #118: the Overview budget card summed raw `actual`, so a
+  // ¥100,000 hotel (~$650 converted) on a USD trip rendered "$100,000". The
+  // dashboard now rolls up with tripActual/tripEstimated — identical to the
+  // Budget page — so both screens agree.
+  const rows = [
+    entry({ estimated: 100000, actual: 100000, currency: 'JPY',
+            estimated_converted: 650, actual_converted: 650 }),
+    entry({ estimated: 200, actual: 180 }), // trip-currency entry, no conversion
+  ]
+  const spent = rows.reduce((s, b) => s + (tripActual(b) ?? 0), 0)
+  const planned = rows.reduce((s, b) => s + (tripActual(b) ?? tripEstimated(b) ?? 0), 0)
+  assert.equal(spent, 830) // 650 + 180, not 100180
+  assert.equal(planned, 830)
+})
+
+test('dashboard roll-up: entry with no converted amount falls back to raw, no NaN (#118)', () => {
+  // A trip-currency entry (converted null) contributes its raw amount; a wholly
+  // empty entry contributes 0 — never NaN.
+  const rows = [entry({ actual: 50 }), entry({ estimated: 20 }), entry({})]
+  const spent = rows.reduce((s, b) => s + (tripActual(b) ?? 0), 0)
+  const planned = rows.reduce((s, b) => s + (tripActual(b) ?? tripEstimated(b) ?? 0), 0)
+  assert.equal(spent, 50)
+  assert.equal(planned, 70) // 50 + 20 + 0
+  assert.ok(!Number.isNaN(planned))
+})
+
 test('conversionRate inverts the trip-based table; missing currency → null', () => {
   // Table is keyed by the trip currency (USD): 1 USD = 0.9 EUR, 150 JPY.
   const rates = { USD: 1, EUR: 0.9, JPY: 150 }

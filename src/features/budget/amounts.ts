@@ -8,11 +8,13 @@ import type { BudgetEntry } from '@/types'
  * in `*_converted`; for a trip-currency entry those are null and the raw amount
  * already is the trip-currency amount — hence `converted ?? raw`.
  */
-export const tripEstimated = (e: BudgetEntry): number | null =>
-  e.estimated_converted ?? e.estimated
+export const tripEstimated = (
+  e: Pick<BudgetEntry, 'estimated' | 'estimated_converted'>,
+): number | null => e.estimated_converted ?? e.estimated
 
-export const tripActual = (e: BudgetEntry): number | null =>
-  e.actual_converted ?? e.actual
+export const tripActual = (
+  e: Pick<BudgetEntry, 'actual' | 'actual_converted'>,
+): number | null => e.actual_converted ?? e.actual
 
 /** True when the entry was logged in a currency other than the trip's. */
 export const isForeignEntry = (e: BudgetEntry, tripCurrency: string): boolean =>

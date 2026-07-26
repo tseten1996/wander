@@ -11,7 +11,10 @@ export interface DashboardData {
   questionsAnswered: number
   packingTotal: number
   packingPacked: number
-  budget: Pick<BudgetEntry, 'estimated' | 'actual'>[]
+  budget: Pick<
+    BudgetEntry,
+    'estimated' | 'actual' | 'estimated_converted' | 'actual_converted' | 'currency'
+  >[]
   upcoming: ItineraryItem[]
   activity: Activity[]
   messagesCount: number
@@ -35,7 +38,10 @@ export function useDashboard(tripId: string) {
         supabase.from('questions').select('id', { count: 'exact', head: true }).eq('trip_id', tripId).eq('answered', true),
         supabase.from('packing_items').select('id', { count: 'exact', head: true }).eq('trip_id', tripId),
         supabase.from('packing_items').select('id', { count: 'exact', head: true }).eq('trip_id', tripId).eq('packed', true),
-        supabase.from('budget_entries').select('estimated, actual').eq('trip_id', tripId),
+        supabase
+          .from('budget_entries')
+          .select('estimated, actual, estimated_converted, actual_converted, currency')
+          .eq('trip_id', tripId),
         supabase
           .from('itinerary_items')
           .select('*')
