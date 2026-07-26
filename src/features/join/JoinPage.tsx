@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PageLoader, EmptyState, ErrorState } from '@/components/ui/misc'
 import { MemberAvatar } from '@/components/ui/avatar'
+import { signalTripJoined } from '@/components/layout/InstallNudge'
 import type { InvitePreview } from '@/types'
 
 type Phase = 'checking' | 'form' | 'joining' | 'invalid' | 'error'
@@ -99,6 +100,11 @@ export default function JoinPage() {
       return
     }
     toast.success(`Welcome aboard, ${name.trim()}!`)
+    // They've just committed to the trip — the one moment to offer the install
+    // that keeps their anonymous session from being evicted (#99). Flag it for
+    // this session and tell the app-root nudge to show; it renders on the trip
+    // page the navigate below lands on. Never blocks entry.
+    signalTripJoined()
     navigate(`/trip/${tripId}`, { replace: true })
   }
 
