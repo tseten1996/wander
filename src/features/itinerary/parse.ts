@@ -119,6 +119,11 @@ function parseTimes(text: string): string[] {
   return times
 }
 
+/** A route between two 3-letter airport codes: `SFO → JFK`, `SFO - JFK`,
+ *  `SFO to JFK`. Shared by `parseLocation` and the flight detector so the two
+ *  can't silently drift apart. */
+const AIRPORT_ROUTE_RE = /\b([A-Z]{3})\s*(?:→|–|-|to)\s*([A-Z]{3})\b/
+
 /** A location from an explicit label line, or a flight route between codes. */
 function parseLocation(text: string): string | null {
   for (const line of text.split(/\r?\n/)) {
@@ -126,7 +131,7 @@ function parseLocation(text: string): string | null {
     if (m && m[1].trim()) return m[1].trim().slice(0, 160)
   }
   // "JFK → NRT", "JFK - NRT", or "from JFK to NRT" — airport codes only.
-  const route = text.match(/\b([A-Z]{3})\s*(?:→|–|-|to)\s*([A-Z]{3})\b/)
+  const route = text.match(AIRPORT_ROUTE_RE)
   if (route) return `${route[1]} → ${route[2]}`
   return null
 }
@@ -236,5 +241,207 @@ export function parseBooking(
     // silent loss" guarantee the unmatched path already gives.
     notes: detectReference(text) ?? (raw ? raw.slice(0, 2000) : null),
     matched: true,
+  }
+}
+
+// ── Format-aware reservation parsers (issue 103, slice 2 of epic 76) ────────
+//
+// Two detectors run *before* the generic `parseBooking` fallback and recognize
+// the two highest-value reservation *formats* rather than just their text: a
+// flight (airline + flight number, a route between airport codes, and a
+// departure/arrival time pair that can roll past midnight) and a lodging stay
+// (a check-in and a check-out date that become two anchored itinerary points).
+// Each detector is high-confidence-or-nothing: if it isn't sure, it returns
+// null and the caller falls through to the #77 generic path, then to the empty
+// form — the same "never a dead end, never a silent loss" contract as #77.
+// Still dependency-free: regex + arithmetic only, nothing writes data.
+
+/** IATA airline designator (`AA`, `B6`, `9W`) directly followed by a 1–4 digit
+ *  flight number, with or without a space: `AA 148`, `BA2490`, `UA837`. */
+const FLIGHT_CODE_RE = /\b([A-Z]{2}|[A-Z]\d|\d[A-Z])\s?(\d{1,4})\b/g
+
+const DEPART_RE = /\b(?:depart|departs|departure|departing|outbound|leaves?)\b/i
+const ARRIVE_RE = /\b(?:arrive|arrives|arrival|arriving|lands?)\b/i
+const CHECKIN_RE = /check[\s-]?in/i
+const CHECKOUT_RE = /check[\s-]?out/i
+
+/** Shift an ISO `YYYY-MM-DD` by whole days, staying in UTC so no DST/TZ drift. */
+function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + n))
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`
+}
+
+/** First flight designator in the text as a normalized `AA148`, or null. The
+ *  `AM`/`PM` guard stops a meridiem ("10:30 AM 2") reading as an airline code. */
+function parseFlightCode(text: string): string | null {
+  for (const m of text.matchAll(FLIGHT_CODE_RE)) {
+    const code = m[1].toUpperCase()
+    if (code === 'AM' || code === 'PM') continue
+    return `${code}${m[2]}`
+  }
+  return null
+}
+
+function parseRoute(text: string): { from: string; to: string } | null {
+  const m = text.match(AIRPORT_ROUTE_RE)
+  return m ? { from: m[1], to: m[2] } : null
+}
+
+/** The date and first time on the first line matching `labelRe` (e.g. the
+ *  `Check-in:` or `Arrives` line), or null when no such line carries a date. */
+function labeledDateTime(
+  text: string,
+  labelRe: RegExp,
+  referenceYear: number
+): { day: string; time: string | null } | null {
+  for (const line of text.split(/\r?\n/)) {
+    if (labelRe.test(line)) {
+      const day = parseDate(line, referenceYear)
+      if (day) return { day, time: parseTimes(line)[0] ?? null }
+    }
+  }
+  return null
+}
+
+/** The confirmation code if present, else the raw text (capped), so a matched
+ *  reservation never silently drops the parts we didn't structure. */
+function reservationNotes(text: string): string | null {
+  const raw = text.trim()
+  return detectReference(text) ?? (raw ? raw.slice(0, 2000) : null)
+}
+
+/**
+ * Recognize a flight confirmation. Requires an airline+flight code, a route
+ * between airport codes, and at least a departure time — anything less falls
+ * through to the generic parser. Produces one itinerary item for a same-day
+ * flight; a flight that lands past midnight becomes two anchored items so the
+ * arrival sits on its true calendar day (a single itinerary item has only one
+ * `day`, so a red-eye can't be one row). Returns null when not confident.
+ */
+function detectFlight(text: string, referenceYear: number): ParsedBooking[] | null {
+  const code = parseFlightCode(text)
+  const route = parseRoute(text)
+  const times = parseTimes(text)
+  if (!code || !route || times.length === 0) return null
+
+  // Bind each time to its own labeled line when the confirmation has one, so a
+  // paste that lists the arrival line before the departure line doesn't swap
+  // the two; fall back to positional order only for unlabeled lines.
+  const depLabeled = labeledDateTime(text, DEPART_RE, referenceYear)
+  const arrLabeled = labeledDateTime(text, ARRIVE_RE, referenceYear)
+  const depTime = depLabeled?.time ?? times[0]
+  const arrTime = arrLabeled?.time ?? times[1] ?? null
+  const depDay = depLabeled?.day ?? parseDate(text, referenceYear)
+  const arrLabeledDay = arrLabeled?.day ?? null
+
+  const routeStr = `${route.from} → ${route.to}`
+  const title = `${code} ${route.from}→${route.to}`
+  const notes = reservationNotes(text)
+
+  // The arrival crosses midnight when the confirmation names a distinct arrival
+  // date, or (the red-eye case) when only one date is given and the arrival
+  // clock time is earlier than the departure's.
+  let arrDay = depDay
+  let crosses = false
+  if (depDay && arrLabeledDay && arrLabeledDay !== depDay) {
+    arrDay = arrLabeledDay
+    crosses = true
+  } else if (depDay && arrTime && arrTime < depTime) {
+    arrDay = addDays(depDay, 1)
+    crosses = true
+  }
+
+  // A known distinct arrival day splits into two anchors even when no arrival
+  // clock time was found (arrTime stays null on the arrival draft) — a single
+  // itinerary row has one `day`, so a multi-day flight can't be one row.
+  if (crosses) {
+    return [
+      {
+        title, category: 'flight', day: depDay, start_time: depTime,
+        end_time: null, location: routeStr, notes, matched: true,
+      },
+      {
+        title: `${code} arrives ${route.to}`, category: 'flight', day: arrDay,
+        start_time: arrTime, end_time: null, location: routeStr,
+        // The raw fallback already rode along on the departure item above; the
+        // arrival anchor only needs the confirmation code (or nothing).
+        notes: detectReference(text), matched: true,
+      },
+    ]
+  }
+
+  return [
+    {
+      title, category: 'flight', day: depDay, start_time: depTime,
+      end_time: arrTime, location: routeStr, notes, matched: true,
+    },
+  ]
+}
+
+/**
+ * Recognize a lodging confirmation. Requires both a check-in and a check-out
+ * date; produces two anchored itinerary points (check-in on its day, check-out
+ * on its day) with the property as location and the confirmation number in
+ * notes. Returns null when either date is missing, so a one-sided paste falls
+ * through to the generic parser (which already handles a lone check-in).
+ */
+function detectLodging(text: string, referenceYear: number): ParsedBooking[] | null {
+  const checkIn = labeledDateTime(text, CHECKIN_RE, referenceYear)
+  const checkOut = labeledDateTime(text, CHECKOUT_RE, referenceYear)
+  if (!checkIn || !checkOut) return null
+
+  const name = detectTitle(text)
+  const location = parseLocation(text) ?? name
+  const ref = detectReference(text)
+
+  return [
+    {
+      title: `Check-in: ${name ?? 'Stay'}`.slice(0, 120),
+      category: 'hotel', day: checkIn.day, start_time: checkIn.time,
+      end_time: null, location, notes: reservationNotes(text), matched: true,
+    },
+    {
+      title: `Check-out: ${name ?? 'Stay'}`.slice(0, 120),
+      category: 'hotel', day: checkOut.day, start_time: checkOut.time,
+      // Raw text already preserved on the check-in anchor; keep the code here.
+      end_time: null, location, notes: ref, matched: true,
+    },
+  ]
+}
+
+export type ReservationKind = 'flight' | 'lodging' | 'generic' | 'none'
+
+export interface ReservationParse {
+  /** Which detector claimed the paste. `generic` = the #77 heuristic matched;
+   *  `none` = nothing structured was found (raw text preserved in the draft). */
+  kind: ReservationKind
+  /** One or more create-form drafts, in the order the user should confirm them.
+   *  Always at least one; a flight/lodging paste can yield two. */
+  drafts: ParsedBooking[]
+  matched: boolean
+}
+
+/**
+ * Parse a pasted confirmation into one or more itinerary drafts. Tries the
+ * format-aware flight and lodging detectors first, then falls back to the #77
+ * generic `parseBooking`. Never throws; the caller confirms each draft in the
+ * create form before anything is written.
+ */
+export function parseReservation(
+  text: string,
+  referenceYear: number = new Date().getFullYear()
+): ReservationParse {
+  const flight = detectFlight(text, referenceYear)
+  if (flight) return { kind: 'flight', drafts: flight, matched: true }
+
+  const lodging = detectLodging(text, referenceYear)
+  if (lodging) return { kind: 'lodging', drafts: lodging, matched: true }
+
+  const generic = parseBooking(text, referenceYear)
+  return {
+    kind: generic.matched ? 'generic' : 'none',
+    drafts: [generic],
+    matched: generic.matched,
   }
 }
