@@ -10,13 +10,16 @@ import {
   useBudget, useCreateBudgetEntry, useDeleteBudgetEntry, useRates, useUpdateBudgetEntry,
   type BudgetInput,
 } from './api'
-import { CURRENCIES, conversionRate, toCents, type RateTable } from '@/lib/rates'
+import { CURRENCIES, conversionRate, isSupportedCurrency, toCents, type RateTable } from '@/lib/rates'
 import { isForeignEntry, tripActual, tripEstimated } from './amounts'
+import { useUpdateTripMoney } from '@/features/trips/api'
+import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
 import { AmountInput } from '@/components/ui/amount-input'
+import { CurrencySelect } from '@/components/ui/currency-select'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
@@ -621,6 +624,139 @@ function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
   )
 }
 
+/* ── Currency & total budget (owner edits; members see read-only) ─────────── */
+
+const tripMoneySchema = z.object({
+  currency: z
+    .string()
+    .trim()
+    .refine(isSupportedCurrency, 'Choose a supported currency'),
+  estimated_budget: z.coerce
+    .number({ invalid_type_error: 'Enter a number' })
+    .positive('Must be greater than zero')
+    .optional()
+    .or(z.literal('')),
+})
+
+type TripMoneyFormValues = z.input<typeof tripMoneySchema>
+
+function CurrencyBudgetForm() {
+  const { trip } = useTripContext()
+  const updateMoney = useUpdateTripMoney(trip.id)
+  const form = useForm<TripMoneyFormValues>({
+    resolver: zodResolver(tripMoneySchema),
+    defaultValues: {
+      currency: trip.currency,
+      estimated_budget: trip.estimated_budget ?? '',
+    },
+  })
+
+  async function save(values: TripMoneyFormValues) {
+    try {
+      await updateMoney.mutateAsync({
+        currency: values.currency,
+        estimated_budget:
+          values.estimated_budget === '' || values.estimated_budget == null
+            ? null
+            : Number(values.estimated_budget),
+      })
+      toast.success('Currency & budget updated')
+    } catch (error) {
+      toast.error(friendlyError(error, 'Could not save currency & budget'))
+    }
+  }
+
+  const err = form.formState.errors
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Currency &amp; budget</CardTitle>
+        <CardDescription>
+          The currency every amount here is shown in, and the trip’s total budget.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={form.handleSubmit(save)} className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="bp-currency">Currency</Label>
+              <Controller
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <CurrencySelect
+                    id="bp-currency"
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    aria-invalid={err.currency ? true : undefined}
+                  />
+                )}
+              />
+              {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="bp-budget">Total budget</Label>
+              <AmountInput
+                id="bp-budget"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                placeholder="Optional"
+                currency={form.watch('currency') || trip.currency}
+                aria-invalid={err.estimated_budget ? true : undefined}
+                {...form.register('estimated_budget')}
+              />
+              {err.estimated_budget && (
+                <p className="text-xs text-danger">{err.estimated_budget.message}</p>
+              )}
+            </div>
+          </div>
+          <Button type="submit" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? 'Saving…' : 'Save changes'}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CurrencyBudgetReadOnly() {
+  const { trip } = useTripContext()
+  const code = trip.currency.toUpperCase()
+  const name = CURRENCIES.find((c) => c.code === code)?.name
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Currency &amp; budget</CardTitle>
+        <CardDescription>Set by the trip owner.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs font-medium text-muted">Currency</p>
+          <p className="mt-1 text-sm">
+            <span className="font-medium">{code}</span>
+            {name && <span className="text-muted"> · {name}</span>}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-muted">Total budget</p>
+          <p className="mt-1 text-sm font-medium tabular-nums">
+            {trip.estimated_budget != null
+              ? formatMoney(trip.estimated_budget, trip.currency)
+              : '—'}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CurrencyBudgetCard() {
+  const { isOwner } = useTripContext()
+  return isOwner ? <CurrencyBudgetForm /> : <CurrencyBudgetReadOnly />
+}
+
 export default function BudgetPage() {
   const { trip } = useTripContext()
   const budget = useBudget(trip.id)
@@ -656,15 +792,18 @@ export default function BudgetPage() {
         }
       />
 
-      {budget.isLoading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-28" />
-          <Skeleton className="h-48" />
-        </div>
-      ) : budget.isError ? (
-        <ErrorState onRetry={() => budget.refetch()} isRetrying={budget.isFetching} />
-      ) : (
-        <div className="space-y-5">
+      <div className="space-y-5">
+        <CurrencyBudgetCard />
+
+        {budget.isLoading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-28" />
+            <Skeleton className="h-48" />
+          </div>
+        ) : budget.isError ? (
+          <ErrorState onRetry={() => budget.refetch()} isRetrying={budget.isFetching} />
+        ) : (
+          <div className="space-y-5">
           {/* Summary */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card className="p-4">
@@ -759,8 +898,9 @@ export default function BudgetPage() {
               ))}
             </Card>
           )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       <EntryDialog open={newOpen} onOpenChange={setNewOpen} />
     </div>

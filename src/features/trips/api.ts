@@ -36,6 +36,38 @@ export interface CreatedTrip {
   member: Member
 }
 
+export interface TripMoneyInput {
+  /** ISO 4217 code; stored upper-cased. Validate with `isSupportedCurrency` first. */
+  currency: string
+  estimated_budget: number | null
+}
+
+/**
+ * Updates a trip's money fields (default currency + total budget). Lives here,
+ * in the trips feature's api.ts, so the Budget page can edit the `trips` row
+ * without reaching into Supabase itself (each feature's api.ts is the only
+ * place that touches Supabase for that feature). Owner-only in practice — the
+ * `trips` RLS update policy (`is_trip_owner`) is the real gate; the UI hides
+ * the control as UX. Invalidates `['trip', tripId]` so every screen that reads
+ * `formatMoney(..., trip.currency)` reflects the change immediately.
+ */
+export function useUpdateTripMoney(tripId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: TripMoneyInput): Promise<void> => {
+      const { error } = await supabase
+        .from('trips')
+        .update({
+          currency: input.currency.trim().toUpperCase(),
+          estimated_budget: input.estimated_budget,
+        })
+        .eq('id', tripId)
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trip', tripId] }),
+  })
+}
+
 export function useCreateTrip() {
   const queryClient = useQueryClient()
   return useMutation({

@@ -20,9 +20,6 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
-import { AmountInput } from '@/components/ui/amount-input'
-import { CurrencySelect } from '@/components/ui/currency-select'
-import { CURRENCIES, isSupportedCurrency } from '@/lib/rates'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { CoverPicker } from '@/features/trips/CoverPicker'
@@ -52,15 +49,6 @@ const tripInfoSchema = z
       }),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
-    estimated_budget: z.coerce
-      .number({ invalid_type_error: 'Enter a number' })
-      .positive('Must be greater than zero')
-      .optional()
-      .or(z.literal('')),
-    currency: z
-      .string()
-      .trim()
-      .refine(isSupportedCurrency, 'Choose a supported currency'),
   })
   .refine((v) => !v.start_date || !v.end_date || v.end_date >= v.start_date, {
     message: 'End date is before the start date',
@@ -81,8 +69,6 @@ function TripInfoCard() {
       cover_url: trip.cover_url ?? '',
       start_date: trip.start_date ?? '',
       end_date: trip.end_date ?? '',
-      estimated_budget: trip.estimated_budget ?? '',
-      currency: trip.currency,
     },
   })
 
@@ -96,11 +82,6 @@ function TripInfoCard() {
         cover_url: values.cover_url?.trim() || null,
         start_date: values.start_date || null,
         end_date: values.end_date || null,
-        estimated_budget:
-          values.estimated_budget === '' || values.estimated_budget == null
-            ? null
-            : Number(values.estimated_budget),
-        currency: values.currency.trim().toUpperCase(),
       })
       .eq('id', trip.id)
     if (error) toast.error(friendlyError(error, 'Could not save the trip details'))
@@ -116,7 +97,7 @@ function TripInfoCard() {
     <Card>
       <CardHeader>
         <CardTitle>Trip details</CardTitle>
-        <CardDescription>Name, dates, cover photo and budget.</CardDescription>
+        <CardDescription>Name, dates and cover photo.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={form.handleSubmit(save)} className="space-y-4">
@@ -203,69 +184,11 @@ function TripInfoCard() {
               />
               {err.end_date && <p className="text-xs text-danger">{err.end_date.message}</p>}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-currency">Currency</Label>
-              <Controller
-                control={form.control}
-                name="currency"
-                render={({ field }) => (
-                  <CurrencySelect
-                    id="s-currency"
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    aria-invalid={err.currency ? true : undefined}
-                  />
-                )}
-              />
-              {err.currency && <p className="text-xs text-danger">{err.currency.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-budget">Budget</Label>
-              <AmountInput
-                id="s-budget"
-                type="number"
-                inputMode="decimal"
-                min="0"
-                currency={form.watch('currency') || trip.currency}
-                aria-invalid={err.estimated_budget ? true : undefined}
-                {...form.register('estimated_budget')}
-              />
-              {err.estimated_budget && (
-                <p className="text-xs text-danger">{err.estimated_budget.message}</p>
-              )}
-            </div>
           </div>
           <Button type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? 'Saving…' : 'Save changes'}
           </Button>
         </form>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* ── Trip currency (read-only, for non-owner members) ───────────────────── */
-
-/**
- * Members who aren't the owner can't open the Trip details card, so without
- * this they'd have no way to see which currency every amount on the trip is
- * denominated in. Read-only — only the owner changes it.
- */
-function TripCurrencyCard() {
-  const { trip } = useTripContext()
-  const code = trip.currency.toUpperCase()
-  const name = CURRENCIES.find((c) => c.code === code)?.name
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Currency</CardTitle>
-        <CardDescription>The currency every amount on this trip is shown in.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-ink">
-          <span className="font-medium">{code}</span>
-          {name && <span className="text-muted"> · {name}</span>}
-        </p>
       </CardContent>
     </Card>
   )
@@ -640,7 +563,7 @@ export default function SettingsPage() {
     <div>
       <PageHeader title="Settings" description="Trip details, members and your profile." />
       <div className="space-y-5">
-        {isOwner ? <TripInfoCard /> : <TripCurrencyCard />}
+        {isOwner && <TripInfoCard />}
         <ProfileCard />
         <InviteCard />
         <MembersCard />
