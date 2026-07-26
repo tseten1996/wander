@@ -339,6 +339,17 @@ async function runCreateTrip(browser) {
     await page.getByRole('button', { name: 'New trip' }).first().click()
     await page.locator('#trip-name').waitFor({ state: 'visible', timeout: 10_000 })
     ok('create-trip dialog opens for a signed-in owner')
+
+    // Currency picker (#110): present and defaulting to USD, so the
+    // single-currency case is correct with no extra input and existing behaviour
+    // is unchanged.
+    const currency = page.getByRole('combobox', { name: 'Currency' })
+    await currency.waitFor({ state: 'visible', timeout: 10_000 })
+    if (!((await currency.textContent()) ?? '').includes('USD')) {
+      throw new Error('create-trip currency picker did not default to USD')
+    }
+    ok('create-trip offers a currency picker defaulting to USD')
+
     await page.locator('#trip-name').fill('Lisbon in Spring')
     await page.getByRole('button', { name: 'Create trip' }).click()
     // The insert + owner-member fetch succeeded if we reach the welcome step.

@@ -26,6 +26,8 @@ export interface CreateTripInput {
   start_date?: string | null
   end_date?: string | null
   estimated_budget?: number | null
+  /** ISO 4217 code chosen at creation. Omit to keep the DB `USD` default. */
+  currency?: string
 }
 
 export interface CreatedTrip {
@@ -49,6 +51,9 @@ export function useCreateTrip() {
           start_date: input.start_date || null,
           end_date: input.end_date || null,
           estimated_budget: input.estimated_budget ?? null,
+          // Only send a currency when one was chosen, so the column's `USD`
+          // default still applies to any path that doesn't set it.
+          ...(input.currency ? { currency: input.currency.toUpperCase() } : {}),
           owner_id: userData.user.id,
         })
         .select()
