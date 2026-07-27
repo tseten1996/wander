@@ -13,8 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  CalendarArrowDown, ClipboardPaste, GripVertical, List, Map as MapIcon, MapPin,
-  MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
+  CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
+  Map as MapIcon, MapPin, MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -49,6 +49,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn, formatMoney, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
+import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
@@ -247,6 +248,37 @@ function SortableItemCard({
   )
 }
 
+/**
+ * The connector between two consecutive same-day stops, showing a rough
+ * straight-line distance and travel time (issue 123, Map epic slice 3). Rendered
+ * only when *both* stops carry coordinates — an unlocated stop simply produces
+ * no hint, never a fabricated one. The estimate is pure client compute
+ * (haversine + a coarse walk/drive speed), so it can't rate-limit or fail; the
+ * "~" makes the approximation explicit. Reordering re-renders the list, which
+ * recomputes each affected leg for free.
+ */
+function LegHint({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
+  const leg = React.useMemo(() => {
+    const a = toGeoPoint(from)
+    const b = toGeoPoint(to)
+    return a && b ? estimateLeg(a, b) : null
+  }, [from, to])
+  if (!leg) return null
+  const { distance, duration } = formatLeg(leg)
+  const Icon = leg.mode === 'walk' ? Footprints : Car
+  return (
+    <p
+      className="flex items-center gap-1.5 pl-4 text-xs text-faint"
+      aria-label={`About ${distance} and ${duration} ${
+        leg.mode === 'walk' ? 'walking' : 'driving'
+      } to the next stop`}
+    >
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span aria-hidden>~{distance} · ~{duration}</span>
+    </p>
+  )
+}
+
 function DaySection({
   day,
   items,
@@ -332,15 +364,22 @@ function DaySection({
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
-            {items.map((item) => (
-              <SortableItemCard
-                key={item.id}
-                item={item}
-                conflicts={conflicts.get(item.id)}
-                selected={item.id === selectedId}
-                onSelect={onSelect}
-              />
-            ))}
+            {items.map((item, i) => {
+              const next = items[i + 1]
+              return (
+                <React.Fragment key={item.id}>
+                  <SortableItemCard
+                    item={item}
+                    conflicts={conflicts.get(item.id)}
+                    selected={item.id === selectedId}
+                    onSelect={onSelect}
+                  />
+                  {/* Leg to the next stop — only within a real day, never in the
+                      "Not scheduled yet" bucket where rows share no actual day. */}
+                  {day && next && <LegHint from={item} to={next} />}
+                </React.Fragment>
+              )
+            })}
           </div>
         </SortableContext>
       </DndContext>

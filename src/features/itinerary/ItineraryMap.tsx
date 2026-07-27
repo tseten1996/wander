@@ -263,6 +263,31 @@ export default function ItineraryMap({
     layer.clearLayers()
     markersRef.current = new Map()
     const points: L.LatLngExpression[] = []
+
+    // Day-coloured route lines between consecutive located stops of the same
+    // day (issue 123). `located` arrives in (day, position) order, so adjacent
+    // entries sharing a day are the legs the list also annotates. Drawn first
+    // and non-interactive so pins stay on top and remain the only click target;
+    // vector paths live below markers in Leaflet's pane order regardless.
+    for (let i = 0; i < located.length - 1; i++) {
+      const a = located[i]
+      const b = located[i + 1]
+      if (a.day == null || a.day !== b.day) continue
+      L.polyline(
+        [
+          [a.latitude, a.longitude],
+          [b.latitude, b.longitude],
+        ],
+        {
+          color: dayInfoFor(a, dayIndex).color,
+          weight: 3,
+          opacity: 0.6,
+          dashArray: '6 8',
+          interactive: false,
+        }
+      ).addTo(layer)
+    }
+
     located.forEach((item) => {
       const info = dayInfoFor(item, dayIndex)
       const latlng: L.LatLngExpression = [item.latitude, item.longitude]
