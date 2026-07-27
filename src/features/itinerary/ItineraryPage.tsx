@@ -13,8 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  CalendarArrowDown, ClipboardPaste, GripVertical, List, Map as MapIcon, MapPin,
-  MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
+  CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
+  Map as MapIcon, MapPin, MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -49,6 +49,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn, formatMoney, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
+import {
+  estimateLeg, formatDistance, formatDuration, type Coordinates, type LegEstimate,
+} from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
@@ -101,14 +104,56 @@ function conflictLabel(item: ItineraryItem): string {
   return range ? `${item.title} (${range})` : item.title
 }
 
+/** Real finite coordinates for an item, or null when it isn't located. */
+function coordsOf(item: ItineraryItem): Coordinates | null {
+  if (
+    typeof item.latitude === 'number' &&
+    Number.isFinite(item.latitude) &&
+    typeof item.longitude === 'number' &&
+    Number.isFinite(item.longitude)
+  ) {
+    return { latitude: item.latitude, longitude: item.longitude }
+  }
+  return null
+}
+
+/**
+ * The connector shown between two consecutive located stops on the same day
+ * (map epic #60, slice 3): a straight-line distance and a rough travel time,
+ * computed client-side with no network call (see `@/lib/geo`). Purely
+ * informational — the leading `~` and the mode icon flag it as an estimate.
+ */
+function LegHint({ leg }: { leg: LegEstimate }) {
+  const Icon = leg.mode === 'walk' ? Footprints : Car
+  const distance = formatDistance(leg.distanceKm)
+  const duration = formatDuration(leg.minutes)
+  return (
+    <div
+      className="flex items-center gap-1.5 py-1 pl-6 text-xs text-muted"
+      role="note"
+      aria-label={`About ${distance}, ${duration} ${
+        leg.mode === 'walk' ? 'walk' : 'drive'
+      } from the previous stop`}
+    >
+      <Icon className="size-3.5 shrink-0 text-faint" aria-hidden />
+      <span className="tabular-nums" aria-hidden>
+        ~{distance} · ~{duration}
+      </span>
+    </div>
+  )
+}
+
 function SortableItemCard({
   item,
   conflicts,
+  incomingLeg,
   selected,
   onSelect,
 }: {
   item: ItineraryItem
   conflicts?: ItineraryItem[]
+  /** Estimated leg from the previous located stop (same day), if any. */
+  incomingLeg?: LegEstimate | null
   /** True when this item is the shared list↔map selection. */
   selected: boolean
   /** Toggle this item as the shared selection (used to sync with the map). */
@@ -148,6 +193,7 @@ function SortableItemCard({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn('relative', isDragging && 'z-10 opacity-80')}
     >
+      {incomingLeg && <LegHint leg={incomingLeg} />}
       <Card
         className={cn(
           'flex items-center gap-3 p-3.5',
@@ -271,6 +317,22 @@ function DaySection({
     () => (day ? overlapsByItem(items) : new Map<string, ItineraryItem[]>()),
     [day, items]
   )
+  // Straight-line distance + rough time between each pair of consecutive
+  // *located* stops, keyed by the second item's id (its "incoming" leg). Only
+  // for real days — the "Not scheduled yet" bucket isn't an ordered route.
+  // Recomputes on reorder/edit because `items` is the dependency (#123).
+  const legs = React.useMemo(() => {
+    const out = new Map<string, LegEstimate>()
+    if (!day) return out
+    for (let i = 1; i < items.length; i++) {
+      const from = coordsOf(items[i - 1]!)
+      const to = coordsOf(items[i]!)
+      // An unlocated stop breaks the chain: no leg is drawn across it, so an
+      // estimate is never fabricated over a gap we can't measure.
+      if (from && to) out.set(items[i]!.id, estimateLeg(from, to))
+    }
+    return out
+  }, [day, items])
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
@@ -337,6 +399,7 @@ function DaySection({
                 key={item.id}
                 item={item}
                 conflicts={conflicts.get(item.id)}
+                incomingLeg={legs.get(item.id)}
                 selected={item.id === selectedId}
                 onSelect={onSelect}
               />
