@@ -32,6 +32,17 @@ folder structure. Read it before touching the code.
   `base: './'` in Vite makes the bundle work under any repo name.
 * **PWA**: `vite-plugin-pwa` precaches the app shell so it can be installed
   on phones and opens instantly.
+* **Free, keyless data services.** Beyond Supabase the app calls only free,
+  no-key HTTP services, consistent with the "no paid anything" guardrail:
+  OpenStreetMap raster tiles (itinerary map), Open-Meteo (`src/lib/weather.ts`,
+  daily forecast on the Calendar and Itinerary), Photon/komoot
+  (`src/lib/geocode.ts`, location autocomplete), and Frankfurter/ECB
+  (`src/lib/rates.ts`, currency conversion). Each degrades gracefully to
+  "unavailable" on failure rather than breaking the field it feeds.
+* **Live presence.** A per-trip Supabase realtime presence channel
+  (`src/hooks/usePresence.ts`) reports which members currently have the trip
+  open; the shell header renders them as an avatar stack
+  (`src/components/layout/LivePresence.tsx`).
 
 ## 2. Identity & permissions
 
@@ -74,8 +85,8 @@ trips ────────────┬─ members            (person ↔ 
   │               ├─ messages ─ message_reactions   (threads via reply_to)
   │               ├─ questions           (asked / answered)
   │               ├─ checklist_items     (assignee, due date, done)
-  │               ├─ itinerary_items     (day, time, category, position)
-  │               ├─ budget_entries      (estimated vs actual, paid_by)
+  │               ├─ itinerary_items     (day, time, category, position, latitude/longitude)
+  │               ├─ budget_entries      (estimated vs actual, paid_by, currency + *_converted)
   │               ├─ packing_items       (category, packed)
   │               ├─ notes               (markdown)
   │               ├─ inspiration_items   (image / link board)
@@ -91,6 +102,11 @@ Notable decisions:
   again switches your vote (upsert).
 * **Ordering** (itinerary, checklist) uses a float `position` column —
   drag-and-drop writes the midpoint of its neighbours, no renumbering.
+* **Multi-currency budget.** A `budget_entries` row may be logged in its own
+  `currency`; its `estimated_converted` / `actual_converted` amounts are
+  frozen into the trip currency at entry time (the client reads
+  `converted ?? raw`), so roll-ups and the settle-up math stay correct even if
+  reference rates move afterwards.
 * **Realtime** is enabled for all content tables via the
   `supabase_realtime` publication; the client subscribes per-trip and simply
   invalidates the matching query keys.
@@ -106,10 +122,18 @@ src/
 ├── index.css                # Tailwind v4 theme tokens (light/dark), base styles
 ├── lib/
 │   ├── supabase.ts          # single Supabase client
+│   ├── queryClient.ts       # TanStack Query client + localStorage persister (offline cache, sign-out purge)
 │   ├── config.ts            # env vars with safe defaults
 │   ├── utils.ts             # cn(), formatters, misc helpers
 │   ├── device.ts            # device id in Local Storage
 │   ├── colors.ts            # avatar palette
+│   ├── activity.ts          # fire-and-forget writes to the trip activity feed
+│   ├── errors.ts            # Postgres/PostgREST codes → friendly toast copy (friendlyError)
+│   ├── confetti.ts          # canvas-confetti burst when planning hits 100%
+│   ├── geo.ts               # keyless haversine distance + travel-time estimate between itinerary stops
+│   ├── geocode.ts           # keyless place autocomplete via Photon (komoot/OSM)
+│   ├── weather.ts           # keyless daily forecast via Open-Meteo
+│   ├── rates.ts             # keyless FX rates via Frankfurter (ECB) + supported-currency list
 │   └── export.ts            # JSON export/import, print-to-PDF helpers
 ├── types/
 │   └── index.ts             # DB row types + enums shared by all features
@@ -119,7 +143,9 @@ src/
 ├── hooks/
 │   ├── useAuth.tsx          # session context (owner or anonymous friend)
 │   ├── useTrip.tsx          # current trip + my membership context
-│   └── useRealtime.ts       # per-trip realtime → query invalidation
+│   ├── useRealtime.ts       # per-trip realtime → query invalidation
+│   ├── usePresence.ts       # per-trip realtime presence channel → set of live member ids
+│   └── useWeather.ts        # trip destination + dates → daily forecast (Open-Meteo)
 └── features/
     ├── trips/               # home: trip list, create trip
     ├── join/                # invite landing page (name + colour → in)
@@ -128,12 +154,13 @@ src/
     ├── messages/
     ├── questions/
     ├── checklist/
-    ├── itinerary/
-    ├── budget/
+    ├── itinerary/           # timeline + list ⇄ Leaflet/OSM map view, per-leg distance, weather
+    ├── budget/              # multi-currency entries, trip-currency conversion, settle-up
     ├── packing/
-    ├── calendar/
+    ├── calendar/            # month view + daily weather forecast
     ├── notes/
     ├── inspiration/
+    ├── search/              # ⌘/Ctrl-K command-palette over cached trip data
     └── settings/            # trip info, members, invite link, danger zone
 ```
 
@@ -157,7 +184,9 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
 ## 6. Performance
 
 * Every feature page is lazy-loaded (`React.lazy`) — the initial bundle is
-  the shell + dashboard only.
+  the shell + dashboard only. The itinerary **map view is itself lazily
+  imported** (`ItineraryMap`), so Leaflet + its CSS land in a separate async
+  chunk that loads only when a member opens the Map tab.
 * TanStack Query caches per `[table, tripId]`; realtime events invalidate
   instead of refetch-on-focus storms.
 * The query cache is **persisted to `localStorage`** (`src/lib/queryClient.ts`,

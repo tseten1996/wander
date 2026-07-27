@@ -66,16 +66,18 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Area | What you get |
 |------|--------------|
 | Dashboard | Cover hero, countdown, planning-progress bar (confetti at 100%), budget summary, upcoming items, live activity feed |
+| Presence | Live "who's here now" avatars in the trip header, driven by Supabase realtime presence |
 | Polls | Categories, expiry, one vote per member, live results, winner highlight, owner/creator close |
 | Chat | Realtime messages, replies, emoji reactions, pinned messages, edit/delete |
 | Questions | Ask → answer → done; anyone can answer |
 | Checklist | Assignees, due dates (overdue badges), notes, optimistic toggles |
-| Itinerary | Day-by-day timeline, six categories, drag-to-reorder, times/locations/costs |
-| Budget | Trip budget vs planned vs spent, per-category chart, paid-by tracking |
+| Itinerary | Day-by-day timeline, six categories, drag-to-reorder, times/locations/costs, straight-line distance between stops, a list ⇄ map view (Leaflet + OpenStreetMap) with per-day pins and routes, and a daily weather forecast |
+| Budget | Trip budget vs planned vs spent, per-category chart, paid-by tracking, multi-currency entries converted to the trip currency (ECB reference rates), and a minimal settle-up summary |
 | Packing | Five categories, per-category progress, quick add |
-| Calendar | Month view merging travel dates, itinerary, checklist deadlines and payments |
+| Calendar | Month view merging travel dates, itinerary, checklist deadlines and payments, with a daily weather forecast (Open-Meteo) |
 | Notes | Shared markdown notes with preview, pinning |
 | Ideas | Pinterest-style masonry board with category filters |
+| Search | Command-palette search (⌘/Ctrl-K) across polls, chat, checklist, notes and ideas, jumping straight to the match |
 | Settings | Trip details, profile, invite management, members, export/import JSON, print-to-PDF summary, archive/delete |
 
 ## Data & security model (summary)
