@@ -13,7 +13,8 @@ const INVALIDATION_ALIASES: Record<string, string[]> = {
 const TABLES = [
   'members', 'polls', 'poll_options', 'votes', 'messages',
   'message_reactions', 'questions', 'checklist_items', 'itinerary_items',
-  'budget_entries', 'packing_items', 'notes', 'inspiration_items', 'activity',
+  'budget_entries', 'repayments', 'packing_items', 'notes', 'inspiration_items',
+  'activity',
 ]
 
 /**

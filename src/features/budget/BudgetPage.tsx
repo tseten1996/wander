@@ -3,15 +3,18 @@ import { motion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ArrowRight, MoreHorizontal, Pencil, PiggyBank, Plus, Scale, Trash2 } from 'lucide-react'
+import {
+  ArrowRight, Check, HandCoins, MoreHorizontal, Pencil, PiggyBank, Plus, Scale, Trash2, Undo2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useBudget, useCreateBudgetEntry, useDeleteBudgetEntry, useRates, useUpdateBudgetEntry,
-  type BudgetInput,
+  useBudget, useCreateBudgetEntry, useCreateRepayment, useDeleteBudgetEntry, useDeleteRepayment,
+  useRates, useRepayments, useUpdateBudgetEntry,
+  type BudgetInput, type RepaymentInput,
 } from './api'
 import { CURRENCIES, conversionRate, isSupportedCurrency, toCents, type RateTable } from '@/lib/rates'
-import { isForeignEntry, tripActual, tripEstimated } from './amounts'
+import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
 import { useUpdateTripMoney } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -36,7 +39,7 @@ import {
 } from '@/components/ui/select'
 import { cn, formatMoney, isMobileViewport, shortDate } from '@/lib/utils'
 import {
-  computeBalances, hasSettlementData, isAllSettled, minimalTransfers,
+  computeBalances, hasSettlementData, isAllSettled, minimalTransfers, type Transfer,
 } from './settlement'
 import type { BudgetCategory, BudgetEntry } from '@/types'
 
@@ -535,12 +538,267 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   )
 }
 
+const repaymentSchema = z
+  .object({
+    from_member: z.string().min(1, 'Pick who paid'),
+    to_member: z.string().min(1, 'Pick who was paid back'),
+    amount: z.coerce
+      .number({ invalid_type_error: 'Enter an amount' })
+      .positive('Enter an amount greater than zero'),
+    currency: z.string().trim().length(3, 'Use a 3-letter code'),
+    rate: z.coerce
+      .number({ invalid_type_error: 'Enter a rate' })
+      .positive('Rate must be positive')
+      .optional()
+      .nullable()
+      .or(z.literal('')),
+  })
+  .refine((v) => v.from_member !== v.to_member, {
+    message: 'Pick two different people',
+    path: ['to_member'],
+  })
+
+type RepaymentFormValues = z.input<typeof repaymentSchema>
+
+/**
+ * Record a member-to-member payment. Multi-currency mirrors the expense dialog:
+ * a foreign amount is frozen into the trip currency (`amount_converted`) at
+ * record time, so settle-up nets it on the same footing as the expenses it
+ * squares up and a settled balance never drifts when rates later move.
+ */
+function RepaymentDialog({
+  open,
+  onOpenChange,
+  defaultFrom,
+  defaultTo,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  defaultFrom?: string
+  defaultTo?: string
+}) {
+  const { trip, me, members } = useTripContext()
+  const createRepayment = useCreateRepayment(trip.id, me.id)
+  const rates = useRates(trip.currency)
+  const tripCurrency = trip.currency.toUpperCase()
+  const rateTable: RateTable | undefined = rates.data
+  const ratesReady = rates.isSuccess && !!rateTable
+
+  const [rateEdited, setRateEdited] = React.useState(false)
+
+  const empty = React.useMemo<RepaymentFormValues>(
+    () => ({
+      from_member: defaultFrom ?? me.id,
+      to_member: defaultTo ?? '',
+      amount: '',
+      currency: tripCurrency,
+      rate: '',
+    }),
+    [defaultFrom, defaultTo, me.id, tripCurrency]
+  )
+  const form = useForm<RepaymentFormValues>({
+    resolver: zodResolver(repaymentSchema),
+    defaultValues: empty,
+  })
+
+  React.useEffect(() => {
+    if (open) {
+      setRateEdited(false)
+      form.reset(empty)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const selectedCurrency = (form.watch('currency') || tripCurrency).toUpperCase()
+  const isForeign = selectedCurrency !== tripCurrency
+
+  // Seed the rate from the live table when a foreign currency is picked, unless
+  // the member overrode it — identical behaviour to the expense dialog.
+  React.useEffect(() => {
+    if (!open) return
+    if (!isForeign) {
+      form.setValue('rate', '')
+      setRateEdited(false)
+      return
+    }
+    if (rateEdited || !rateTable) return
+    const r = conversionRate(selectedCurrency, rateTable)
+    if (r != null) form.setValue('rate', toCents(r * 10000) / 10000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedCurrency, isForeign, rateTable])
+
+  const currencyOptions = React.useMemo(() => {
+    const codes = new Set<string>([tripCurrency])
+    if (ratesReady && rateTable) {
+      for (const c of CURRENCIES) if (rateTable[c.code]) codes.add(c.code)
+    }
+    return [...codes].sort()
+  }, [ratesReady, rateTable, tripCurrency])
+
+  const rateNum = Number(form.watch('rate'))
+  const amtNum = Number(form.watch('amount'))
+  const hasRate = isForeign && Number.isFinite(rateNum) && rateNum > 0
+  const previewAmount = hasRate && amtNum > 0 ? toCents(amtNum * rateNum) : null
+
+  async function onSubmit(values: RepaymentFormValues) {
+    const currency = (values.currency || tripCurrency).toUpperCase()
+    const foreign = currency !== tripCurrency
+    const rate = foreign ? Number(values.rate) : null
+    if (foreign && !(Number.isFinite(rate!) && rate! > 0)) {
+      form.setError('rate', { message: 'Enter a positive rate' })
+      return
+    }
+    const amount = Number(values.amount)
+    const payload: RepaymentInput = {
+      from_member: values.from_member,
+      to_member: values.to_member,
+      amount,
+      currency: foreign ? currency : null,
+      exchange_rate: foreign ? rate : null,
+      amount_converted: foreign ? toCents(amount * rate!) : null,
+    }
+    try {
+      await createRepayment.mutateAsync(payload)
+      toast.success('Payment recorded')
+      onOpenChange(false)
+    } catch {
+      // toasted by the mutation's onError
+    }
+  }
+
+  const err = form.formState.errors
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Record a payment</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Who paid</Label>
+              <Controller
+                control={form.control}
+                name="from_member"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger aria-label="Who paid">
+                      <SelectValue placeholder="Select a person" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {members.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>{m.display_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {err.from_member && <p className="text-xs text-danger">{err.from_member.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Who they paid back</Label>
+              <Controller
+                control={form.control}
+                name="to_member"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger aria-label="Who they paid back">
+                      <SelectValue placeholder="Select a person" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {members.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>{m.display_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {err.to_member && <p className="text-xs text-danger">{err.to_member.message}</p>}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="r-amount">Amount</Label>
+              <AmountInput
+                id="r-amount"
+                type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+                currency={selectedCurrency}
+                aria-invalid={err.amount ? true : undefined}
+                {...form.register('amount')}
+              />
+              {err.amount && <p className="text-xs text-danger">{err.amount.message}</p>}
+              {previewAmount != null && (
+                <p className="text-xs text-muted tabular-nums">≈ {formatMoney(previewAmount, tripCurrency)}</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Currency</Label>
+              <Controller
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <Select
+                    value={(field.value || tripCurrency).toUpperCase()}
+                    onValueChange={field.onChange}
+                    disabled={currencyOptions.length <= 1}
+                  >
+                    <SelectTrigger aria-label="Payment currency"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {currencyOptions.map((code) => (
+                        <SelectItem key={code} value={code}>
+                          {code}{code === tripCurrency ? ' · trip currency' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {rates.isError && (
+                <p className="text-xs text-muted">
+                  Live rates unavailable — recorded in {tripCurrency}.
+                </p>
+              )}
+            </div>
+          </div>
+          {isForeign && (
+            <div className="space-y-1.5">
+              <Label htmlFor="r-rate">Rate — 1 {selectedCurrency} = ? {tripCurrency}</Label>
+              <Input
+                id="r-rate"
+                type="number" inputMode="decimal" min="0" step="0.0001" placeholder="0.0000"
+                aria-invalid={err.rate ? true : undefined}
+                {...form.register('rate', { onChange: () => setRateEdited(true) })}
+              />
+              {err.rate ? (
+                <p className="text-xs text-danger">{err.rate.message}</p>
+              ) : (
+                <p className="text-xs text-muted">
+                  Auto-filled from today’s ECB rate. Settle-up uses the {tripCurrency} value.
+                </p>
+              )}
+            </div>
+          )}
+          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
+            Record payment
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
-  const { trip, members } = useTripContext()
+  const { trip, me, isOwner, members, membersById } = useTripContext()
+  const repaymentsQuery = useRepayments(trip.id)
+  const repayments = React.useMemo(() => repaymentsQuery.data ?? [], [repaymentsQuery.data])
+  const createRepayment = useCreateRepayment(trip.id, me.id)
+  const deleteRepayment = useDeleteRepayment(trip.id)
+  const [recordOpen, setRecordOpen] = React.useState(false)
 
   const balances = React.useMemo(
-    () => computeBalances(entries, members),
-    [entries, members]
+    () => computeBalances(entries, members, repayments),
+    [entries, members, repayments]
   )
   const transfers = React.useMemo(() => minimalTransfers(balances), [balances])
   const settled = isAllSettled(balances)
@@ -551,13 +809,38 @@ function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
     [balances]
   )
 
+  // One-tap "mark as paid": record the suggested transfer verbatim. It is already
+  // in the trip currency, so no conversion is needed — settle-up nets it and the
+  // transfer shrinks or disappears on the next render.
+  const markPaid = (t: Transfer) => {
+    createRepayment.mutate(
+      {
+        from_member: t.from.id,
+        to_member: t.to.id,
+        amount: t.amount,
+        currency: null,
+        amount_converted: null,
+        exchange_rate: null,
+      },
+      {
+        onSuccess: () =>
+          toast.success(`Marked ${t.from.display_name} → ${t.to.display_name} as paid`),
+      }
+    )
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Scale className="size-4 text-muted" aria-hidden />
-          Settle up
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <Scale className="size-4 text-muted" aria-hidden />
+            Settle up
+          </CardTitle>
+          <Button variant="secondary" size="sm" data-tap-target onClick={() => setRecordOpen(true)}>
+            <HandCoins /> Record a payment
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <ul className="space-y-2.5">
@@ -613,13 +896,85 @@ function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
                     <span className="ml-auto font-semibold tabular-nums">
                       {formatMoney(t.amount, trip.currency)}
                     </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-tap-target
+                      className="shrink-0"
+                      disabled={createRepayment.isPending}
+                      onClick={() => markPaid(t)}
+                    >
+                      <Check /> Mark paid
+                    </Button>
                   </li>
                 ))}
               </ul>
             </>
           )}
         </div>
+
+        {repayments.length > 0 && (
+          <div className="border-t border-line/60 pt-3">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-faint">
+              Recorded payments
+            </p>
+            <ul className="space-y-2">
+              {repayments.map((r) => {
+                const from = membersById.get(r.from_member)
+                const to = membersById.get(r.to_member)
+                const canDelete = isOwner || r.created_by === me.id
+                const foreign =
+                  !!r.currency && r.currency.toUpperCase() !== trip.currency.toUpperCase()
+                return (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                  >
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      {from && (
+                        <MemberAvatar name={from.display_name} color={from.color} size="sm" />
+                      )}
+                      {from?.display_name ?? 'Someone'}
+                    </span>
+                    <ArrowRight className="size-4 text-faint" aria-label="paid" />
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      {to && <MemberAvatar name={to.display_name} color={to.color} size="sm" />}
+                      {to?.display_name ?? 'Someone'}
+                    </span>
+                    <span className="ml-auto text-right tabular-nums">
+                      <span className="font-semibold">
+                        {formatMoney(repaymentTripAmount(r), trip.currency)}
+                      </span>
+                      {foreign && (
+                        <span className="ml-1 text-[10px] text-muted">
+                          {formatMoney(r.amount, r.currency ?? trip.currency)}
+                        </span>
+                      )}
+                    </span>
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0"
+                        aria-label="Undo this payment"
+                        disabled={deleteRepayment.isPending}
+                        onClick={() =>
+                          deleteRepayment.mutate(r.id, {
+                            onSuccess: () => toast.success('Payment removed'),
+                          })
+                        }
+                      >
+                        <Undo2 />
+                      </Button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
       </CardContent>
+      <RepaymentDialog open={recordOpen} onOpenChange={setRecordOpen} />
     </Card>
   )
 }

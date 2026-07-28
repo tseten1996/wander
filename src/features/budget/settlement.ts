@@ -1,5 +1,5 @@
-import type { BudgetEntry, Member } from '@/types'
-import { tripActual } from './amounts'
+import type { BudgetEntry, Member, Repayment } from '@/types'
+import { repaymentTripAmount, tripActual } from './amounts'
 
 /**
  * "Who owes who" settlement math for the Budget page.
@@ -21,6 +21,13 @@ import { tripActual } from './amounts'
  * Amounts are always taken in the *trip currency* (via `tripActual`), so a
  * multi-currency trip settles correctly — an EUR hotel and a USD flight are
  * compared on the same converted footing, never as raw mixed numbers.
+ *
+ * Recorded **repayments** (issue 125 — one member paying another back) then net
+ * against these balances: a repayment from A to B reduces A's debt and B's
+ * credit by its trip-currency amount, so the card reflects what is *actually*
+ * still owed rather than the original settle-up suggestion. Repayments are kept
+ * out of the expense pool entirely — they never touch `paid`/`owed` totals — so
+ * "what did the trip cost" is unaffected; they only move the net.
  */
 
 export interface Balance {
@@ -40,7 +47,11 @@ export interface Transfer {
 /** Half a cent — smooths floating-point dust so near-zero balances read as settled. */
 const EPSILON = 0.005
 
-export function computeBalances(entries: BudgetEntry[], members: Member[]): Balance[] {
+export function computeBalances(
+  entries: BudgetEntry[],
+  members: Member[],
+  repayments: Repayment[] = [],
+): Balance[] {
   if (members.length === 0) return []
   const memberIds = members.map((m) => m.id)
   const isMember = new Set(memberIds)
@@ -71,10 +82,26 @@ export function computeBalances(entries: BudgetEntry[], members: Member[]): Bala
     for (const id of sharers) owed.set(id, (owed.get(id) ?? 0) + share)
   }
 
+  // Net recorded repayments against the owed/paid balances. A repayment from A
+  // to B settles part of what A owes B, so it lifts A's net toward zero (+amount)
+  // and lowers B's (−amount) by the same figure. Only repayments whose *both*
+  // endpoints are current members are applied: if either party has left the trip
+  // the transfer is meaningless (and applying just one side would break the
+  // sum-to-zero invariant the settle-up relies on), so it is skipped — exactly
+  // as an expense paid by a departed member is skipped above.
+  const repaid = new Map<string, number>(memberIds.map((id) => [id, 0]))
+  for (const r of repayments) {
+    if (!isMember.has(r.from_member) || !isMember.has(r.to_member)) continue
+    const amount = repaymentTripAmount(r)
+    if (!(amount > 0)) continue
+    repaid.set(r.from_member, (repaid.get(r.from_member) ?? 0) + amount)
+    repaid.set(r.to_member, (repaid.get(r.to_member) ?? 0) - amount)
+  }
+
   return members.map((member) => {
     const p = paid.get(member.id) ?? 0
     const o = owed.get(member.id) ?? 0
-    return { member, paid: p, net: p - o }
+    return { member, paid: p, net: p - o + (repaid.get(member.id) ?? 0) }
   })
 }
 

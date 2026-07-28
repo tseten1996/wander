@@ -162,6 +162,25 @@ export interface BudgetEntry {
   created_at: string
 }
 
+export interface Repayment {
+  id: string
+  trip_id: string
+  /** Member who paid the money. */
+  from_member: string
+  /** Member who received it. */
+  to_member: string
+  amount: number
+  /** Original ISO currency the amount was recorded in. null = trip currency. */
+  currency: string | null
+  /** `amount` expressed in the trip currency, frozen at record time.
+   *  null when already in the trip currency — read `converted ?? raw`. */
+  amount_converted: number | null
+  /** original→trip rate used, kept so a settled balance doesn't drift. */
+  exchange_rate: number | null
+  created_by: string | null
+  created_at: string
+}
+
 export interface PackingItem {
   id: string
   trip_id: string
