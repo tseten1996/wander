@@ -102,7 +102,7 @@ export function useDeleteBudgetEntry(tripId: string) {
   })
 }
 
-/* ── Repayments (#125) — members paying each other back, netted in settle-up ── */
+/* ── Repayments (issue 125) — members paying each other back, netted in settle-up ── */
 
 export function useRepayments(tripId: string) {
   return useQuery({
