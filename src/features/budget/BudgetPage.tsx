@@ -542,9 +542,12 @@ const repaymentSchema = z
   .object({
     from_member: z.string().min(1, 'Pick who paid'),
     to_member: z.string().min(1, 'Pick who was paid back'),
-    amount: z.coerce
-      .number({ invalid_type_error: 'Enter an amount' })
-      .positive('Enter an amount greater than zero'),
+    amount: z
+      .union([
+        z.literal(''),
+        z.coerce.number({ invalid_type_error: 'Enter an amount' }),
+      ])
+      .refine((v) => v !== '' && Number(v) > 0, 'Enter an amount greater than zero'),
     currency: z.string().trim().length(3, 'Use a 3-letter code'),
     rate: z.coerce
       .number({ invalid_type_error: 'Enter a rate' })

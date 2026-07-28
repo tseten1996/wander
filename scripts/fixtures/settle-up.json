@@ -1,0 +1,113 @@
+{
+  "//": "Fixture for the #125 settle-up repayments screenshot. Three members, two group expenses that leave everyone unequal, and one recorded repayment so the card shows balances, a suggested transfer, and the Recorded payments list.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de300000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 2000,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444403",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555503",
+        "display_name": "Riko",
+        "color": "#7c3aed",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z"
+      }
+    ],
+    "budget_entries": [
+      {
+        "id": "b0300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "title": "Ryokan — 3 nights",
+        "category": "stay",
+        "estimated": 600,
+        "actual": 600,
+        "currency": null,
+        "estimated_converted": null,
+        "actual_converted": null,
+        "exchange_rate": null,
+        "participants": null,
+        "paid_by": "44444444-4444-4444-8444-444444444401",
+        "entry_date": "2026-11-14",
+        "notes": null,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-07-05T00:00:00Z"
+      },
+      {
+        "id": "b0300000-0000-4000-8000-000000000002",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "title": "Kaiseki dinner",
+        "category": "food",
+        "estimated": 150,
+        "actual": 150,
+        "currency": null,
+        "estimated_converted": null,
+        "actual_converted": null,
+        "exchange_rate": null,
+        "participants": null,
+        "paid_by": "44444444-4444-4444-8444-444444444402",
+        "entry_date": "2026-11-16",
+        "notes": null,
+        "created_by": "44444444-4444-4444-8444-444444444402",
+        "created_at": "2026-07-06T00:00:00Z"
+      }
+    ],
+    "repayments": [
+      {
+        "id": "c0300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "from_member": "44444444-4444-4444-8444-444444444402",
+        "to_member": "44444444-4444-4444-8444-444444444401",
+        "amount": 100,
+        "currency": null,
+        "amount_converted": null,
+        "exchange_rate": null,
+        "created_by": "44444444-4444-4444-8444-444444444402",
+        "created_at": "2026-07-20T00:00:00Z"
+      }
+    ]
+  },
+  "routes": ["/trip/{trip}/budget"],
+  "breakpoints": ["mobile", "desktop"]
+}

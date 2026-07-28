@@ -182,6 +182,75 @@ test('computeBalances: if every participant left, the cost falls back to everyon
   assert.equal(byId.b.net, -50)
 })
 
+test('computeBalances: a recorded repayment nets the debtor and creditor toward zero (#125)', () => {
+  // A fronted a $100 cost split two ways → A +50, B -50. B then Venmos A $50.
+  // Recording that repayment must square both sides to zero, not leave B still
+  // owing on the card. `amount_converted` null → the raw trip-currency amount.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const cost = entry({ actual: 100, paid_by: 'a' })
+  const repayment = { from_member: 'b', to_member: 'a', amount: 50, amount_converted: null }
+  const byId = Object.fromEntries(
+    computeBalances([cost], members, [repayment]).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 0) // was owed 50, received it back
+  assert.equal(byId.b.net, 0) // owed 50, paid it
+  assert.equal(byId.a.paid, 100) // repayments never touch the expense pool
+})
+
+test('computeBalances: a partial repayment leaves the remaining balance (#125)', () => {
+  // B owes A 50 but only pays back 20 → B still owes 30, A is still owed 30.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const cost = entry({ actual: 100, paid_by: 'a' })
+  const repayment = { from_member: 'b', to_member: 'a', amount: 20, amount_converted: null }
+  const byId = Object.fromEntries(
+    computeBalances([cost], members, [repayment]).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 30)
+  assert.equal(byId.b.net, -30)
+})
+
+test('computeBalances: a multi-currency repayment nets on its converted amount (#125)', () => {
+  // Trip in USD. B owes A 50. B pays back €45, frozen at $50 (amount_converted).
+  // Settle-up must net the $50, not the raw €45 — same converted footing as the
+  // expenses it squares up.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const cost = entry({ actual: 100, paid_by: 'a' })
+  const repayment = {
+    from_member: 'b', to_member: 'a', amount: 45, currency: 'EUR',
+    amount_converted: 50, exchange_rate: 1.111,
+  }
+  const byId = Object.fromEntries(
+    computeBalances([cost], members, [repayment]).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 0)
+  assert.equal(byId.b.net, 0)
+})
+
+test('computeBalances: a repayment involving a departed member is skipped (#125)', () => {
+  // A repayment whose payer or payee is no longer on the trip is meaningless;
+  // applying just one side would break the sum-to-zero invariant settle-up needs.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const cost = entry({ actual: 100, paid_by: 'a' })
+  const ghostRepayment = { from_member: 'b', to_member: 'gone', amount: 50, amount_converted: null }
+  const byId = Object.fromEntries(
+    computeBalances([cost], members, [ghostRepayment]).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // unchanged — the repayment did not net
+  assert.equal(byId.b.net, -50)
+})
+
+test('computeBalances: no repayments settles exactly as before (#125 additive)', () => {
+  // The new third argument defaults to [] — existing two-arg call sites and rows
+  // with no repayments must be untouched.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const cost = entry({ actual: 80, paid_by: 'a' })
+  const byId = Object.fromEntries(
+    computeBalances([cost], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 40)
+  assert.equal(byId.b.net, -40)
+})
+
 test('dashboard roll-up sums the converted amount, not the raw foreign figure (#118)', () => {
   // Regression for #118: the Overview budget card summed raw `actual`, so a
   // ¥100,000 hotel (~$650 converted) on a USD trip rendered "$100,000". The
