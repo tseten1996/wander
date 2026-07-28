@@ -2,10 +2,11 @@ import * as React from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-  CalendarDays, ListChecks, Luggage, MapPin, MessageCircle, PartyPopper,
-  PiggyBank, Sparkles, Vote, ArrowRight,
+  CalendarDays, Check, ListChecks, Luggage, MapPin, MessageCircle, PartyPopper,
+  PiggyBank, Sparkles, UserPlus, Vote, ArrowRight,
 } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
+import { useInviteLink } from '@/lib/invite'
 import { useDashboard, planningProgress } from './api'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
@@ -22,10 +23,16 @@ const fadeUp = {
 }
 
 function Hero() {
-  const { trip, members } = useTripContext()
+  const { trip, members, isOwner } = useTripContext()
+  const { copied, copy } = useInviteLink(trip)
   const days = trip.start_date ? daysUntil(trip.start_date) : null
   const started = days != null && days <= 0
   const ended = trip.end_date ? daysUntil(trip.end_date) < 0 : false
+
+  // Getting friends into the trip is the whole product, so keep the invite
+  // action always in reach for the owner — not buried in Settings or hidden the
+  // moment activity starts. Only when the invite link is actually live.
+  const showInvite = isOwner && trip.invite_enabled
 
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.3 }}>
@@ -37,6 +44,17 @@ function Hero() {
           </>
         ) : (
           <div className="gradient-travel absolute inset-0" />
+        )}
+        {showInvite && (
+          <button
+            type="button"
+            onClick={copy}
+            aria-label="Copy invite link to share with friends"
+            className="absolute right-4 top-4 flex min-h-11 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            {copied ? <Check className="size-4" /> : <UserPlus className="size-4" />}
+            <span aria-live="polite">{copied ? 'Copied!' : 'Invite'}</span>
+          </button>
         )}
         <div className="relative flex min-h-44 flex-col justify-end p-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
