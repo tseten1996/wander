@@ -57,12 +57,18 @@ alter table public.repayments enable row level security;
 -- RLS: identical trip-member scoping to every other content table. Any member can
 -- record a repayment (they insert it as themselves via created_by); the payer or
 -- the trip owner can remove one that was recorded in error.
+--
+-- There is deliberately NO update policy: a repayment is an immutable record of a
+-- payment that happened, and the app exposes only create/delete (see api.ts —
+-- useCreateRepayment / useDeleteRepayment, no update mutation). With no `for
+-- update` policy Postgres denies every UPDATE by default, so no member can rewrite
+-- another member's repayment (amount, parties, currency, created_by) via a direct
+-- PostgREST call. To correct a mis-recorded payment, delete it and record it
+-- again — the delete policy already restricts that to the payer or the trip owner.
 create policy repayment_select on public.repayments for select
   using (is_trip_member(trip_id));
 create policy repayment_insert on public.repayments for insert
   with check (is_trip_member(trip_id) and created_by = my_member_id(trip_id));
-create policy repayment_update on public.repayments for update
-  using (is_trip_member(trip_id)) with check (is_trip_member(trip_id));
 create policy repayment_delete on public.repayments for delete
   using (created_by = my_member_id(trip_id) or is_trip_owner(trip_id));
 
