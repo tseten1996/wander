@@ -1,0 +1,15 @@
+{
+  "//": "Fixture for the #135 join-screen color-swatch tap-target slice. A friend (anon) opening an invite link: join_trip with an empty name returns the NAME_REQUIRED gate (mirrored by the harness), so the join form renders with the 'Pick your color' swatch row. get_invite_preview supplies the invite card header. See screenshot-mock.mjs for the schema.",
+  "auth": {
+    "as": "anon",
+    "userId": "99999999-9999-4999-8999-999999999999"
+  },
+  "rpcs": {
+    "get_invite_preview": [
+      { "trip_name": "Kyoto in Autumn", "destination": "Kyoto, Japan", "cover_url": null, "member_count": 2, "start_date": "2026-11-14", "end_date": "2026-11-21" }
+    ]
+  },
+  "routes": ["/join/DEMOCODE"],
+  "breakpoints": [{ "name": "mobile", "width": 375 }],
+  "colorScheme": "light"
+}
