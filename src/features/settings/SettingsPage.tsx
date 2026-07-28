@@ -14,6 +14,7 @@ import { useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
 import { exportTripJson, importTripJson } from '@/lib/export'
 import { friendlyError } from '@/lib/errors'
+import { useInviteLink } from '@/lib/invite'
 import { MEMBER_COLORS } from '@/lib/colors'
 import { cn, randomCode } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -274,16 +275,7 @@ function ProfileCard() {
 function InviteCard() {
   const { trip, isOwner } = useTripContext()
   const queryClient = useQueryClient()
-  const [copied, setCopied] = React.useState(false)
-
-  const inviteUrl = `${window.location.origin}${window.location.pathname}#/join/${trip.invite_code}`
-
-  async function copy() {
-    await navigator.clipboard.writeText(inviteUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-    toast.success('Invite link copied')
-  }
+  const { url: inviteUrl, copied, copy } = useInviteLink(trip)
 
   async function regenerate() {
     const { error } = await supabase
