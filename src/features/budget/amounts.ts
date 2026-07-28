@@ -1,4 +1,4 @@
-import type { BudgetEntry } from '@/types'
+import type { BudgetEntry, Repayment } from '@/types'
 
 /**
  * A budget entry's amounts expressed in the trip currency, which is what every
@@ -19,3 +19,12 @@ export const tripActual = (
 /** True when the entry was logged in a currency other than the trip's. */
 export const isForeignEntry = (e: BudgetEntry, tripCurrency: string): boolean =>
   !!e.currency && e.currency.toUpperCase() !== tripCurrency.toUpperCase()
+
+/**
+ * A repayment's amount in the trip currency, frozen at record time — the same
+ * `converted ?? raw` rule as budget entries, so settlement nets multi-currency
+ * repayments on the same footing as the expenses they square up.
+ */
+export const repaymentTripAmount = (
+  r: Pick<Repayment, 'amount' | 'amount_converted'>,
+): number => r.amount_converted ?? r.amount

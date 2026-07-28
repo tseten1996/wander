@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { friendlyError } from '@/lib/errors'
 import { fetchRates } from '@/lib/rates'
-import type { BudgetCategory, BudgetEntry } from '@/types'
+import type { BudgetCategory, BudgetEntry, Repayment } from '@/types'
 
 export function useBudget(tripId: string) {
   return useQuery({
@@ -99,5 +99,66 @@ export function useDeleteBudgetEntry(tripId: string) {
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not delete that expense')),
+  })
+}
+
+/* ── Repayments (issue 125) — members paying each other back, netted in settle-up ── */
+
+export function useRepayments(tripId: string) {
+  return useQuery({
+    queryKey: ['repayments', tripId],
+    queryFn: async (): Promise<Repayment[]> => {
+      const { data, error } = await supabase
+        .from('repayments')
+        .select('*')
+        .eq('trip_id', tripId)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+function useInvalidateRepayments(tripId: string) {
+  const queryClient = useQueryClient()
+  return () => queryClient.invalidateQueries({ queryKey: ['repayments', tripId] })
+}
+
+export interface RepaymentInput {
+  from_member: string
+  to_member: string
+  amount: number
+  /** Original currency; null when the repayment is in the trip currency. */
+  currency: string | null
+  amount_converted: number | null
+  exchange_rate: number | null
+}
+
+export function useCreateRepayment(tripId: string, memberId: string) {
+  const invalidate = useInvalidateRepayments(tripId)
+  return useMutation({
+    mutationFn: async (input: RepaymentInput) => {
+      const { error } = await supabase.from('repayments').insert({
+        ...input,
+        trip_id: tripId,
+        created_by: memberId,
+      })
+      if (error) throw error
+      logActivity(tripId, memberId, 'recorded a repayment')
+    },
+    onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not record that payment')),
+  })
+}
+
+export function useDeleteRepayment(tripId: string) {
+  const invalidate = useInvalidateRepayments(tripId)
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('repayments').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not remove that payment')),
   })
 }
