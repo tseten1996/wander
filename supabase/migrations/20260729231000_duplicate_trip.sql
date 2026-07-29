@@ -132,3 +132,13 @@ begin
   return v_new_trip_id;
 end;
 $$;
+
+-- Keep the RPC surface minimal (mirrors the hardening pass,
+-- 20260719012632_hardening.sql): Supabase auto-grants EXECUTE on every new
+-- function to public/anon/authenticated. Strip public + anon so a request with
+-- no session at all cannot reach this SECURITY DEFINER function. `authenticated`
+-- retains execute (granted directly by Supabase defaults, not via `public`), so
+-- the Settings reuse flow is unaffected.
+revoke execute on function public.duplicate_trip(
+  uuid, text, date, date, boolean, boolean, boolean, boolean, boolean
+) from public, anon;
