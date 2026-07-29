@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -1197,6 +1197,10 @@ export default function BudgetPage() {
   const { trip } = useTripContext()
   const budget = useBudget(trip.id)
   const [newOpen, setNewOpen] = React.useState(false)
+  // Framer animates `width` directly here (not a transform/layout prop), so the
+  // root MotionConfig reducedMotion="user" does NOT suppress it — gate it by
+  // hand so the category bars appear filled, not sweeping, under reduced motion (#137).
+  const reduceMotion = useReducedMotion()
 
   const entries = budget.data ?? []
   // All roll-ups run on the trip-currency amount (converted ?? raw) so a
@@ -1304,9 +1308,9 @@ export default function BudgetPage() {
                     </div>
                     <motion.div
                       className="h-2 rounded-full bg-primary/80"
-                      initial={{ width: 0 }}
+                      initial={reduceMotion ? false : { width: 0 }}
                       animate={{ width: `${(c.total / maxCategory) * 100}%` }}
-                      transition={{ duration: 0.5, ease: 'easeOut' }}
+                      transition={reduceMotion ? { duration: 0 } : { duration: 0.5, ease: 'easeOut' }}
                     />
                   </div>
                 ))}
