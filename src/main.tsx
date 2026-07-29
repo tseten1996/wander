@@ -7,8 +7,13 @@ import { AuthProvider } from '@/hooks/useAuth'
 import { OfflineBanner } from '@/components/layout/OfflineBanner'
 import { InstallNudge } from '@/components/layout/InstallNudge'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
+import { initErrorReporting } from '@/lib/errorReporting'
 import App from './App'
 import './index.css'
+
+// Register global error telemetry (#57) before the app mounts so a crash during
+// the very first render still gets a chance to be reported.
+initErrorReporting()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

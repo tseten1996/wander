@@ -193,6 +193,13 @@ async function routeSupabase(route) {
     return json(OWNER_MEMBER) // .single() after create
   }
 
+  // Client error telemetry (#57): the global handlers fire-and-forget an insert
+  // here. The insert asks for no representation back, so a bare 201 is correct.
+  if (pathname.endsWith('/rest/v1/error_reports')) {
+    if (method === 'POST') return route.fulfill({ status: 201, body: '' })
+    return json([])
+  }
+
   // Anything else (stray queries from lazily-mounted pages): empty + harmless.
   return json([])
 }
@@ -461,6 +468,64 @@ async function runTripPresence(browser) {
   }
 }
 
+async function runErrorReporting(browser) {
+  console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
+    // Wait for the signed-in home so a session exists (the INSERT policy needs
+    // one) before we synthesize errors.
+    await page.getByRole('button', { name: 'New trip' }).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+
+    // An uncaught window error is captured and written to error_reports. We
+    // dispatch a synthetic ErrorEvent (not a real throw) so the assertion is
+    // deterministic and doesn't itself fail the harness.
+    const errorInsert = page.waitForRequest(
+      (req) =>
+        req.url().includes('/rest/v1/error_reports') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new ErrorEvent('error', { message: 'smoke-boom', error: new Error('smoke-boom') })
+      )
+    })
+    const errPayload = (await errorInsert).postDataJSON()
+    if (!errPayload || !String(errPayload.message).includes('smoke-boom')) {
+      throw new Error(`error report missing the message: ${JSON.stringify(errPayload)}`)
+    }
+    ok('an uncaught window error is written to error_reports')
+
+    // The unhandledrejection path is wired too. A synthetic PromiseRejectionEvent
+    // carries a resolved promise (the constructor only needs a Promise object)
+    // so no real rejection escapes into the page.
+    const rejectInsert = page.waitForRequest(
+      (req) =>
+        req.url().includes('/rest/v1/error_reports') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new PromiseRejectionEvent('unhandledrejection', {
+          promise: Promise.resolve(),
+          reason: new Error('smoke-reject'),
+        })
+      )
+    })
+    const rejPayload = (await rejectInsert).postDataJSON()
+    if (!rejPayload || !String(rejPayload.message).includes('smoke-reject')) {
+      throw new Error(`rejection report missing the reason: ${JSON.stringify(rejPayload)}`)
+    }
+    ok('an unhandled promise rejection is written to error_reports')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -476,6 +541,7 @@ async function main() {
     await runOffline(browser)
     await runSignOut(browser)
     await runTripPresence(browser)
+    await runErrorReporting(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()
