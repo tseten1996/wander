@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { PageLoader } from '@/components/ui/misc'
-import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ErrorBoundary, ChunkReloadGuardReset } from '@/components/ErrorBoundary'
 import HomePage from '@/features/trips/HomePage'
 import JoinPage from '@/features/join/JoinPage'
 import TripLayout from '@/components/layout/TripLayout'
@@ -25,6 +25,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <React.Suspense fallback={<PageLoader />}>
+        {/* Sits inside Suspense so its effect fires only once a lazy route has
+            actually rendered — the moment it is safe to release the reload
+            guard. See ChunkReloadGuardReset. */}
+        <ChunkReloadGuardReset />
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/join/:code" element={<JoinPage />} />
