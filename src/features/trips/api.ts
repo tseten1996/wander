@@ -68,6 +68,56 @@ export function useUpdateTripMoney(tripId: string) {
   })
 }
 
+/** The reusable sections a duplicate can carry over. Mirrors the RPC's
+ *  `p_include_*` flags — each defaults on, and unticking one skips that copy. */
+export interface DuplicateSections {
+  itinerary: boolean
+  checklist: boolean
+  packing: boolean
+  budget: boolean
+  notes: boolean
+}
+
+export interface DuplicateTripInput {
+  sourceTripId: string
+  /** New trip name. Blank falls back server-side to "Copy of <source name>". */
+  name: string
+  start_date?: string | null
+  end_date?: string | null
+  sections: DuplicateSections
+}
+
+/**
+ * Duplicates an existing trip into a new one owned by the caller via the
+ * `duplicate_trip` SECURITY DEFINER RPC (consistent with `join_trip` — the RPC
+ * is the only place this happens, server-side in one transaction). The RPC
+ * copies the chosen structural sections and resets every per-instance signal
+ * (members, invite code, chat, votes, dates, done/packed/paid state); the
+ * client just calls it and navigates to the returned new trip id. Invalidates
+ * `['trips']` so the home list shows the copy immediately.
+ */
+export function useDuplicateTrip() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: DuplicateTripInput): Promise<string> => {
+      const { data, error } = await supabase.rpc('duplicate_trip', {
+        p_source_trip_id: input.sourceTripId,
+        p_name: input.name.trim() || null,
+        p_start_date: input.start_date || null,
+        p_end_date: input.end_date || null,
+        p_include_itinerary: input.sections.itinerary,
+        p_include_checklist: input.sections.checklist,
+        p_include_packing: input.sections.packing,
+        p_include_budget: input.sections.budget,
+        p_include_notes: input.sections.notes,
+      })
+      if (error) throw error
+      return data as string
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trips'] }),
+  })
+}
+
 export function useCreateTrip() {
   const queryClient = useQueryClient()
   return useMutation({
