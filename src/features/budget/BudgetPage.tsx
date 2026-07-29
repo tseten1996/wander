@@ -15,7 +15,7 @@ import {
 } from './api'
 import { CURRENCIES, conversionRate, isSupportedCurrency, toCents, type RateTable } from '@/lib/rates'
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
-import { useUpdateTripMoney } from '@/features/trips/api'
+import { useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -29,7 +29,7 @@ import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -1002,6 +1002,13 @@ type TripMoneyFormValues = z.input<typeof tripMoneySchema>
 function CurrencyBudgetForm() {
   const { trip } = useTripContext()
   const updateMoney = useUpdateTripMoney(trip.id)
+  // Existing amounts we might silently relabel. Changing the trip currency
+  // rewrites the label on every stored figure without converting it (issue 146),
+  // so
+  // before letting an owner do that we need to know whether there is anything
+  // to corrupt. Both are cached queries — the page already loads entries above.
+  const budget = useBudget(trip.id)
+  const repayments = useRepayments(trip.id)
   const form = useForm<TripMoneyFormValues>({
     resolver: zodResolver(tripMoneySchema),
     defaultValues: {
@@ -1009,23 +1016,59 @@ function CurrencyBudgetForm() {
       estimated_budget: trip.estimated_budget ?? '',
     },
   })
+  // The pending write held back while the owner confirms a currency change.
+  const [pending, setPending] = React.useState<TripMoneyInput | null>(null)
 
-  async function save(values: TripMoneyFormValues) {
+  // Only skip the warning once we've *confirmed* the trip is empty; until the
+  // queries resolve, treat a currency change as needing confirmation rather
+  // than risk relabelling amounts we haven't seen yet.
+  const hasAmounts = (budget.data?.length ?? 0) > 0 || (repayments.data?.length ?? 0) > 0
+  const amountsKnown = budget.isSuccess && repayments.isSuccess
+
+  async function write(input: TripMoneyInput) {
     try {
-      await updateMoney.mutateAsync({
-        currency: values.currency,
-        estimated_budget:
-          values.estimated_budget === '' || values.estimated_budget == null
-            ? null
-            : Number(values.estimated_budget),
-      })
+      await updateMoney.mutateAsync(input)
       toast.success('Currency & budget updated')
     } catch (error) {
       toast.error(friendlyError(error, 'Could not save currency & budget'))
     }
   }
 
+  function save(values: TripMoneyFormValues) {
+    const input: TripMoneyInput = {
+      currency: values.currency,
+      estimated_budget:
+        values.estimated_budget === '' || values.estimated_budget == null
+          ? null
+          : Number(values.estimated_budget),
+    }
+    const currencyChanged = input.currency.toUpperCase() !== trip.currency.toUpperCase()
+    // A currency change on a trip that has (or might have) amounts is an
+    // informed action, not a silent one — hold the write for confirmation.
+    if (currencyChanged && (hasAmounts || !amountsKnown)) {
+      setPending(input)
+      return
+    }
+    void write(input)
+  }
+
+  // Cancelling must leave the trip currency untouched and write nothing:
+  // restore the select to the trip's real currency and drop the pending write.
+  function cancelChange() {
+    form.setValue('currency', trip.currency, { shouldValidate: true })
+    setPending(null)
+  }
+
+  async function confirmChange() {
+    const input = pending
+    if (!input) return
+    setPending(null)
+    await write(input)
+  }
+
   const err = form.formState.errors
+  const oldCode = trip.currency.toUpperCase()
+  const newCode = (pending?.currency ?? trip.currency).toUpperCase()
 
   return (
     <Card>
@@ -1076,6 +1119,40 @@ function CurrencyBudgetForm() {
           </Button>
         </form>
       </CardContent>
+
+      <Dialog
+        open={pending != null}
+        onOpenChange={(o) => {
+          // Any dismissal (Cancel, Escape, overlay, ×) restores the currency
+          // and writes nothing.
+          if (!o) cancelChange()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change currency to {newCode}?</DialogTitle>
+            <DialogDescription>
+              This <strong>relabels</strong> every existing amount from {oldCode} to{' '}
+              {newCode} — it does <strong>not</strong> convert them. A {oldCode} 500
+              expense becomes {newCode} 500. Totals, the budget bar and settle-up will
+              be wrong until you re-enter the amounts in {newCode}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" className="sm:w-auto" onClick={cancelChange}>
+              Keep {oldCode}
+            </Button>
+            <Button
+              variant="danger"
+              className="sm:w-auto"
+              disabled={updateMoney.isPending}
+              onClick={confirmChange}
+            >
+              Change to {newCode} anyway
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
