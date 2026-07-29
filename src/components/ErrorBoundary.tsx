@@ -2,42 +2,9 @@ import * as React from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { PageLoader } from '@/components/ui/misc'
 import { Button } from '@/components/ui/button'
-
-/**
- * sessionStorage key that records we have already forced one automatic reload
- * for a chunk-load failure this session. It guards the self-heal so a chunk
- * that is genuinely broken (not just a stale-deploy 404) can never send the
- * app into a reload loop.
- *
- * Crucially the guard is released only once a lazy route has *actually
- * rendered successfully* (see `ChunkReloadGuardReset`), never merely on
- * boundary mount — the boundary sits above `Suspense` and mounts while the
- * chunk import is still pending, so clearing there would wipe the guard before
- * a persistent failure's reboot could read it and the app would loop forever.
- * Releasing it on confirmed success is what lets a *later* deploy in the same
- * session self-heal again while a still-broken chunk stops after one reload.
- */
-const CHUNK_RELOAD_FLAG = 'wander:chunk-reload'
-
-/**
- * A failed dynamic `import()` — the trip pages are lazy-loaded, and right
- * after a deploy the old hashed chunk files are gone from Pages, so the
- * import 404s. Browsers phrase this several ways; match all of them plus the
- * webpack-era `ChunkLoadError` name for good measure.
- */
-function isChunkLoadError(error: unknown): boolean {
-  if (!error) return false
-  const err = error as { name?: string; message?: string }
-  if (err.name === 'ChunkLoadError') return true
-  const message = err.message ?? ''
-  return (
-    /Failed to fetch dynamically imported module/i.test(message) ||
-    /error loading dynamically imported module/i.test(message) ||
-    /Importing a module script failed/i.test(message) ||
-    /Loading chunk \S+ failed/i.test(message) ||
-    /Unable to preload CSS/i.test(message)
-  )
-}
+import {
+  createChunkReloadGuard, isChunkLoadError, sessionStore,
+} from '@/lib/chunkReload'
 
 interface ErrorBoundaryProps {
   children: React.ReactNode
@@ -51,9 +18,11 @@ interface ErrorBoundaryState {
  * Wraps the lazy route tree so a render error in any single route can no
  * longer unmount the whole app into a blank screen. Two failure modes:
  *
- * 1. A chunk-load failure (stale deploy) → one guarded automatic
- *    `location.reload()` to pick up the freshly-activated assets, so it
- *    self-heals instead of needing a manual back-and-retry.
+ * 1. A chunk-load failure (stale deploy) → one automatic `location.reload()`
+ *    to pick up the freshly-activated assets, so it self-heals instead of
+ *    needing a manual back-and-retry. The reload is claimed per failing
+ *    chunk (see lib/chunkReload), so a failure that survives the reload
+ *    shows the fallback instead of reloading again.
  * 2. Any other render error → a recoverable fallback (message + Reload).
  */
 export class ErrorBoundary extends React.Component<
@@ -62,28 +31,15 @@ export class ErrorBoundary extends React.Component<
 > {
   state: ErrorBoundaryState = { error: null }
 
+  private guard = createChunkReloadGuard(sessionStore())
+
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error }
   }
 
   componentDidCatch(error: Error) {
-    if (isChunkLoadError(error) && !this.hasReloaded()) {
-      try {
-        sessionStorage.setItem(CHUNK_RELOAD_FLAG, '1')
-      } catch {
-        /* If we can't persist the guard, fall through to the fallback UI
-           rather than risk an unguarded reload loop. */
-        return
-      }
+    if (this.guard.claimReload(error)) {
       window.location.reload()
-    }
-  }
-
-  private hasReloaded(): boolean {
-    try {
-      return sessionStorage.getItem(CHUNK_RELOAD_FLAG) === '1'
-    } catch {
-      return false
     }
   }
 
@@ -97,7 +53,7 @@ export class ErrorBoundary extends React.Component<
 
     // A first-time chunk failure is about to trigger an automatic reload
     // (componentDidCatch) — show the loader rather than flashing the error UI.
-    if (isChunkLoadError(error) && !this.hasReloaded()) {
+    if (isChunkLoadError(error) && !this.guard.hasClaimed(error)) {
       return <PageLoader />
     }
 
@@ -124,30 +80,4 @@ export class ErrorBoundary extends React.Component<
       </div>
     )
   }
-}
-
-/**
- * Releases the chunk-reload guard, but only once mounted. Render it *inside*
- * the lazy `Suspense` boundary (a sibling of the route tree): React never
- * commits anything within a `Suspense` until every suspended child has
- * resolved, so this effect runs exactly when a lazy route has actually loaded
- * and rendered — the one moment it is safe to release the guard.
- *
- * A chunk failure that persists across the auto-reload never reaches this
- * point (the import rejects, so the boundary catches instead of committing the
- * subtree), leaving the guard set so `componentDidCatch` shows the fallback
- * rather than reloading again. That is what makes acceptance criterion #2 hold
- * ("guarded ... so it can never loop"). A clean boot after a *transient*
- * stale-deploy 404 does reach here and clears the guard, so a later deploy in
- * the same session can self-heal once more.
- */
-export function ChunkReloadGuardReset(): null {
-  React.useEffect(() => {
-    try {
-      sessionStorage.removeItem(CHUNK_RELOAD_FLAG)
-    } catch {
-      /* sessionStorage can throw in private/blocked contexts — ignore. */
-    }
-  }, [])
-  return null
 }
