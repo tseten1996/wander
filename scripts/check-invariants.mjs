@@ -62,6 +62,24 @@ const PALETTE_FILES = new Set([
 ])
 const HEX = /#[0-9a-fA-F]{3,8}\b/
 
+/*
+  Where a hex colour can legitimately appear as a *value*, per language:
+
+  • ts/tsx — always inside a string literal or a Tailwind arbitrary value
+    (`bg-[#0d9488]`); a bare `#0d9488` would not even parse. So only those
+    spans are scanned. This is what keeps prose out of the lint: every decimal
+    digit is also a hex digit, so a bare-line match made **every issue
+    reference of 3+ digits** (`// …under reduced motion (#137)`) a build
+    failure — which it did, once issue numbers passed 100.
+  • css — values are unquoted (`color: #fff`), so the whole line is scanned
+    with comments stripped.
+*/
+const TS_VALUE_SPANS = /'[^']*'|"[^"]*"|`[^`]*`|\[[^\]\s]*\]/g
+
+/** Blank out /* … *\/ comment text, preserving newlines so line numbers hold. */
+const stripCssComments = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+
 const walk = (dir) =>
   readdirSync(dir).flatMap((entry) => {
     const p = join(dir, entry)
@@ -71,8 +89,13 @@ const walk = (dir) =>
 for (const path of walk(join(ROOT, 'src'))) {
   const rel = relative(ROOT, path)
   if (PALETTE_FILES.has(rel) || !/\.(ts|tsx|css)$/.test(rel)) continue
-  readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
-    if (HEX.test(line))
+  const isCss = rel.endsWith('.css')
+  const source = isCss ? stripCssComments(readFileSync(path, 'utf8')) : readFileSync(path, 'utf8')
+  source.split('\n').forEach((line, i) => {
+    const offends = isCss
+      ? HEX.test(line)
+      : (line.match(TS_VALUE_SPANS) ?? []).some((span) => HEX.test(span))
+    if (offends)
       failures.push(`Token lint: ${rel}:${i + 1} contains a raw hex colour — use a design token or import from src/lib/colors.ts`)
   })
 }
