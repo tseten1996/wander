@@ -523,10 +523,11 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
           {canDelete && (
             <DropdownMenuItem
               destructive
-              onClick={() => {
-                deleteEntry.mutate(entry.id)
-                toast.success('Expense deleted')
-              }}
+              onClick={() =>
+                deleteEntry.mutate(entry.id, {
+                  onSuccess: () => toast.success('Expense deleted'),
+                })
+              }
             >
               <Trash2 /> Delete
             </DropdownMenuItem>

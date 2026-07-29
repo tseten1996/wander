@@ -232,10 +232,11 @@ function SortableItemCard({
             {canDelete && (
               <DropdownMenuItem
                 destructive
-                onClick={() => {
-                  deleteItem.mutate(item.id)
-                  toast.success('Removed from itinerary')
-                }}
+                onClick={() =>
+                  deleteItem.mutate(item.id, {
+                    onSuccess: () => toast.success('Removed from itinerary'),
+                  })
+                }
               >
                 <Trash2 /> Delete
               </DropdownMenuItem>
