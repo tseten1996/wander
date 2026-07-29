@@ -34,6 +34,9 @@ const BASE_URL = process.env.BASE_URL ?? 'http://localhost:4173'
 
 // ── Canned identities & rows the stub hands back ──────────────────────────
 const TRIP_ID = '11111111-1111-4111-8111-111111111111'
+// The trip id duplicate_trip() hands back — distinct from TRIP_ID so the test
+// can prove the UI navigates to the freshly-created copy, not back to the source.
+const NEW_TRIP_ID = '55555555-5555-4555-8555-555555555555'
 const OWNER_ID = '22222222-2222-4222-8222-222222222222'
 const ANON_ID = '33333333-3333-4333-8333-333333333333'
 const OWNER_EMAIL = 'planner@example.com'
@@ -175,6 +178,9 @@ async function routeSupabase(route) {
     return json(JSON.stringify(TRIP_ID)) // scalar text → a bare JSON string
   }
   if (pathname.endsWith('/rest/v1/rpc/get_invite_preview')) return json([INVITE_PREVIEW])
+  // duplicate_trip (#80) copies a trip server-side and returns the new trip id
+  // as a scalar text → a bare JSON string, exactly like join_trip.
+  if (pathname.endsWith('/rest/v1/rpc/duplicate_trip')) return json(JSON.stringify(NEW_TRIP_ID))
 
   // ── REST tables ──
   // Discriminate by the query shape so one stub serves several call sites:
@@ -369,6 +375,31 @@ async function runCreateTrip(browser) {
   }
 }
 
+async function runDuplicateTrip(browser) {
+  console.log('\n▶ duplicate trip (owner reuses a trip as a starting point)')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/settings`, { waitUntil: 'domcontentloaded' })
+    // Settings renders once trip + members resolve. The "Reuse this trip" card
+    // is owner/non-anonymous only (duplicating creates a trip they'd own).
+    const openBtn = page.getByRole('button', { name: 'Duplicate trip' })
+    await openBtn.waitFor({ state: 'visible', timeout: 10_000 })
+    await openBtn.click()
+
+    // Dialog: name prefilled "Copy of <trip>", section checkboxes default on.
+    await page.getByText('Duplicate this trip').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the duplicate dialog opens with the trip to copy')
+
+    // Submit → duplicate_trip RPC returns the new id → navigate into the copy.
+    await page.getByRole('button', { name: 'Create duplicate' }).click()
+    await page.waitForURL((url) => url.hash.includes(`/trip/${NEW_TRIP_ID}`), { timeout: 10_000 })
+    ok('duplicating navigates into the newly-created trip')
+  } finally {
+    await context.close()
+  }
+}
+
 async function runOffline(browser) {
   console.log('\n▶ offline read-only banner')
   const context = await newContext(browser, OWNER_SESSION)
@@ -538,6 +569,7 @@ async function main() {
     await runJoinDeadLink(browser)
     await runJoinTransientError(browser)
     await runCreateTrip(browser)
+    await runDuplicateTrip(browser)
     await runOffline(browser)
     await runSignOut(browser)
     await runTripPresence(browser)

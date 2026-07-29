@@ -5,8 +5,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  Archive, ArchiveRestore, Check, Copy, Download, FileText, Link2, RefreshCw,
-  Trash2, Upload, UserMinus, LogOut,
+  Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, Link2,
+  RefreshCw, Trash2, Upload, UserMinus, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -24,6 +24,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { CoverPicker } from '@/features/trips/CoverPicker'
+import { DuplicateTripDialog } from '@/features/trips/DuplicateTripDialog'
 import { isPresetCover } from '@/features/trips/covers'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -475,6 +476,34 @@ function ExportCard() {
   )
 }
 
+/* ── Reuse this trip (duplicate) ────────────────────────────────────────── */
+
+function ReuseCard() {
+  const { trip } = useTripContext()
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CopyPlus className="size-4 text-primary" /> Reuse this trip
+        </CardTitle>
+        <CardDescription>
+          Planning another trip with the same crew? Copy this one’s itinerary,
+          lists and budget into a fresh trip you own — a head start instead of a
+          blank slate.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button variant="secondary" onClick={() => setOpen(true)}>
+          <CopyPlus /> Duplicate trip
+        </Button>
+      </CardContent>
+      <DuplicateTripDialog trip={trip} open={open} onOpenChange={setOpen} />
+    </Card>
+  )
+}
+
 /* ── Danger zone (owner) ────────────────────────────────────────────────── */
 
 function DangerCard() {
@@ -551,6 +580,7 @@ function DangerCard() {
 
 export default function SettingsPage() {
   const { isOwner } = useTripContext()
+  const { isAnonymous } = useAuth()
   return (
     <div>
       <PageHeader title="Settings" description="Trip details, members and your profile." />
@@ -560,6 +590,9 @@ export default function SettingsPage() {
         <InviteCard />
         <MembersCard />
         <ExportCard />
+        {/* Duplicating creates a NEW trip owned by the caller; only real
+            (non-anonymous) users can own trips, matching create-trip. */}
+        {!isAnonymous && <ReuseCard />}
         {isOwner && <DangerCard />}
       </div>
     </div>
