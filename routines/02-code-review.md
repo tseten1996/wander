@@ -21,9 +21,11 @@ All GitHub reads and writes (issues, labels, comments, PR reviews) go through th
 
 # Preconditions (hard gate)
 
-- **State Doctor first.** Check each `queue:in-review` issue against the dual-label resolution table in routines/README.md. The one repair that is yours: `queue:in-progress` + `queue:in-review` with an open PR and no `needs-changes` → remove `queue:in-progress` (a crashed handoff), note it, and proceed to review. A closed issue with residual queue labels and a merged PR is normal exhaust — skip silently; discovery cleans it. Genuinely contradictory states (`queue:in-review` with no open PR and no merged PR to explain it, or any state with no provable cause): comment on the issue for the human, report it, and skip that item — never review or bounce across an inconsistent state.
+- **State Doctor first.** Check each `queue:in-review` issue against the dual-label resolution table in routines/README.md. The one repair that is yours: `queue:in-progress` + `queue:in-review` with an open PR and no `needs-changes` → remove `queue:in-progress` (a crashed handoff), note it, and proceed to review. A closed issue with residual queue labels and a merged PR is normal exhaust — skip silently; discovery cleans it. **Confirm the merge from the PR's own `merged` / `merged_at` field via `pull_request_read` (method `get`) — the PR *list* endpoint can report `merged:false` for a genuinely merged PR, so trusting the list flag will misread normal exhaust as a contradictory state.** Genuinely contradictory states (`queue:in-review` with no open PR and no merged PR to explain it, or any state with no provable cause): comment on the issue for the human, report it, and skip that item — never review or bounce across an inconsistent state.
 - **No `queue:in-review` issues, or none with an open PR** → output `NOTHING TO REVIEW — exiting` and stop.
-- **PR already reviewed at its current head** → skip it. Detect via your marker: a PR comment containing `wander-review: <head-sha>`. New commits since your last marker = review again.
+- **The linked issue must be OPEN and still labeled `queue:in-review` — the gate is literal.** A PR whose linked issue is **closed** (a fix-forward against an already-merged issue, e.g. an `improve/142-*` branch opened after #142 closed) or that has **no linked in-review issue at all** (an infra/meta PR whose branch carries no `improve/<issue#>-` and whose body has no `#<issue#>`, e.g. `improve/token-lint-issue-refs`) is **out of scope**: do not review it, do not post a verdict on it — output `NOTHING TO REVIEW — exiting`. It is a clean no-op, never a contradictory-state finding. Reviewing an off-gate PR "on its own merits" is itself an error: #149 was reviewed two hours after its issue closed while its identical twin #148 was (correctly) left untouched — the inconsistency was worse than either choice. Whether a fix-forward to a closed issue deserves review is the human's call, not yours.
+- **Two open PRs for one issue → terminal contradictory state, escalate once.** If more than one open PR resolves the same issue (two `improve/<issue#>-*` branches, or two bodies that `Closes #<same>` — the signature of a Build & Ship run-lease race, seen at #110→#116/#117 and #123→#129/#130), you cannot pick the survivor; that is a product judgment. Post the escalation **exactly once, on the issue** — never a copy on each PR — touch no labels, and review neither PR. This is terminal: once you have halted for a duplicate-PR race you MUST NOT approve or bounce either PR, in this run or a later one, until the human collapses it to a single PR. (#110 halted and then approved #117 two minutes later — never do that.)
+- **PR already reviewed at its current head** → skip it, hard. This is a terminal no-op, not a "probably done." Detect via your marker: a PR comment containing `wander-review: <head-sha>` for the *current* head; new commits since your last marker = review again. Because fires are not idempotent and two runs can overlap, **re-list the PR's comments immediately before writing any verdict or marker, and abort the write if a marker for this head already exists** — do not emit a second verdict even if this run believes it hasn't reviewed yet (#112 posted two PASS verdicts 15 s apart for one SHA). Exactly one `wander-review: <sha>` marker per head, ever.
 - **PR labeled `needs-changes`** → Build & Ship has not responded yet; skip it. (Its issue should be labeled `queue:in-progress` — the State Doctor catches the case where it isn't.)
 - **Bounce limit:** if you have already requested changes on this PR **twice**, do NOT bounce again. Comment `Two review cycles exhausted — human judgment needed`, leave the issue in `queue:in-review`, and flag it in your final output. Endless agent ping-pong is worse than a human tiebreak.
 
@@ -99,17 +101,19 @@ On a re-review after a bounce, your scope is exactly: (a) each finding from your
 
 # Verdict
 
+**The reviewer and the PR author are the same GitHub account (`tseten1996`), so GitHub rejects a formal APPROVE or REQUEST_CHANGES review on these PRs (HTTP 422).** This is expected, not a failure — do not fight it and do not invent a fresh workaround each run. Post the verdict as an ordinary PR **comment**; the label and the marker carry the machine-readable signal. (You may attempt a formal review first; when it 422s, fall back to the comment.) Never end the run without the verdict comment, the marker, and — on FAIL — the `needs-changes` label.
+
 **PASS (no blockers or majors):**
 
-1. Submit an APPROVE review on the PR: `Review passed at <head-sha>. <one-paragraph summary; list any MINOR notes>`
-2. Comment on the PR: `wander-review: <head-sha>`
+1. Comment on the PR, leading with the exact line `Review passed at <head-sha>`, then a one-paragraph summary and any MINOR notes. (A formal APPROVE is blocked on a self-authored PR — this comment is the verdict of record.)
+2. Comment on the PR: `wander-review: <head-sha>` (may be the tail of the step-1 comment — one marker per SHA, never two).
 3. The issue keeps its `queue:in-review` label. Comment on the issue: `Code review passed — ready for human merge.`
 
 **FAIL (any blocker or major):**
 
-1. Submit a REQUEST_CHANGES review on the PR with numbered findings: severity, file:line, what is wrong, what done looks like.
-2. Comment on the PR: `wander-review: <head-sha>`
-3. Add the `needs-changes` label to the PR. (This triggers the auto-bounce workflow, which may perform step 4's swap before you do — that's expected.)
+1. Comment on the PR with numbered findings: severity, file:line, what is wrong, what "done" looks like. For a BLOCKER the **first line must be `⛔ BLOCKER — DO NOT MERGE`** — a self-review cannot mechanically block the merge button, so this comment and the label are the only things between the blocker and `main` (#144 was merged over an unfixed reload-loop blocker three minutes after the bounce, shipping the bug to `main`).
+2. Comment on the PR: `wander-review: <head-sha>`.
+3. Add the `needs-changes` label to the PR — this label, **not** the review comment, is the authoritative machine-readable bounce signal. (This triggers the auto-bounce workflow, which may perform step 4's swap before you do — that's expected.)
 4. On the issue: add `queue:in-progress` FIRST, then remove `queue:in-review` (transition rule — a crash mid-swap must leave a detectable dual-label, never a label-less issue). Treat label operations as idempotent: "already present" on add and "not found" on remove are successes, not errors — the auto-bounce workflow races you benignly.
 5. Comment on the issue: `Review found <n> blocker(s)/major(s) — bounced to queue:in-progress. See PR review.`
 
