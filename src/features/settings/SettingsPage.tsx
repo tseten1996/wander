@@ -5,8 +5,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, Link2,
-  RefreshCw, Trash2, Upload, UserMinus, LogOut,
+  Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, GitMerge,
+  Link2, RefreshCw, Trash2, Upload, UserMinus, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -33,6 +33,10 @@ import { MemberAvatar } from '@/components/ui/avatar'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import type { Member } from '@/types'
 
 /* ── Trip info (owner only) ─────────────────────────────────────────────── */
 
@@ -339,6 +343,9 @@ function MembersCard() {
   const { isAnonymous } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  // The member the owner is about to merge away (the stale duplicate). null =
+  // dialog closed.
+  const [mergeDup, setMergeDup] = React.useState<Member | null>(null)
 
   async function remove(memberId: string, name: string) {
     const { error } = await supabase.from('members').delete().eq('id', memberId)
@@ -359,6 +366,12 @@ function MembersCard() {
     <Card>
       <CardHeader>
         <CardTitle>Members ({members.length})</CardTitle>
+        {isOwner && members.length > 2 && (
+          <CardDescription>
+            If someone re-joined and appears twice, merge their duplicate into
+            their real profile to move their messages, votes and lists across.
+          </CardDescription>
+        )}
       </CardHeader>
       <CardContent className="space-y-1">
         {members.map((m) => (
@@ -374,14 +387,25 @@ function MembersCard() {
               <Badge variant="primary">Owner</Badge>
             ) : (
               isOwner && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-danger"
-                  onClick={() => remove(m.id, m.display_name)}
-                >
-                  <UserMinus /> Remove
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {members.length > 2 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setMergeDup(m)}
+                    >
+                      <GitMerge /> Merge
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-danger"
+                    onClick={() => remove(m.id, m.display_name)}
+                  >
+                    <UserMinus /> Remove
+                  </Button>
+                </div>
               )
             )}
           </div>
@@ -399,7 +423,99 @@ function MembersCard() {
           </div>
         )}
       </CardContent>
+
+      <MergeMemberDialog
+        duplicate={mergeDup}
+        candidates={members.filter((m) => m.id !== mergeDup?.id)}
+        onOpenChange={(open) => !open && setMergeDup(null)}
+      />
     </Card>
+  )
+}
+
+/* ── Merge a duplicate member into a surviving one (owner only) ──────────── */
+
+function MergeMemberDialog({
+  duplicate,
+  candidates,
+  onOpenChange,
+}: {
+  duplicate: Member | null
+  /** Every other member the duplicate could be merged into. */
+  candidates: Member[]
+  onOpenChange: (open: boolean) => void
+}) {
+  const { trip } = useTripContext()
+  const queryClient = useQueryClient()
+  const [survivorId, setSurvivorId] = React.useState('')
+  const [merging, setMerging] = React.useState(false)
+
+  // Reset the picked survivor whenever the dialog opens for a new duplicate.
+  React.useEffect(() => {
+    if (duplicate) setSurvivorId('')
+  }, [duplicate])
+
+  async function confirmMerge() {
+    if (!duplicate || !survivorId) return
+    const survivor = candidates.find((m) => m.id === survivorId)
+    setMerging(true)
+    const { error } = await supabase.rpc('merge_member', {
+      p_trip_id: trip.id,
+      p_duplicate: duplicate.id,
+      p_survivor: survivorId,
+    })
+    setMerging(false)
+    if (error) {
+      toast.error(friendlyError(error, 'Could not merge those members'))
+      return
+    }
+    toast.success(
+      `${duplicate.display_name} merged into ${survivor?.display_name ?? 'the surviving member'}`
+    )
+    // The merge rewrote authorship across many tables (messages, votes,
+    // checklist, itinerary, budget, activity…), so refresh everything rather
+    // than guess every affected key — same blanket refresh as import.
+    void queryClient.invalidateQueries()
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={!!duplicate} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Merge “{duplicate?.display_name}” into…</DialogTitle>
+          <DialogDescription>
+            Everything “{duplicate?.display_name}” posted — messages, votes,
+            checklist, itinerary and budget entries — moves to the member you
+            pick, then the duplicate is removed. This can’t be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label htmlFor="merge-survivor">Keep as</Label>
+          <Select value={survivorId} onValueChange={setSurvivorId}>
+            <SelectTrigger id="merge-survivor" aria-label="Surviving member">
+              <SelectValue placeholder="Choose the member to keep" />
+            </SelectTrigger>
+            <SelectContent>
+              {candidates.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.display_name}
+                  {m.role === 'owner' ? ' (owner)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={merging}>
+              Cancel
+            </Button>
+            <Button onClick={confirmMerge} disabled={!survivorId || merging}>
+              {merging ? 'Merging…' : 'Merge members'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
