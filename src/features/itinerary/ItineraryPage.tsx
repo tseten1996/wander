@@ -29,6 +29,8 @@ import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
+import { ItemBudgetLink } from './BudgetLink'
+import { searchAnchorId } from '@/features/search/anchor'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -48,7 +50,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { cn, formatMoney, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
+import { cn, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
@@ -146,6 +148,7 @@ function SortableItemCard({
   return (
     <div
       ref={setRefs}
+      id={searchAnchorId(item.id)}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn('relative', isDragging && 'z-10 opacity-80')}
     >
@@ -185,7 +188,6 @@ function SortableItemCard({
               item.start_time &&
                 `${formatTime(item.start_time)}${item.end_time ? ` – ${formatTime(item.end_time)}` : ''}`,
               item.location,
-              item.cost != null ? formatMoney(item.cost, trip.currency) : null,
             ]
               .filter(Boolean)
               .join(' · ') || meta.label}
@@ -213,6 +215,7 @@ function SortableItemCard({
               </span>
             </p>
           )}
+          <ItemBudgetLink item={item} />
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

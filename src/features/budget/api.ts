@@ -64,14 +64,18 @@ export function useRates(tripCurrency: string) {
 export function useCreateBudgetEntry(tripId: string, memberId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
-    mutationFn: async (input: BudgetInput) => {
-      const { error } = await supabase.from('budget_entries').insert({
-        ...input,
-        trip_id: tripId,
-        created_by: memberId,
-      })
+    // Returns the new entry's id so callers that need to link it can — e.g. the
+    // itinerary "Add to budget" action (#151) creates the entry, then points the
+    // itinerary item at it. Existing callers simply ignore the return value.
+    mutationFn: async (input: BudgetInput): Promise<string> => {
+      const { data, error } = await supabase
+        .from('budget_entries')
+        .insert({ ...input, trip_id: tripId, created_by: memberId })
+        .select('id')
+        .single()
       if (error) throw error
       logActivity(tripId, memberId, 'added an expense', input.title)
+      return data.id
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not add that expense')),
