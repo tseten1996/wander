@@ -17,7 +17,9 @@ import {
   useRates, useRepayments, useUpdateBudgetEntry,
   type BudgetInput, type RepaymentInput,
 } from './api'
-import { CURRENCIES, conversionRate, isSupportedCurrency, toCents, type RateTable } from '@/lib/rates'
+import {
+  CURRENCIES, conversionRate, isSupportedCurrency, seededExpenseRate, toCents, type RateTable,
+} from '@/lib/rates'
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
 import { useRedenominateTrip, useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
@@ -134,7 +136,13 @@ function EntryDialog({
 
   React.useEffect(() => {
     if (open) {
-      setRateEdited(false) // presence of a stored rate is not a user override (#145)
+      // Start clean: `rateEdited` means "the member hand-typed a rate", nothing
+      // more. A saved entry's frozen rate is preserved by the seeding effect
+      // below — which restores it whenever the entry's own currency is picked —
+      // not by pretending the member edited it. Conflating the two left the old
+      // currency's rate in place after a currency change and wrote a wrong
+      // converted amount into settle-up (#145).
+      setRateEdited(false)
       form.reset(
         entry
           ? {
@@ -164,6 +172,12 @@ function EntryDialog({
   const isForeign = selectedCurrency !== tripCurrency
   const rateTable: RateTable | undefined = rates.data
   const ratesReady = rates.isSuccess && !!rateTable
+  // The entry's own saved foreign currency and the rate frozen with it, if any.
+  // Re-selecting this currency restores the frozen rate (historical accuracy —
+  // "what it cost you then"); picking any other currency re-seeds from today's
+  // live table.
+  const savedCurrency = entry?.currency?.toUpperCase()
+  const savedRate = entry?.exchange_rate ?? null
 
   // Seed the rate from the live table whenever the picked currency changes,
   // unless the member has overridden it. Foreign → auto rate; back to trip
@@ -178,16 +192,12 @@ function EntryDialog({
       return
     }
     if (rateEdited) return
-    const originalCurrency = entry?.currency?.toUpperCase()
-    if (originalCurrency && selectedCurrency === originalCurrency && entry?.exchange_rate != null) {
-      form.setValue('rate', entry.exchange_rate)
-      return
-    }
-    if (!rateTable) return
-    const r = conversionRate(selectedCurrency, rateTable)
-    if (r != null) form.setValue('rate', toCents(r * 10000) / 10000)
+    // Restore the entry's own frozen rate when its currency is re-selected;
+    // otherwise seed from today's live table. Null → leave the field as-is.
+    const seeded = seededExpenseRate(selectedCurrency, savedCurrency, savedRate, rateTable)
+    if (seeded != null) form.setValue('rate', seeded)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedCurrency, isForeign, rateTable])
+  }, [open, selectedCurrency, isForeign, rateTable, savedCurrency, savedRate])
 
   // The trip-currency options a member may pick: the trip currency itself, the
   // ECB set when live rates loaded, plus whatever currency a saved entry already
@@ -385,7 +395,14 @@ function EntryDialog({
                 <p className="text-xs text-danger">{err.rate.message}</p>
               ) : (
                 <p className="text-xs text-muted">
-                  Auto-filled from today’s ECB rate — edit if you got a different one.
+                  {/* Say where the number actually came from: a hand-typed
+                      override, the rate frozen with the saved entry, or
+                      today's live table — not always "today's" (#159 review). */}
+                  {rateEdited
+                    ? 'Using the rate you entered.'
+                    : savedCurrency && selectedCurrency === savedCurrency && savedRate != null
+                      ? 'The rate this expense was saved with — edit if it should change.'
+                      : 'Auto-filled from today’s ECB rate — edit if you got a different one.'}{' '}
                   All totals and settle-up use the {tripCurrency} value.
                 </p>
               )}
@@ -840,7 +857,13 @@ function RepaymentDialog({
                 <p className="text-xs text-danger">{err.rate.message}</p>
               ) : (
                 <p className="text-xs text-muted">
-                  Auto-filled from today’s ECB rate. Settle-up uses the {tripCurrency} value.
+                  {/* Repayments are create-only, so there is no saved-rate state
+                      here — just live-seeded vs hand-typed (mirrors the expense
+                      dialog's caption). */}
+                  {rateEdited
+                    ? 'Using the rate you entered.'
+                    : 'Auto-filled from today’s ECB rate.'}{' '}
+                  Settle-up uses the {tripCurrency} value.
                 </p>
               )}
             </div>

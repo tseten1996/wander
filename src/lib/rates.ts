@@ -108,3 +108,35 @@ export function conversionRate(from: string, rates: RateTable): number | null {
 export function toCents(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100
 }
+
+/**
+ * The exchange rate to seed into the expense/repayment form when a *foreign*
+ * currency is picked, given the entry being edited (if any) and the live table.
+ *
+ * Two sources, in order:
+ *  1. If the picked currency is the entry's *own* saved currency, restore the
+ *     rate it was frozen at — history is "what it cost you then", never
+ *     silently re-rated at today's number (#145).
+ *  2. Otherwise take today's live table rate, rounded to 4 dp like the form.
+ *
+ * Returns null when neither applies (rates down and it isn't the saved
+ * currency), signalling the caller to leave the field untouched. A member's
+ * own hand-typed override is handled by the caller before this is consulted.
+ */
+export function seededExpenseRate(
+  selectedCurrency: string,
+  savedCurrency: string | null | undefined,
+  savedRate: number | null | undefined,
+  rates: RateTable | undefined,
+): number | null {
+  if (
+    savedCurrency &&
+    selectedCurrency.toUpperCase() === savedCurrency.toUpperCase() &&
+    savedRate != null
+  ) {
+    return savedRate
+  }
+  if (!rates) return null
+  const r = conversionRate(selectedCurrency, rates)
+  return r != null ? toCents(r * 10000) / 10000 : null
+}
