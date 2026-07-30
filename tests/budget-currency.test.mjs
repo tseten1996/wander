@@ -18,7 +18,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 import { tripActual, tripEstimated, isForeignEntry } from '../src/features/budget/amounts.ts'
-import { conversionRate, toCents, isSupportedCurrency } from '../src/lib/rates.ts'
+import {
+  conversionRate, toCents, isSupportedCurrency, seededExpenseRate,
+} from '../src/lib/rates.ts'
 
 // settlement.ts is not a leaf module — it value-imports './amounts' without an
 // extension (the repo-wide convention that the Vite/tsc bundler resolver
@@ -293,6 +295,42 @@ test('toCents rounds to two decimals', () => {
   // Half-cent boundary: 1.005 * 100 is 100.4999… in IEEE-754, so a naive
   // Math.round would floor it to 1.00 and freeze a converted amount a cent low.
   assert.equal(toCents(1.005), 1.01)
+})
+
+test('seededExpenseRate: changing a saved entry to a new currency re-seeds from the live table (#145)', () => {
+  // Trip USD; a saved EUR entry frozen at 1.10. The member switches the dropdown
+  // to GBP. The seeded rate must come from *today's* table for GBP, not linger on
+  // the old EUR rate — the bug wrote a wrong converted amount into settle-up.
+  const rates = { USD: 1, EUR: 0.9, GBP: 0.8 }
+  const seeded = seededExpenseRate('GBP', 'EUR', 1.1, rates)
+  assert.ok(Math.abs(seeded - toCents((1 / 0.8) * 10000) / 10000) < 1e-9)
+  assert.notEqual(seeded, 1.1) // did not keep the stale EUR rate
+})
+
+test('seededExpenseRate: re-selecting the entry\'s own currency restores its frozen rate (#145)', () => {
+  // Back on the entry's original EUR: restore the historical 1.10 it was saved
+  // at, NOT today's 1/0.9 — history is never silently re-rated.
+  const rates = { USD: 1, EUR: 0.9 }
+  assert.equal(seededExpenseRate('EUR', 'EUR', 1.1, rates), 1.1)
+  assert.equal(seededExpenseRate('eur', 'EUR', 1.1, rates), 1.1) // case-insensitive
+})
+
+test('seededExpenseRate: a new entry (no saved currency) always takes the live rate (#145)', () => {
+  const rates = { USD: 1, JPY: 150 }
+  assert.equal(seededExpenseRate('JPY', undefined, undefined, rates), toCents((1 / 150) * 10000) / 10000)
+})
+
+test('seededExpenseRate: frozen rate restores even when the live table is unavailable (#145)', () => {
+  // Rates down: the only foreign option is the entry's own saved currency, and
+  // its frozen rate must still restore so the field is never left blank/stale.
+  assert.equal(seededExpenseRate('EUR', 'EUR', 1.1, undefined), 1.1)
+  // A different currency with no table has nothing to seed → null (leave as-is).
+  assert.equal(seededExpenseRate('GBP', 'EUR', 1.1, undefined), null)
+})
+
+test('seededExpenseRate: a currency the table cannot price yields null (#145)', () => {
+  const rates = { USD: 1, EUR: 0.9 }
+  assert.equal(seededExpenseRate('GBP', null, null, rates), null)
 })
 
 test('isSupportedCurrency knows the ECB set, case-insensitively', () => {
