@@ -1,13 +1,17 @@
 import * as React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  ArrowRight, Check, HandCoins, MoreHorizontal, Pencil, PiggyBank, Plus, Scale, Trash2, Undo2,
+  ArrowRight, Check, HandCoins, MapPin, MoreHorizontal, Pencil, PiggyBank, Plus, Scale,
+  Trash2, Undo2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
+import { useItinerary } from '@/features/itinerary/api'
+import { searchAnchorId } from '@/features/search/anchor'
 import {
   useBudget, useCreateBudgetEntry, useCreateRepayment, useDeleteBudgetEntry, useDeleteRepayment,
   useRates, useRepayments, useUpdateBudgetEntry,
@@ -478,6 +482,41 @@ function EntryDialog({
   )
 }
 
+/**
+ * Reverse link (#151): when itinerary items point at this expense, offer a way
+ * back to them. Reads the already-cached itinerary; renders nothing until an
+ * item links here, so an unlinked expense row is unchanged.
+ */
+function LinkedItineraryChip({ entryId }: { entryId: string }) {
+  const { trip } = useTripContext()
+  const navigate = useNavigate()
+  const itinerary = useItinerary(trip.id)
+  const linked = React.useMemo(
+    () => (itinerary.data ?? []).filter((i) => i.budget_entry_id === entryId),
+    [itinerary.data, entryId]
+  )
+  if (linked.length === 0) return null
+  const first = linked[0]
+  const extra = linked.length - 1
+  return (
+    <button
+      type="button"
+      data-tap-target
+      onClick={() => navigate(`/trip/${trip.id}/itinerary#${searchAnchorId(first.id)}`)}
+      className={cn(
+        'mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full bg-sunken px-2 py-0.5',
+        'text-xs font-medium text-muted transition-colors hover:text-ink'
+      )}
+    >
+      <MapPin className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">
+        On itinerary · {first.title}
+        {extra > 0 ? ` +${extra}` : ''}
+      </span>
+    </button>
+  )
+}
+
 function EntryRow({ entry }: { entry: BudgetEntry }) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const deleteEntry = useDeleteBudgetEntry(trip.id)
@@ -487,7 +526,7 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   const foreign = isForeignEntry(entry, trip.currency)
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
+    <div id={searchAnchorId(entry.id)} className="flex items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{entry.title}</p>
         <p className="truncate text-xs text-muted">
@@ -495,6 +534,7 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
           {entry.entry_date && ` · ${shortDate(entry.entry_date)}`}
           {payer && ` · paid by ${payer.display_name}`}
         </p>
+        <LinkedItineraryChip entryId={entry.id} />
       </div>
       {payer && <MemberAvatar name={payer.display_name} color={payer.color} size="sm" />}
       <div className="w-24 text-right">

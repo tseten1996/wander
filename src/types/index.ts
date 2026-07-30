@@ -132,6 +132,12 @@ export interface ItineraryItem {
   url: string | null
   notes: string | null
   cost: number | null
+  /** Optional link to the budget entry that actually pays for this item (#151).
+   *  null = the `cost` above is only a planning note, not tracked spend. The FK
+   *  is ON DELETE SET NULL, so deleting the expense clears this rather than
+   *  leaving a dangling reference. Budget totals never read this — they sum
+   *  `budget_entries` alone, so an amount is never counted twice. */
+  budget_entry_id: string | null
   position: number
   created_by: string | null
   created_at: string
