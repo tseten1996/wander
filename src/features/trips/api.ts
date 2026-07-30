@@ -68,6 +68,45 @@ export function useUpdateTripMoney(tripId: string) {
   })
 }
 
+export interface RedenominateTripInput {
+  /** The NEW trip currency (ISO 4217). Validate with `isSupportedCurrency` first. */
+  currency: string
+  /** old→new multiplier captured at switch time: oldAmount × rate = newAmount. */
+  rate: number
+  /** Total budget already in the NEW currency when the owner edited the figure
+   *  in the same save; null lets the RPC convert the stored budget instead. */
+  estimated_budget: number | null
+}
+
+/**
+ * Changes the trip currency by *converting* the trip's money — every budget
+ * entry, repayment and the total budget — in one transaction via the
+ * `redenominate_trip` SECURITY DEFINER RPC (#147), instead of relabelling
+ * amounts the way a plain `trips.currency` update would. The rate comes from
+ * the same ECB table the Budget form uses to seed foreign entries; the RPC
+ * records it in the activity feed. Invalidates everything that renders a
+ * converted amount: the trip row, the entries and the repayments.
+ */
+export function useRedenominateTrip(tripId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: RedenominateTripInput): Promise<void> => {
+      const { error } = await supabase.rpc('redenominate_trip', {
+        p_trip_id: tripId,
+        p_new_currency: input.currency.trim().toUpperCase(),
+        p_rate: input.rate,
+        p_estimated_budget: input.estimated_budget,
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      for (const key of ['trip', 'budget_entries', 'repayments'] as const) {
+        void queryClient.invalidateQueries({ queryKey: [key, tripId] })
+      }
+    },
+  })
+}
+
 /** The reusable sections a duplicate can carry over. Mirrors the RPC's
  *  `p_include_*` flags — each defaults on, and unticking one skips that copy. */
 export interface DuplicateSections {
