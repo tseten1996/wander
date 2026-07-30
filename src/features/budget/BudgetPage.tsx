@@ -556,7 +556,10 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   const deleteEntry = useDeleteBudgetEntry(trip.id)
   const [editOpen, setEditOpen] = React.useState(false)
   const payer = entry.paid_by ? membersById.get(entry.paid_by) : null
-  const canDelete = isOwner || entry.created_by === me.id
+  // Owner or the entry's creator may modify it. This gates both write paths —
+  // Edit and Delete — so a member can't silently rewrite `paid_by`/amount (which
+  // shifts settle-up balances) through an edit they aren't allowed to delete.
+  const canModify = isOwner || entry.created_by === me.id
   const foreign = isForeignEntry(entry, trip.currency)
 
   return (
@@ -584,17 +587,17 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
           {entry.actual != null ? 'paid' : 'estimated'}
         </p>
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Expense actions">
-            <MoreHorizontal />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => setEditOpen(true)}>
-            <Pencil /> Edit
-          </DropdownMenuItem>
-          {canDelete && (
+      {canModify && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Expense actions">
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setEditOpen(true)}>
+              <Pencil /> Edit
+            </DropdownMenuItem>
             <DropdownMenuItem
               destructive
               onClick={() =>
@@ -605,10 +608,12 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
             >
               <Trash2 /> Delete
             </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <EntryDialog open={editOpen} onOpenChange={setEditOpen} entry={entry} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {canModify && (
+        <EntryDialog open={editOpen} onOpenChange={setEditOpen} entry={entry} />
+      )}
     </div>
   )
 }
