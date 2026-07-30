@@ -19,7 +19,7 @@ import {
 } from './api'
 import { CURRENCIES, conversionRate, isSupportedCurrency, toCents, type RateTable } from '@/lib/rates'
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
-import { useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
+import { useRedenominateTrip, useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -1042,11 +1042,14 @@ type TripMoneyFormValues = z.input<typeof tripMoneySchema>
 function CurrencyBudgetForm() {
   const { trip } = useTripContext()
   const updateMoney = useUpdateTripMoney(trip.id)
-  // Existing amounts we might silently relabel. Changing the trip currency
-  // rewrites the label on every stored figure without converting it (issue 146),
-  // so
-  // before letting an owner do that we need to know whether there is anything
-  // to corrupt. Both are cached queries — the page already loads entries above.
+  const redenominate = useRedenominateTrip(trip.id)
+  // Live ECB rates based on the CURRENT (old) trip currency — `rates[NEW]` is
+  // exactly the old→new multiplier the re-denomination RPC needs (#147).
+  const rates = useRates(trip.currency)
+  // Existing amounts a currency change would re-denominate. Before letting an
+  // owner switch we need to know whether there is anything to convert (#146
+  // added the confirmation; #147 makes the confirmed switch actually convert).
+  // Both are cached queries — the page already loads entries above.
   const budget = useBudget(trip.id)
   const repayments = useRepayments(trip.id)
   const form = useForm<TripMoneyFormValues>({
@@ -1059,10 +1062,30 @@ function CurrencyBudgetForm() {
   // The pending write held back while the owner confirms a currency change.
   const [pending, setPending] = React.useState<TripMoneyInput | null>(null)
 
-  // Only skip the warning once we've *confirmed* the trip is empty; until the
-  // queries resolve, treat a currency change as needing confirmation rather
-  // than risk relabelling amounts we haven't seen yet.
-  const hasAmounts = (budget.data?.length ?? 0) > 0 || (repayments.data?.length ?? 0) > 0
+  // useRates deliberately never retries (the entry form degrades gracefully),
+  // but here a missing table blocks the conversion outright — give it one
+  // fresh attempt each time the confirm dialog opens after a failure.
+  const ratesErrored = rates.isError
+  const refetchRates = rates.refetch
+  React.useEffect(() => {
+    if (pending != null && ratesErrored) void refetchRates()
+  }, [pending, ratesErrored, refetchRates])
+
+  // Keep the form in step with the trip row: after a re-denomination the
+  // stored budget is a *different number* (converted server-side), and these
+  // fields can also change from another device.
+  React.useEffect(() => {
+    form.reset({ currency: trip.currency, estimated_budget: trip.estimated_budget ?? '' })
+  }, [form, trip.currency, trip.estimated_budget])
+
+  // Only skip the confirmation once we've *confirmed* there is nothing to
+  // convert; until the queries resolve, treat a currency change as needing
+  // confirmation rather than risk converting amounts we haven't seen yet. The
+  // total budget counts too — it is converted like everything else.
+  const hasAmounts =
+    (budget.data?.length ?? 0) > 0 ||
+    (repayments.data?.length ?? 0) > 0 ||
+    trip.estimated_budget != null
   const amountsKnown = budget.isSuccess && repayments.isSuccess
 
   async function write(input: TripMoneyInput) {
@@ -1102,13 +1125,44 @@ function CurrencyBudgetForm() {
   async function confirmChange() {
     const input = pending
     if (!input) return
+    const rate = rates.data?.[input.currency.toUpperCase()]
+    if (!rate || rate <= 0) return // Convert button is disabled in this state
     setPending(null)
-    await write(input)
+    try {
+      await redenominate.mutateAsync({
+        currency: input.currency,
+        rate,
+        // A budget figure the owner typed in this same save is already in the
+        // NEW currency — pass it through; an untouched one is converted by the
+        // RPC alongside everything else.
+        estimated_budget:
+          input.estimated_budget !== (trip.estimated_budget ?? null)
+            ? input.estimated_budget
+            : null,
+      })
+      // The RPC can't distinguish "convert the stored budget" (null) from
+      // "clear the budget" — clearing during a switch needs a follow-up write.
+      if (input.estimated_budget == null && trip.estimated_budget != null) {
+        await updateMoney.mutateAsync({ currency: input.currency, estimated_budget: null })
+      }
+      toast.success(`Converted the trip to ${input.currency.toUpperCase()}`)
+    } catch (error) {
+      form.setValue('currency', trip.currency, { shouldValidate: true })
+      toast.error(friendlyError(error, 'Could not convert the trip'))
+    }
   }
 
   const err = form.formState.errors
   const oldCode = trip.currency.toUpperCase()
   const newCode = (pending?.currency ?? trip.currency).toUpperCase()
+  // The old→new rate for the pending switch; null while rates are loading or
+  // when the ECB table is unreachable (offline), in which case converting is
+  // blocked rather than silently relabelling.
+  const pendingRate = pending ? (rates.data?.[newCode] ?? null) : null
+  const rateDisplay =
+    pendingRate != null
+      ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(pendingRate)
+      : null
 
   return (
     <Card>
@@ -1170,12 +1224,23 @@ function CurrencyBudgetForm() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Change currency to {newCode}?</DialogTitle>
+            <DialogTitle>Convert this trip to {newCode}?</DialogTitle>
             <DialogDescription>
-              This <strong>relabels</strong> every existing amount from {oldCode} to{' '}
-              {newCode} — it does <strong>not</strong> convert them. A {oldCode} 500
-              expense becomes {newCode} 500. Totals, the budget bar and settle-up will
-              be wrong until you re-enter the amounts in {newCode}.
+              {pendingRate != null ? (
+                <>
+                  Every existing amount — expenses, payments and the total budget —
+                  will be <strong>converted</strong> from {oldCode} to {newCode} at
+                  today&apos;s rate: 1 {oldCode} ≈ {rateDisplay} {newCode}. Amounts
+                  logged in another currency keep their original figures; only what
+                  they count as in {newCode} is recalculated.
+                </>
+              ) : (
+                <>
+                  Converting needs a live exchange rate, and the rates service is
+                  unreachable right now. Try again once you&apos;re back online —
+                  amounts are never relabelled without converting.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -1183,12 +1248,11 @@ function CurrencyBudgetForm() {
               Keep {oldCode}
             </Button>
             <Button
-              variant="danger"
               className="sm:w-auto"
-              disabled={updateMoney.isPending}
+              disabled={pendingRate == null || redenominate.isPending || updateMoney.isPending}
               onClick={confirmChange}
             >
-              Change to {newCode} anyway
+              Convert to {newCode}
             </Button>
           </div>
         </DialogContent>
