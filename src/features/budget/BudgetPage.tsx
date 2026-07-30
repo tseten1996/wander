@@ -103,8 +103,12 @@ function EntryDialog({
   const rates = useRates(trip.currency)
   const tripCurrency = trip.currency.toUpperCase()
 
-  // Whether the member has hand-typed a rate — once true we stop re-seeding it
-  // from the live table so their override sticks.
+  // Whether the member has hand-typed a rate *for the currently-selected
+  // currency* — once true we stop re-seeding it so their override sticks. Reset
+  // on every currency change (below), because an override only ever applies to
+  // the currency it was typed against. This is distinct from "the entry carries
+  // a stored rate": a saved foreign entry opens with `false` so switching its
+  // currency re-seeds correctly (#145).
   const [rateEdited, setRateEdited] = React.useState(false)
 
   const allMemberIds = React.useMemo(() => members.map((m) => m.id), [members])
@@ -130,7 +134,7 @@ function EntryDialog({
 
   React.useEffect(() => {
     if (open) {
-      setRateEdited(!!entry?.currency) // a saved entry keeps its frozen rate
+      setRateEdited(false) // presence of a stored rate is not a user override (#145)
       form.reset(
         entry
           ? {
@@ -163,7 +167,9 @@ function EntryDialog({
 
   // Seed the rate from the live table whenever the picked currency changes,
   // unless the member has overridden it. Foreign → auto rate; back to trip
-  // currency → clear.
+  // currency → clear. Special case: re-selecting the entry's *original* saved
+  // currency restores its frozen historical rate rather than re-rating it at
+  // today's — history stays "what it cost you then" (#145).
   React.useEffect(() => {
     if (!open) return
     if (!isForeign) {
@@ -171,7 +177,13 @@ function EntryDialog({
       setRateEdited(false)
       return
     }
-    if (rateEdited || !rateTable) return
+    if (rateEdited) return
+    const originalCurrency = entry?.currency?.toUpperCase()
+    if (originalCurrency && selectedCurrency === originalCurrency && entry?.exchange_rate != null) {
+      form.setValue('rate', entry.exchange_rate)
+      return
+    }
+    if (!rateTable) return
     const r = conversionRate(selectedCurrency, rateTable)
     if (r != null) form.setValue('rate', toCents(r * 10000) / 10000)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,7 +315,12 @@ function EntryDialog({
               render={({ field }) => (
                 <Select
                   value={(field.value || tripCurrency).toUpperCase()}
-                  onValueChange={field.onChange}
+                  onValueChange={(v) => {
+                    // A currency change re-seeds the rate: the previous override
+                    // (if any) applied only to the previous currency (#145).
+                    field.onChange(v)
+                    setRateEdited(false)
+                  }}
                   disabled={currencyOptions.length <= 1}
                 >
                   <SelectTrigger aria-label="Entry currency"><SelectValue /></SelectTrigger>
@@ -784,7 +801,12 @@ function RepaymentDialog({
                 render={({ field }) => (
                   <Select
                     value={(field.value || tripCurrency).toUpperCase()}
-                    onValueChange={field.onChange}
+                    onValueChange={(v) => {
+                      // Mirror the expense dialog: a currency change re-seeds the
+                      // rate, since an override applies only to its own currency.
+                      field.onChange(v)
+                      setRateEdited(false)
+                    }}
                     disabled={currencyOptions.length <= 1}
                   >
                     <SelectTrigger aria-label="Payment currency"><SelectValue /></SelectTrigger>
