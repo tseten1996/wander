@@ -308,6 +308,15 @@ select pg_temp.expect_dml('itinerary: any member can update',   'aaaa0000-0000-0
 select pg_temp.expect_dml('questions: any member can answer',   'aaaa0000-0000-0000-0000-000000000003', false, $$update questions set answered=true where id='dddd0000-0000-0000-0000-000000000008'$$, 1);
 select pg_temp.expect_dml('notes: any member can edit',         'aaaa0000-0000-0000-0000-000000000003', false, $$update notes set content='shared edit' where id='dddd0000-0000-0000-0000-00000000000d'$$, 1);
 
+-- Budget entries are the exception: financial (settle-up) data, NOT shared
+-- editing. #161 pins UPDATE to creator-or-owner, matching DELETE, so a
+-- non-creator, non-owner member (G) may NOT alter F's expense through the API
+-- (denied UPDATE matches zero rows via the USING clause → 0)...
+select pg_temp.expect_dml('budget: non-creator member cannot update', 'aaaa0000-0000-0000-0000-000000000003', false, $$update budget_entries set actual=999 where id='dddd0000-0000-0000-0000-00000000000b'$$, 0);
+-- ...but the creator (F) and the trip owner (A) still can.
+select pg_temp.expect_dml('budget: creator can update own entry',     'aaaa0000-0000-0000-0000-000000000002', false, $$update budget_entries set actual=42 where id='dddd0000-0000-0000-0000-00000000000b'$$, 1);
+select pg_temp.expect_dml('budget: owner can update member entry',    'aaaa0000-0000-0000-0000-000000000001', false, $$update budget_entries set actual=43 where id='dddd0000-0000-0000-0000-00000000000b'$$, 1);
+
 -- A non-creator, non-owner member (G) may NOT delete F's content:
 select pg_temp.expect_dml('checklist: non-creator cannot delete',   'aaaa0000-0000-0000-0000-000000000003', false, $$delete from checklist_items where id='dddd0000-0000-0000-0000-000000000009'$$, 0);
 select pg_temp.expect_dml('itinerary: non-creator cannot delete',   'aaaa0000-0000-0000-0000-000000000003', false, $$delete from itinerary_items where id='dddd0000-0000-0000-0000-00000000000a'$$, 0);
