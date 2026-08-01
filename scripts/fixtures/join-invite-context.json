@@ -1,0 +1,15 @@
+{
+  "//": "Fixture for #169 — invite context on the join screen. A friend (anon) opens an invite link: join_trip with an empty name returns the NAME_REQUIRED gate (mirrored by the harness) and get_invite_preview supplies the trip name/destination/dates/member-count. The join screen renders the invite-context card ('You're invited to [Trip]') rather than a contextless spinner. The same card chrome now also backs the checking phase. See screenshot-mock.mjs for the schema.",
+  "auth": {
+    "as": "anon",
+    "userId": "99999999-9999-4999-8999-999999999999"
+  },
+  "rpcs": {
+    "get_invite_preview": [
+      { "trip_name": "Lisbon in Spring", "destination": "Lisbon, Portugal", "cover_url": null, "member_count": 3, "start_date": "2026-04-10", "end_date": "2026-04-17" }
+    ]
+  },
+  "routes": ["/join/DEMOCODE"],
+  "breakpoints": [{ "name": "mobile", "width": 375 }, { "name": "desktop", "width": 1280 }],
+  "colorScheme": "light"
+}
