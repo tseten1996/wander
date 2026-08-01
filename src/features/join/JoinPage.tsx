@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PageLoader, EmptyState, ErrorState } from '@/components/ui/misc'
+import { PageLoader, EmptyState, ErrorState, Spinner } from '@/components/ui/misc'
 import { MemberAvatar } from '@/components/ui/avatar'
 import { signalTripJoined } from '@/components/layout/InstallNudge'
 import type { InvitePreview } from '@/types'
@@ -41,25 +41,50 @@ export default function JoinPage() {
   // 1) Silently create/reuse a session. 2) If this device is already a member,
   // join_trip is idempotent and we go straight in. 3) Otherwise show the
   // 15-second name form alongside a preview of what you're joining.
+  //
+  // The preview fetch runs *in parallel* with the auto-join probe and paints
+  // the invite-context card the moment it resolves — so a slow network shows
+  // "You're invited to [Trip]" instead of a contextless spinner, well before
+  // the join probe decides whether to auto-navigate or show the form. The
+  // join_trip probe stays authoritative over control flow; the preview only
+  // ever fills in presentational context and never changes which phase we land
+  // on (a real member still auto-navigates; a dead link still dead-ends).
   React.useEffect(() => {
     let cancelled = false
     async function check() {
       if (!code) return setPhase('invalid')
       try {
         await ensureSession()
-        const { data: tripId, error } = await supabase.rpc('join_trip', {
+        if (cancelled) return
+
+        const previewPromise = supabase.rpc('get_invite_preview', { p_invite_code: code })
+        const joinPromise = supabase.rpc('join_trip', {
           p_invite_code: code,
           p_display_name: '',
         })
+
+        // Paint the context as soon as the preview resolves to a real trip,
+        // even while the join probe is still in flight. Only a resolved,
+        // non-empty preview sets state — a failed/empty preview leaves the
+        // bare loader, so context never appears for a link that isn't real.
+        void previewPromise.then(({ data }) => {
+          if (cancelled) return
+          const p = (data?.[0] as InvitePreview) ?? null
+          if (p) setPreview(p)
+        })
+
+        const { data: tripId, error } = await joinPromise
         if (cancelled) return
         if (!error && tripId) {
           navigate(`/trip/${tripId}`, { replace: true })
           return
         }
         if (error?.message.includes('NAME_REQUIRED')) {
-          const { data } = await supabase.rpc('get_invite_preview', { p_invite_code: code })
+          // Make sure the context is in place before the form (it may already
+          // be, from the parallel fetch above).
+          const { data } = await previewPromise
           if (cancelled) return
-          setPreview((data?.[0] as InvitePreview) ?? null)
+          setPreview((prev) => prev ?? (data?.[0] as InvitePreview) ?? null)
           setPhase('form')
           return
         }
@@ -108,7 +133,21 @@ export default function JoinPage() {
     navigate(`/trip/${tripId}`, { replace: true })
   }
 
-  if (phase === 'checking') return <PageLoader />
+  // While the join probe is still deciding, show the invite context the moment
+  // the preview is known; fall back to the bare loader only until it resolves.
+  if (phase === 'checking') {
+    if (!preview) return <PageLoader />
+    return (
+      <InviteScaffold preview={preview}>
+        <div
+          className="flex items-center justify-center gap-2 py-2 text-sm text-muted"
+          aria-live="polite"
+        >
+          <Spinner className="size-4" /> Getting you in…
+        </div>
+      </InviteScaffold>
+    )
+  }
 
   if (phase === 'invalid') {
     return (
@@ -144,6 +183,81 @@ export default function JoinPage() {
     )
   }
 
+  return (
+    <InviteScaffold preview={preview}>
+      <form onSubmit={join} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="join-name">What should we call you?</Label>
+          <div className="flex items-center gap-3">
+            <MemberAvatar name={name || '?'} color={color} size="md" />
+            <Input
+              id="join-name"
+              autoFocus
+              maxLength={40}
+              placeholder="Your name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Pick your color</Label>
+          <div className="flex flex-wrap gap-1">
+            {MEMBER_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-label={`Choose color ${c}`}
+                aria-pressed={color === c}
+                onClick={() => setColor(c)}
+                // 44px tap target (mobile floor) around a smaller visible
+                // dot; the selection ring and focus ring live on the inner
+                // dot so the hit area stays invisible but reachable.
+                className="group flex size-11 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none"
+              >
+                <span
+                  className={cn(
+                    'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
+                    color === c && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
+                  )}
+                  style={{ backgroundColor: c }}
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          disabled={!name.trim() || phase === 'joining'}
+        >
+          {phase === 'joining' ? 'Joining…' : 'Join the trip'}
+        </Button>
+        <p className="text-center text-xs text-muted">
+          No account needed — you’ll stay signed in on this device.
+        </p>
+      </form>
+    </InviteScaffold>
+  )
+}
+
+/**
+ * The invite-context card chrome — cover, "You're invited to [trip]", and the
+ * trip's destination/dates/member-count meta — shared by the checking phase
+ * (where the body is a "getting you in" loader) and the form phase (where the
+ * body is the name/colour form). Renders only whitelisted preview fields; the
+ * invite code is never shown or logged.
+ */
+function InviteScaffold({
+  preview,
+  children,
+}: {
+  preview: InvitePreview | null
+  children: React.ReactNode
+}) {
   return (
     <div className="gradient-travel-soft flex min-h-dvh items-center justify-center px-4 py-10">
       <motion.div
@@ -190,61 +304,7 @@ export default function JoinPage() {
               )}
             </div>
 
-            <form onSubmit={join} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="join-name">What should we call you?</Label>
-                <div className="flex items-center gap-3">
-                  <MemberAvatar name={name || '?'} color={color} size="md" />
-                  <Input
-                    id="join-name"
-                    autoFocus
-                    maxLength={40}
-                    placeholder="Your name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Pick your color</Label>
-                <div className="flex flex-wrap gap-1">
-                  {MEMBER_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      aria-label={`Choose color ${c}`}
-                      aria-pressed={color === c}
-                      onClick={() => setColor(c)}
-                      // 44px tap target (mobile floor) around a smaller visible
-                      // dot; the selection ring and focus ring live on the inner
-                      // dot so the hit area stays invisible but reachable.
-                      className="group flex size-11 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none"
-                    >
-                      <span
-                        className={cn(
-                          'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
-                          color === c && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
-                        )}
-                        style={{ backgroundColor: c }}
-                      />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                size="lg"
-                className="w-full"
-                disabled={!name.trim() || phase === 'joining'}
-              >
-                {phase === 'joining' ? 'Joining…' : 'Join the trip'}
-              </Button>
-              <p className="text-center text-xs text-muted">
-                No account needed — you’ll stay signed in on this device.
-              </p>
-            </form>
+            {children}
           </div>
         </Card>
       </motion.div>
