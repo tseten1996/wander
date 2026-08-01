@@ -14,7 +14,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
-  Map as MapIcon, MapPin, MoreHorizontal, Pencil, Plus, TriangleAlert, Trash2,
+  Map as MapIcon, MapPin, MoreHorizontal, Navigation, Pencil, Plus, TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -25,6 +25,7 @@ import {
 } from './api'
 import { ITINERARY_META } from './meta'
 import { buildDayIndex, type DayInfo } from './days'
+import { buildDayDirections } from './directions'
 import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
@@ -283,6 +284,46 @@ function LegHint({ from, to }: { from: ItineraryItem; to: ItineraryItem }) {
   )
 }
 
+/**
+ * "Directions for this day" (#167) — hands the day's ordered, geocoded stops to
+ * the phone's maps app as one multi-stop route, so a group can *follow* the day
+ * instead of copying pins across one at a time. Purely a link over data we
+ * already hold (`directions.ts`): the `<a target="_blank">` opens
+ * google.com/maps/dir, which the OS intercepts into Google/Apple Maps — the same
+ * keyless pattern as the per-item `MapsChip`. Hidden when the day has fewer than
+ * two located stops (nothing to route); when some stops lack coordinates it says
+ * how many made it in, so a partly-geocoded day is honest, never silently short.
+ */
+function DayDirectionsAction({ items, dayLabel }: { items: ItineraryItem[]; dayLabel: string }) {
+  const directions = React.useMemo(() => buildDayDirections(items), [items])
+  if (!directions) return null
+  const { url, included, total, omitted } = directions
+  const stops = included === 1 ? 'stop' : 'stops'
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <Button asChild variant="secondary" size="sm" data-tap-target>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer noopener"
+          aria-label={
+            `Open ${dayLabel} as a ${included}-${stops} route in Google Maps` +
+            (omitted ? `; ${total - included} without a location left off` : '')
+          }
+        >
+          <Navigation aria-hidden />
+          Directions
+        </a>
+      </Button>
+      {omitted && (
+        <span className="text-xs text-faint" aria-hidden>
+          {included} of {total} stops
+        </span>
+      )}
+    </div>
+  )
+}
+
 function DaySection({
   day,
   items,
@@ -365,6 +406,9 @@ function DaySection({
           )
         })()}
       </h2>
+      {/* Route action for real days only — the "Not scheduled yet" bucket shares
+          no actual day to navigate, exactly as the leg hints below are skipped. */}
+      {day && <DayDirectionsAction items={items} dayLabel={longDate(day)} />}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
