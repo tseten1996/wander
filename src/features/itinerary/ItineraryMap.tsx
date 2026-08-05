@@ -1,12 +1,19 @@
 import * as React from 'react'
+import { useQuery } from '@tanstack/react-query'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MapPinOff } from 'lucide-react'
+import { MapPinOff, Sparkles, X } from 'lucide-react'
 import { ITINERARY_META } from './meta'
 import { dayInfoFor, type DayInfo } from './days'
 import { onColor } from '@/lib/colors'
 import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import { haversineKm } from '@/lib/geo'
+import {
+  fetchNearbyPlaces, POI_CATEGORY_LABEL, type NearbyPlace, type PoiCategory,
+} from '@/lib/places'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/misc'
 import type { ItineraryItem } from '@/types'
 
 /**
@@ -154,6 +161,106 @@ function popupContent(item: ItineraryItem, info: DayInfo, onOpen: () => void): H
   return root
 }
 
+// Nearby suggestion pins are deliberately unlike the solid, numbered day pins:
+// a hollow ring on a surface fill, tinted per category. Colour is backed up by
+// the category word in the preview and the legend, so it never carries meaning
+// alone. Tokens only (no raw palette values — see check-invariants token lint).
+const NEARBY_CATEGORY_COLOR: Record<PoiCategory, string> = {
+  eat: 'var(--primary)',
+  see: 'var(--accent)',
+  drink: 'var(--success)',
+}
+
+/**
+ * A hollow, category-tinted ring — visually distinct from the filled day pins so
+ * suggestions never read as itinerary stops. Centred in a 44px transparent
+ * wrapper to meet the mobile tap-target floor, same as `pinIcon`.
+ */
+function nearbyPinIcon(category: PoiCategory): L.DivIcon {
+  const color = NEARBY_CATEGORY_COLOR[category]
+  const wrap = document.createElement('div')
+  wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;width:44px;height:44px'
+
+  const el = document.createElement('div')
+  el.style.cssText = [
+    'width:20px',
+    'height:20px',
+    'border-radius:9999px',
+    'background:var(--surface)',
+    `border:3px solid ${color}`,
+    'box-shadow:var(--shadow-soft)',
+  ].join(';')
+  wrap.appendChild(el)
+
+  return L.divIcon({ className: '', html: wrap.outerHTML, iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -12] })
+}
+
+/** Preview popup for a suggestion — name, category, rough distance, one-tap add. */
+function nearbyPopupContent(place: NearbyPlace, distanceKm: number | null, onAdd: () => void): HTMLElement {
+  const root = document.createElement('div')
+  root.style.minWidth = '160px'
+
+  const title = document.createElement('p')
+  title.textContent = place.name
+  title.style.cssText = 'font-weight:600;font-size:13px;margin:0'
+  root.appendChild(title)
+
+  const distance =
+    distanceKm == null
+      ? null
+      : distanceKm < 1
+        ? `~${Math.max(1, Math.round((distanceKm * 1000) / 10) * 10)} m away`
+        : `~${distanceKm.toFixed(1)} km away`
+  const meta = [POI_CATEGORY_LABEL[place.category], distance].filter(Boolean).join(' · ')
+  const sub = document.createElement('p')
+  sub.textContent = meta
+  sub.style.cssText = 'color:var(--muted);font-size:12px;margin:4px 0 0'
+  root.appendChild(sub)
+
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.textContent = 'Add to itinerary'
+  btn.style.cssText = [
+    'margin-top:8px',
+    'width:100%',
+    'box-sizing:border-box',
+    'min-height:44px',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'padding:8px 10px',
+    'border-radius:8px',
+    'background:var(--primary)',
+    'color:var(--on-primary)',
+    'font-size:12px',
+    'font-weight:600',
+    'cursor:pointer',
+    'border:0',
+  ].join(';')
+  btn.addEventListener('click', onAdd)
+  root.appendChild(btn)
+
+  return root
+}
+
+/** Legend for the suggestion ring colours, mirroring the category words. */
+function NearbyLegend() {
+  return (
+    <ul aria-label="Nearby suggestion legend" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
+      {(Object.keys(POI_CATEGORY_LABEL) as PoiCategory[]).map((c) => (
+        <li key={c} className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="size-3.5 rounded-full border-[3px] bg-surface"
+            style={{ borderColor: NEARBY_CATEGORY_COLOR[c] }}
+          />
+          <span>{POI_CATEGORY_LABEL[c]}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 /** The day legend explaining the pin colours — only the days that have pins. */
 function DayLegend({ days }: { days: DayInfo[] }) {
   if (days.length === 0) return null
@@ -184,6 +291,7 @@ export default function ItineraryMap({
   selectedId,
   onSelectItem,
   onOpenItem,
+  onAddNearby,
 }: {
   items: ItineraryItem[]
   dayIndex: Map<string, DayInfo>
@@ -192,6 +300,8 @@ export default function ItineraryMap({
   onSelectItem: (id: string | null) => void
   /** Open an item's edit dialog (the popup's "Open item" button). */
   onOpenItem: (item: ItineraryItem) => void
+  /** One-tap add a found place as a normal itinerary item (name + coords). */
+  onAddNearby: (place: NearbyPlace) => void
 }) {
   const located = React.useMemo(() => items.filter(isLocated), [items])
   const unlocated = React.useMemo(() => items.filter((i) => !isLocated(i)), [items])
@@ -224,10 +334,52 @@ export default function ItineraryMap({
   // every marker when the parent re-renders.
   const onSelectRef = React.useRef(onSelectItem)
   const onOpenRef = React.useRef(onOpenItem)
+  const onAddNearbyRef = React.useRef(onAddNearby)
   React.useLayoutEffect(() => {
     onSelectRef.current = onSelectItem
     onOpenRef.current = onOpenItem
+    onAddNearbyRef.current = onAddNearby
   })
+
+  // ── Nearby "things to do" (epic #164, slice 1) ────────────────────────────
+  // A separate marker layer and a self-contained query, so suggestions never
+  // touch the itinerary pins' selection sync. `searchCenter` is the point we
+  // searched around: it seeds from the map's centre when Nearby is turned on
+  // and moves to wherever you tap the map, giving both "around the destination"
+  // and "around a tapped location" from one deterministic query key.
+  const [nearbyOn, setNearbyOn] = React.useState(false)
+  const [searchCenter, setSearchCenter] = React.useState<{ lat: number; lon: number } | null>(null)
+  const nearbyLayerRef = React.useRef<L.LayerGroup | null>(null)
+  const nearbyOnRef = React.useRef(nearbyOn)
+  React.useLayoutEffect(() => {
+    nearbyOnRef.current = nearbyOn
+  })
+
+  const nearby = useQuery({
+    queryKey: ['nearby_places', searchCenter?.lat, searchCenter?.lon],
+    queryFn: ({ signal }) => fetchNearbyPlaces(searchCenter!, { radiusMeters: 1500 }, signal),
+    enabled: nearbyOn && !!searchCenter,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
+
+  const toggleNearby = React.useCallback(() => {
+    setNearbyOn((on) => {
+      if (!on) {
+        // Seed the search at the current view (which is framed on the trip's
+        // pins ≈ the destination) the first time it's opened, then re-open to
+        // the last searched point on subsequent toggles.
+        const map = mapRef.current
+        if (map && !searchCenter) {
+          const c = map.getCenter()
+          setSearchCenter({ lat: c.lat, lon: c.lng })
+        }
+      }
+      return !on
+    })
+  }, [searchCenter])
 
   // Create the Leaflet map once there is at least one pin to show.
   React.useEffect(() => {
@@ -246,11 +398,19 @@ export default function ItineraryMap({
       maxZoom: 19,
     }).addTo(map)
     layerRef.current = L.layerGroup().addTo(map)
+    // Suggestion markers live in their own layer, added last so they sit above
+    // the itinerary pins and route lines.
+    nearbyLayerRef.current = L.layerGroup().addTo(map)
+    // Tapping the map while Nearby is on re-searches around that point.
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      if (nearbyOnRef.current) setSearchCenter({ lat: e.latlng.lat, lon: e.latlng.lng })
+    })
     mapRef.current = map
     return () => {
       map.remove()
       mapRef.current = null
       layerRef.current = null
+      nearbyLayerRef.current = null
       markersRef.current = new Map()
     }
   }, [hasPins])
@@ -334,11 +494,92 @@ export default function ItineraryMap({
     }
   }, [selectedId, located])
 
+  // (Re)draw suggestion markers when the results, the toggle, or the searched
+  // point changes. Cleared entirely when Nearby is off so turning it off leaves
+  // a clean itinerary map.
+  const nearbyPlaces = nearby.data
+  React.useEffect(() => {
+    const map = mapRef.current
+    const layer = nearbyLayerRef.current
+    if (!map || !layer) return
+    layer.clearLayers()
+    if (!nearbyOn) return
+    const center = searchCenter
+    for (const place of nearbyPlaces ?? []) {
+      const marker = L.marker([place.lat, place.lon], {
+        icon: nearbyPinIcon(place.category),
+        title: `${place.name} — ${POI_CATEGORY_LABEL[place.category]}`,
+        keyboard: true,
+      })
+      const distanceKm = center
+        ? haversineKm(
+            { latitude: center.lat, longitude: center.lon },
+            { latitude: place.lat, longitude: place.lon },
+          )
+        : null
+      marker.bindPopup(() =>
+        nearbyPopupContent(place, distanceKm, () => {
+          onAddNearbyRef.current(place)
+          marker.closePopup()
+        }),
+      )
+      marker.addTo(layer)
+    }
+  }, [nearbyPlaces, nearbyOn, searchCenter])
+
   return (
     <div className="space-y-4">
       {hasPins ? (
         <>
-          <DayLegend days={legendDays} />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <DayLegend days={legendDays} />
+            <Button
+              variant={nearbyOn ? 'secondary' : 'soft'}
+              size="sm"
+              onClick={toggleNearby}
+              aria-pressed={nearbyOn}
+            >
+              {nearbyOn ? <X /> : <Sparkles />}
+              {nearbyOn ? 'Hide nearby' : 'Nearby places'}
+            </Button>
+          </div>
+
+          {nearbyOn && (
+            <div
+              className="rounded-xl border border-line bg-sunken/40 px-3 py-2.5 text-xs"
+              aria-live="polite"
+            >
+              {nearby.isLoading ? (
+                <span className="flex items-center gap-2 text-muted">
+                  <Spinner className="size-4" /> Finding places nearby…
+                </span>
+              ) : nearby.isError ? (
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
+                  Couldn’t load suggestions right now — the map still works.
+                  <button
+                    type="button"
+                    onClick={() => nearby.refetch()}
+                    className="font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    Try again
+                  </button>
+                </span>
+              ) : (nearby.data?.length ?? 0) === 0 ? (
+                <span className="text-muted">
+                  No suggestions here — tap the map to search a different spot.
+                </span>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-muted">
+                    {nearby.data!.length} {nearby.data!.length === 1 ? 'place' : 'places'} nearby ·
+                    tap a pin to add it · tap the map to search elsewhere
+                  </p>
+                  <NearbyLegend />
+                </div>
+              )}
+            </div>
+          )}
+
           <div
             ref={containerRef}
             role="region"

@@ -55,6 +55,7 @@ import { cn, formatTime, isMobileViewport, longDate, positionBetween } from '@/l
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
+import type { NearbyPlace } from '@/lib/places'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
 // Leaflet + the map view load only when the Map tab is opened, keeping the
@@ -771,9 +772,38 @@ function PasteBookingDialog({
 }
 
 export default function ItineraryPage() {
-  const { trip } = useTripContext()
+  const { trip, me } = useTripContext()
   const itinerary = useItinerary(trip.id)
   const weather = useTripWeather(trip)
+  // One-tap "Add to itinerary" from a Nearby map suggestion (#165). A found
+  // place becomes a plain itinerary item — name + coordinates prefilled, day
+  // defaulted to the trip start (editable afterwards like any other item), so
+  // it immediately joins the pins, routing, and selection sync.
+  const createSuggestion = useCreateItineraryItem(trip.id, me.id)
+  const addNearby = React.useCallback(
+    async (place: NearbyPlace) => {
+      const category: ItineraryCategory = place.category === 'see' ? 'activity' : 'restaurant'
+      try {
+        await createSuggestion.mutateAsync({
+          title: place.name,
+          category,
+          day: trip.start_date,
+          start_time: null,
+          end_time: null,
+          location: place.name,
+          latitude: place.lat,
+          longitude: place.lon,
+          url: null,
+          notes: null,
+          cost: null,
+        })
+        toast.success(`Added “${place.name}” to your itinerary`)
+      } catch {
+        // The mutation's onError already toasts the failure.
+      }
+    },
+    [createSuggestion, trip.start_date],
+  )
   const [newOpen, setNewOpen] = React.useState(false)
   const [pasteOpen, setPasteOpen] = React.useState(false)
   // A pasted booking can produce several drafts (a flight that lands past
@@ -946,6 +976,7 @@ export default function ItineraryPage() {
                 selectedId={selectedId}
                 onSelectItem={setSelectedId}
                 onOpenItem={setEditItem}
+                onAddNearby={addNearby}
               />
             </React.Suspense>
           </TabsContent>
