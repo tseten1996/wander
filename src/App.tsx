@@ -8,6 +8,7 @@ import TripLayout from '@/components/layout/TripLayout'
 
 // The shell + home load eagerly; every feature page is its own chunk.
 const Dashboard = React.lazy(() => import('@/features/dashboard/DashboardPage'))
+const MyTrip = React.lazy(() => import('@/features/me/MePage'))
 const Polls = React.lazy(() => import('@/features/polls/PollsPage'))
 const Chat = React.lazy(() => import('@/features/messages/ChatPage'))
 const Questions = React.lazy(() => import('@/features/questions/QuestionsPage'))
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/join/:code" element={<JoinPage />} />
           <Route path="/trip/:tripId" element={<TripLayout />}>
             <Route index element={<Dashboard />} />
+            <Route path="me" element={<MyTrip />} />
             <Route path="polls" element={<Polls />} />
             <Route path="chat" element={<Chat />} />
             <Route path="questions" element={<Questions />} />
