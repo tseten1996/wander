@@ -4,7 +4,7 @@ import { NavLink, Outlet, Link, useLocation, useParams } from 'react-router-dom'
 import {
   ArrowLeft, CalendarDays, Compass, Lightbulb, ListChecks,
   Luggage, MapPin, MessageCircle, Moon, MoreHorizontal, NotebookPen, PiggyBank,
-  Search, Settings, Sun, Vote, HelpCircle,
+  Search, Settings, Sun, UserCheck, Vote, HelpCircle,
 } from 'lucide-react'
 import { TripProvider, useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
@@ -24,6 +24,7 @@ const HOTKEY_HINT =
 
 const NAV = [
   { to: '', label: 'Overview', icon: Compass, end: true },
+  { to: 'me', label: 'My trip', icon: UserCheck },
   { to: 'itinerary', label: 'Itinerary', icon: MapPin },
   { to: 'chat', label: 'Chat', icon: MessageCircle },
   { to: 'polls', label: 'Polls', icon: Vote },
