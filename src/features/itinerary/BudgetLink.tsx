@@ -39,10 +39,10 @@ function entryAmount(entry: BudgetEntry): number {
  * clickable.
  */
 export function ItemBudgetLink({ item }: { item: ItineraryItem }) {
-  const { trip, me } = useTripContext()
+  const { trip, me, members } = useTripContext()
   const navigate = useNavigate()
   const budget = useBudget(trip.id)
-  const createEntry = useCreateBudgetEntry(trip.id, me.id)
+  const createEntry = useCreateBudgetEntry(trip.id, me.id, members.map((m) => m.id))
   const updateItem = useUpdateItineraryItem(trip.id)
   const [pickerOpen, setPickerOpen] = React.useState(false)
 

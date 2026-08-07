@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
 import type { ChecklistItem } from '@/types'
 
@@ -37,29 +38,61 @@ export function useCreateChecklistItem(tripId: string, memberId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
     mutationFn: async (input: ChecklistInput) => {
-      const { error } = await supabase.from('checklist_items').insert({
-        trip_id: tripId,
-        created_by: memberId,
-        title: input.title,
-        notes: input.notes || null,
-        assignee_id: input.assignee_id || null,
-        due_date: input.due_date || null,
-        position: Date.now(), // append at the end; stable and monotonic
-      })
+      const { data, error } = await supabase
+        .from('checklist_items')
+        .insert({
+          trip_id: tripId,
+          created_by: memberId,
+          title: input.title,
+          notes: input.notes || null,
+          assignee_id: input.assignee_id || null,
+          due_date: input.due_date || null,
+          position: Date.now(), // append at the end; stable and monotonic
+        })
+        .select('id')
+        .single()
       if (error) throw error
       logActivity(tripId, memberId, 'added a task', input.title)
+      // Tell the assignee they've been given something to do (#182).
+      notify({
+        tripId,
+        actorId: memberId,
+        recipientIds: [input.assignee_id],
+        type: 'checklist_assigned',
+        entityId: data.id,
+        title: input.title,
+      })
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not add that task')),
   })
 }
 
-export function useUpdateChecklistItem(tripId: string) {
+/**
+ * `prevAssigneeId` is the item's assignee *before* this edit. It is carried in
+ * the mutation variables (not a column) so the hook can notify only on a genuine
+ * (re)assignment to a new member — never on edits to a task's other fields, and
+ * never re-pinging the same assignee. It is stripped from the patch sent to the
+ * DB.
+ */
+type ChecklistUpdate = Partial<ChecklistItem> & { id: string; prevAssigneeId?: string | null }
+
+export function useUpdateChecklistItem(tripId: string, memberId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
-    mutationFn: async ({ id, ...patch }: Partial<ChecklistItem> & { id: string }) => {
+    mutationFn: async ({ id, prevAssigneeId, ...patch }: ChecklistUpdate) => {
       const { error } = await supabase.from('checklist_items').update(patch).eq('id', id)
       if (error) throw error
+      if (patch.assignee_id && patch.assignee_id !== prevAssigneeId) {
+        notify({
+          tripId,
+          actorId: memberId,
+          recipientIds: [patch.assignee_id],
+          type: 'checklist_assigned',
+          entityId: id,
+          title: patch.title ?? null,
+        })
+      }
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not save those changes')),

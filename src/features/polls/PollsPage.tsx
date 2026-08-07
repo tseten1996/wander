@@ -256,8 +256,8 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
 /* ── New poll dialog ────────────────────────────────────────────────────── */
 
 function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { trip, me } = useTripContext()
-  const createPoll = useCreatePoll(trip.id, me.id)
+  const { trip, me, members } = useTripContext()
+  const createPoll = useCreatePoll(trip.id, me.id, members.map((m) => m.id))
 
   const emptyOption = { value: '', image_url: '', link_url: '' }
   const empty: PollFormValues = {
