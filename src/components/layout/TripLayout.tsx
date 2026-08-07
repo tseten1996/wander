@@ -12,6 +12,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { useUnreadDots, type UnreadRoute } from '@/hooks/useUnreadDots'
 import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { LivePresence } from '@/components/layout/LivePresence'
+import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageLoader, EmptyState } from '@/components/ui/misc'
@@ -139,12 +140,13 @@ function Shell() {
           >
             <ArrowLeft className="size-4" />
           </Link>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate font-display text-sm font-bold leading-tight">{trip.name}</p>
             {trip.destination && (
               <p className="truncate text-xs text-muted">{trip.destination}</p>
             )}
           </div>
+          <NotificationBell className="shrink-0" />
         </div>
 
         <div className="px-5 pt-1">
@@ -215,6 +217,7 @@ function Shell() {
         <Button variant="ghost" size="icon" onClick={openSearch} aria-label="Search this trip">
           <Search />
         </Button>
+        <NotificationBell className="shrink-0" />
         <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
           {dark ? <Sun /> : <Moon />}
         </Button>

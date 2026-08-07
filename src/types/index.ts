@@ -230,6 +230,26 @@ export interface Activity {
   created_at: string
 }
 
+export type NotificationType = 'checklist_assigned' | 'poll_opened' | 'expense_owed'
+
+export interface Notification {
+  id: string
+  trip_id: string
+  /** The member this notification is addressed to. */
+  recipient_id: string
+  /** Who caused it; null if that member has since left the trip. */
+  actor_id: string | null
+  type: NotificationType
+  /** The row it points at (checklist_item / poll / budget_entry); a soft
+   *  pointer used for deep-linking, so it may dangle if the target is deleted. */
+  entity_id: string | null
+  /** Snapshot of the subject at write time (task / poll / expense title). */
+  title: string | null
+  created_at: string
+  /** null while unread; the timestamp it was marked read. */
+  read_at: string | null
+}
+
 export interface InvitePreview {
   trip_name: string
   destination: string | null

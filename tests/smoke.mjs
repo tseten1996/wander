@@ -100,6 +100,20 @@ const OWNER_MEMBER = {
   joined_at: '2026-02-01T00:00:00Z',
 }
 
+// One unread item in the owner's inbox (#182), so the header bell shows a badge
+// and the dropdown has something to render + deep-link.
+const NOTIFICATION_ROW = {
+  id: '66666666-6666-4666-8666-666666666666',
+  trip_id: TRIP_ID,
+  recipient_id: OWNER_MEMBER.id,
+  actor_id: OWNER_MEMBER.id,
+  type: 'checklist_assigned',
+  entity_id: null,
+  title: 'Book flights',
+  created_at: '2026-02-02T00:00:00Z',
+  read_at: null,
+}
+
 const INVITE_PREVIEW = {
   trip_name: 'Lisbon in Spring',
   destination: 'Lisbon, Portugal',
@@ -197,6 +211,13 @@ async function routeSupabase(route) {
     if (method !== 'GET') return json([])
     if (search.includes('order=')) return json([OWNER_MEMBER]) // trip page roster
     return json(OWNER_MEMBER) // .single() after create
+  }
+
+  // Notification inbox (#182): the shell header bell reads the recipient's own
+  // rows and marks them read (PATCH). The stub hands back one unread item.
+  if (pathname.endsWith('/rest/v1/notifications')) {
+    if (method === 'GET') return json([NOTIFICATION_ROW])
+    return json([]) // PATCH mark-read / anything else
   }
 
   // Client error telemetry (#57): the global handlers fire-and-forget an insert
@@ -494,6 +515,19 @@ async function runTripPresence(browser) {
     if (presenceErr) throw new Error(`realtime presence crash re-introduced: ${presenceErr}`)
     if (errors.length) throw new Error(`Uncaught page error on the trip page: ${errors[0]}`)
     ok('trip page raised no realtime presence / uncaught errors')
+
+    // Personal notification inbox (#182): the header bell reflects the unread
+    // count and opens the inbox listing the item with a deep link.
+    const bell = page.getByRole('button', { name: /Notifications/ }).first()
+    await bell.waitFor({ state: 'visible', timeout: 10_000 })
+    if (!/unread/.test((await bell.getAttribute('aria-label')) ?? '')) {
+      throw new Error('notification bell did not reflect the unread count')
+    }
+    ok('the header notification bell shows an unread badge')
+
+    await bell.click()
+    await page.getByText('Book flights').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('opening the inbox lists the notification')
   } finally {
     await context.close()
   }

@@ -136,7 +136,7 @@ function ItemDialog({
 }) {
   const { trip, me, members } = useTripContext()
   const createItem = useCreateChecklistItem(trip.id, me.id)
-  const updateItem = useUpdateChecklistItem(trip.id)
+  const updateItem = useUpdateChecklistItem(trip.id, me.id)
 
   const empty: ChecklistFormValues = {
     title: '',
@@ -173,7 +173,8 @@ function ItemDialog({
       due_date: values.due_date || null,
     }
     try {
-      if (item) await updateItem.mutateAsync({ id: item.id, ...payload })
+      if (item)
+        await updateItem.mutateAsync({ id: item.id, prevAssigneeId: item.assignee_id, ...payload })
       else await createItem.mutateAsync(payload)
       onOpenChange(false)
     } catch {

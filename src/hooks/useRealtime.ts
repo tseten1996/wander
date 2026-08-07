@@ -14,7 +14,7 @@ const TABLES = [
   'members', 'polls', 'poll_options', 'votes', 'messages',
   'message_reactions', 'questions', 'checklist_items', 'itinerary_items',
   'budget_entries', 'repayments', 'packing_items', 'notes', 'inspiration_items',
-  'activity',
+  'activity', 'notifications',
 ]
 
 /**

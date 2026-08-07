@@ -100,7 +100,7 @@ function EntryDialog({
   entry?: BudgetEntry
 }) {
   const { trip, me, members } = useTripContext()
-  const createEntry = useCreateBudgetEntry(trip.id, me.id)
+  const createEntry = useCreateBudgetEntry(trip.id, me.id, members.map((m) => m.id))
   const updateEntry = useUpdateBudgetEntry(trip.id)
   const rates = useRates(trip.currency)
   const tripCurrency = trip.currency.toUpperCase()

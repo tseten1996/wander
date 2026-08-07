@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
 import type { Poll, PollCategory, PollOption, Vote } from '@/types'
 
@@ -30,7 +31,7 @@ function useInvalidatePolls(tripId: string) {
   return () => queryClient.invalidateQueries({ queryKey: ['polls', tripId] })
 }
 
-export function useCreatePoll(tripId: string, memberId: string) {
+export function useCreatePoll(tripId: string, memberId: string, memberIds: string[]) {
   const invalidate = useInvalidatePolls(tripId)
   return useMutation({
     mutationFn: async (input: {
@@ -63,6 +64,17 @@ export function useCreatePoll(tripId: string, memberId: string) {
       )
       if (optError) throw optError
       logActivity(tripId, memberId, 'created a poll', input.question)
+      // A newly-opened poll needs everyone else's vote (#182). No one has voted
+      // yet, so every member but the creator is "waiting on you". notify() drops
+      // the actor, so passing the full roster is correct.
+      notify({
+        tripId,
+        actorId: memberId,
+        recipientIds: memberIds,
+        type: 'poll_opened',
+        entityId: poll.id,
+        title: input.question,
+      })
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not create that poll')),

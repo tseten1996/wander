@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
 import { fetchRates } from '@/lib/rates'
 import type { BudgetCategory, BudgetEntry, Repayment } from '@/types'
@@ -61,7 +62,7 @@ export function useRates(tripCurrency: string) {
   })
 }
 
-export function useCreateBudgetEntry(tripId: string, memberId: string) {
+export function useCreateBudgetEntry(tripId: string, memberId: string, memberIds: string[]) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
     // Returns the new entry's id so callers that need to link it can — e.g. the
@@ -75,6 +76,23 @@ export function useCreateBudgetEntry(tripId: string, memberId: string) {
         .single()
       if (error) throw error
       logActivity(tripId, memberId, 'added an expense', input.title)
+      // A real, paid expense creates a debt for whoever shares it (#182) — the
+      // same rule settle-up uses (settlement.ts): only actual money paid by a
+      // specific member is owed, split across its participants (or everyone when
+      // unset), minus the payer themselves. A merely estimated/unpaid entry owes
+      // no one, so nothing is sent.
+      if (input.actual != null && input.paid_by) {
+        const sharers =
+          input.participants && input.participants.length > 0 ? input.participants : memberIds
+        notify({
+          tripId,
+          actorId: memberId,
+          recipientIds: sharers.filter((id) => id !== input.paid_by),
+          type: 'expense_owed',
+          entityId: data.id,
+          title: input.title,
+        })
+      }
       return data.id
     },
     onSuccess: invalidate,
