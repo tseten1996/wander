@@ -16,6 +16,7 @@ import { Progress } from '@/components/ui/progress'
 import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn } from '@/lib/utils'
 import type { PackingCategory, PackingItem } from '@/types'
+import WeatherNudges from './WeatherNudges'
 
 const CATEGORIES: { value: PackingCategory; label: string; icon: LucideIcon }[] = [
   { value: 'clothes', label: 'Clothes', icon: Shirt },
@@ -175,6 +176,8 @@ export default function PackingPage() {
       ) : packing.isError ? (
         <ErrorState onRetry={() => packing.refetch()} isRetrying={packing.isFetching} />
       ) : (
+        <>
+        <WeatherNudges />
         <div className="grid items-start gap-4 md:grid-cols-2">
           {CATEGORIES.map((c, i) => (
             <CategorySection
@@ -185,6 +188,7 @@ export default function PackingPage() {
             />
           ))}
         </div>
+        </>
       )}
     </div>
   )
