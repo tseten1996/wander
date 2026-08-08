@@ -10,6 +10,7 @@ import TripLayout from '@/components/layout/TripLayout'
 const Dashboard = React.lazy(() => import('@/features/dashboard/DashboardPage'))
 const MyTrip = React.lazy(() => import('@/features/me/MePage'))
 const Polls = React.lazy(() => import('@/features/polls/PollsPage'))
+const Dates = React.lazy(() => import('@/features/dates/DatesPage'))
 const Chat = React.lazy(() => import('@/features/messages/ChatPage'))
 const Questions = React.lazy(() => import('@/features/questions/QuestionsPage'))
 const Checklist = React.lazy(() => import('@/features/checklist/ChecklistPage'))
@@ -33,6 +34,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="me" element={<MyTrip />} />
             <Route path="polls" element={<Polls />} />
+            <Route path="dates" element={<Dates />} />
             <Route path="chat" element={<Chat />} />
             <Route path="questions" element={<Questions />} />
             <Route path="checklist" element={<Checklist />} />

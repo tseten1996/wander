@@ -114,6 +114,49 @@ const NOTIFICATION_ROW = {
   read_at: null,
 }
 
+// One open availability poll (#176) with two candidate ranges. The owner has
+// marked the first range "yes", so it is the group's best overlap — the page
+// must highlight it and offer the owner-only "Apply to trip" action.
+const AVAIL_CAND_A = {
+  id: '77777777-7777-4777-8777-777777777777',
+  trip_id: TRIP_ID,
+  poll_id: '88888888-8888-4888-8888-888888888888',
+  start_date: '2026-05-01',
+  end_date: '2026-05-03',
+  position: 0,
+  created_at: '2026-02-03T00:00:00Z',
+}
+const AVAIL_CAND_B = {
+  id: '99999999-9999-4999-8999-999999999999',
+  trip_id: TRIP_ID,
+  poll_id: '88888888-8888-4888-8888-888888888888',
+  start_date: '2026-06-05',
+  end_date: '2026-06-07',
+  position: 1,
+  created_at: '2026-02-03T00:00:00Z',
+}
+const AVAILABILITY_POLL = {
+  id: '88888888-8888-4888-8888-888888888888',
+  trip_id: TRIP_ID,
+  created_by: OWNER_MEMBER.id,
+  title: 'When can everyone go?',
+  closed: false,
+  applied_candidate_id: null,
+  created_at: '2026-02-03T00:00:00Z',
+  availability_candidates: [AVAIL_CAND_A, AVAIL_CAND_B],
+  availability_responses: [
+    {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      trip_id: TRIP_ID,
+      poll_id: '88888888-8888-4888-8888-888888888888',
+      candidate_id: AVAIL_CAND_A.id,
+      member_id: OWNER_MEMBER.id,
+      status: 'yes',
+      created_at: '2026-02-03T00:00:00Z',
+    },
+  ],
+}
+
 const INVITE_PREVIEW = {
   trip_name: 'Lisbon in Spring',
   destination: 'Lisbon, Portugal',
@@ -195,6 +238,10 @@ async function routeSupabase(route) {
   // duplicate_trip (#80) copies a trip server-side and returns the new trip id
   // as a scalar text → a bare JSON string, exactly like join_trip.
   if (pathname.endsWith('/rest/v1/rpc/duplicate_trip')) return json(JSON.stringify(NEW_TRIP_ID))
+  // apply_availability_dates (#176) writes the trip's dates owner-side and
+  // returns void → an empty 204, exactly like a no-return RPC.
+  if (pathname.endsWith('/rest/v1/rpc/apply_availability_dates'))
+    return route.fulfill({ status: 204, body: '' })
 
   // ── REST tables ──
   // Discriminate by the query shape so one stub serves several call sites:
@@ -219,6 +266,18 @@ async function routeSupabase(route) {
     if (method === 'GET') return json([NOTIFICATION_ROW])
     return json([]) // PATCH mark-read / anything else
   }
+
+  // Availability poll (#176): the Dates page reads the poll with its candidates
+  // and responses embedded; marking availability upserts a response row.
+  if (pathname.endsWith('/rest/v1/availability_polls')) {
+    if (method === 'GET') return json([AVAILABILITY_POLL])
+    return json([]) // insert/update/delete
+  }
+  if (pathname.endsWith('/rest/v1/availability_responses')) {
+    if (method === 'GET') return json([])
+    return route.fulfill({ status: 201, body: '' }) // upsert (return=minimal)
+  }
+  if (pathname.endsWith('/rest/v1/availability_candidates')) return json([])
 
   // Client error telemetry (#57): the global handlers fire-and-forget an insert
   // here. The insert asks for no representation back, so a bare 201 is correct.
@@ -533,6 +592,54 @@ async function runTripPresence(browser) {
   }
 }
 
+async function runAvailabilityPoll(browser) {
+  console.log('\n▶ availability poll (mark dates + owner applies the winner)')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/dates`, { waitUntil: 'domcontentloaded' })
+
+    // The poll and its candidate ranges render, with the best overlap flagged.
+    await page.getByText('When can everyone go?').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the availability poll and its title render')
+    await page.getByText('Best overlap').first().waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the best-overlap candidate is highlighted')
+
+    // The owner gets the "New date poll" creation control (owner-only).
+    await page
+      .getByRole('button', { name: 'New date poll' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the owner sees the create-poll control')
+
+    // Marking availability upserts the current member's own response row.
+    const responseWrite = page.waitForRequest(
+      (req) =>
+        req.url().includes('/rest/v1/availability_responses') &&
+        (req.method() === 'POST' || req.method() === 'PATCH'),
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'Yes' }).nth(1).click()
+    await responseWrite
+    ok('marking a candidate available writes an availability response')
+
+    // The owner applies the winning range: the confirm dialog opens, and
+    // confirming calls the owner-only apply RPC.
+    await page.getByRole('button', { name: 'Apply to trip' }).first().click()
+    await page.getByText('Set the trip dates?').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the apply-dates confirmation dialog opens')
+
+    const applyRpc = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/rpc/apply_availability_dates'),
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'Apply dates' }).click()
+    await applyRpc
+    ok('confirming calls the apply_availability_dates RPC')
+  } finally {
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -607,6 +714,7 @@ async function main() {
     await runOffline(browser)
     await runSignOut(browser)
     await runTripPresence(browser)
+    await runAvailabilityPoll(browser)
     await runErrorReporting(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {

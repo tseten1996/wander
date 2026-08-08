@@ -230,6 +230,40 @@ export interface Activity {
   created_at: string
 }
 
+export type AvailabilityStatus = 'yes' | 'maybe' | 'no'
+
+export interface AvailabilityPoll {
+  id: string
+  trip_id: string
+  created_by: string | null
+  title: string
+  closed: boolean
+  /** The candidate whose range was applied to the trip. A soft pointer (no FK)
+   *  so it survives the candidate being deleted; set by apply_availability_dates. */
+  applied_candidate_id: string | null
+  created_at: string
+}
+
+export interface AvailabilityCandidate {
+  id: string
+  trip_id: string
+  poll_id: string
+  start_date: string
+  end_date: string
+  position: number
+  created_at: string
+}
+
+export interface AvailabilityResponse {
+  id: string
+  trip_id: string
+  poll_id: string
+  candidate_id: string
+  member_id: string
+  status: AvailabilityStatus
+  created_at: string
+}
+
 export type NotificationType = 'checklist_assigned' | 'poll_opened' | 'expense_owed'
 
 export interface Notification {

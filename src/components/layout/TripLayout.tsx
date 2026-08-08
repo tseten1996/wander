@@ -2,7 +2,7 @@
 import * as React from 'react'
 import { NavLink, Outlet, Link, useLocation, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, CalendarDays, Compass, Lightbulb, ListChecks,
+  ArrowLeft, CalendarClock, CalendarDays, Compass, Lightbulb, ListChecks,
   Luggage, MapPin, MessageCircle, Moon, MoreHorizontal, NotebookPen, PiggyBank,
   Search, Settings, Sun, UserCheck, Vote, HelpCircle,
 } from 'lucide-react'
@@ -29,6 +29,7 @@ const NAV = [
   { to: 'itinerary', label: 'Itinerary', icon: MapPin },
   { to: 'chat', label: 'Chat', icon: MessageCircle },
   { to: 'polls', label: 'Polls', icon: Vote },
+  { to: 'dates', label: 'Dates', icon: CalendarClock },
   { to: 'checklist', label: 'Checklist', icon: ListChecks },
   { to: 'budget', label: 'Budget', icon: PiggyBank },
   { to: 'packing', label: 'Packing', icon: Luggage },
