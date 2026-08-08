@@ -7,6 +7,9 @@ const INVALIDATION_ALIASES: Record<string, string[]> = {
   poll_options: ['polls'],
   votes: ['polls'],
   message_reactions: ['messages'],
+  // Availability poll children roll up into the parent poll query (#176).
+  availability_candidates: ['availability_polls'],
+  availability_responses: ['availability_polls'],
 }
 
 // (trips is handled separately below — it filters on `id`, not `trip_id`)
@@ -14,7 +17,8 @@ const TABLES = [
   'members', 'polls', 'poll_options', 'votes', 'messages',
   'message_reactions', 'questions', 'checklist_items', 'itinerary_items',
   'budget_entries', 'repayments', 'packing_items', 'notes', 'inspiration_items',
-  'activity', 'notifications',
+  'activity', 'notifications', 'availability_polls', 'availability_candidates',
+  'availability_responses',
 ]
 
 /**
