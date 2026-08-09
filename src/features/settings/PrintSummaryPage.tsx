@@ -87,7 +87,15 @@ function Summary() {
                       <span className="text-muted">
                         {' '}({ITINERARY_META[item.category].label.toLowerCase()})
                         {item.location && ` · ${item.location}`}
-                        {item.cost != null && ` · ${formatMoney(item.cost, trip.currency)}`}
+                        {/*
+                          Only the unlinked cost — a linked item's money is
+                          already a row in the Budget table below, and printing
+                          both reads as two separate expenses on paper (the
+                          screen hides it for the same reason, see BudgetLink).
+                        */}
+                        {item.budget_entry_id == null &&
+                          item.cost != null &&
+                          ` · ${formatMoney(item.cost, trip.currency)}`}
                       </span>
                       {item.notes && <span className="block text-xs text-muted">{item.notes}</span>}
                     </span>

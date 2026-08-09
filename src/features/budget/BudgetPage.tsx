@@ -44,6 +44,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn, formatMoney, isMobileViewport, shortDate } from '@/lib/utils'
+import { optionalAmount } from '@/lib/forms'
 import {
   computeBalances, hasSettlementData, isAllSettled, minimalTransfers, type Transfer,
 } from './settlement'
@@ -63,18 +64,14 @@ const SHARED = 'shared'
 const budgetSchema = z.object({
   title: z.string().trim().min(1, 'Give it a name').max(120, 'Keep it under 120 characters'),
   category: z.enum(['stay', 'transport', 'food', 'activities', 'shopping', 'other']),
-  estimated: z.coerce
-    .number({ invalid_type_error: 'Enter a number' })
-    .min(0, 'Can’t be negative')
-    .optional()
-    .nullable()
-    .or(z.literal('')),
-  actual: z.coerce
-    .number({ invalid_type_error: 'Enter a number' })
-    .min(0, 'Can’t be negative')
-    .optional()
-    .nullable()
-    .or(z.literal('')),
+  /*
+    Blank has to survive as null, not collapse to 0 (see optionalAmount). It
+    matters most for `actual`: the roll-ups read `tripActual(e) ??
+    tripEstimated(e)`, so an entry with an estimate and no actual yet was
+    contributing 0 to the Planned total instead of its estimate.
+  */
+  estimated: optionalAmount(),
+  actual: optionalAmount(),
   currency: z.string().trim().length(3, 'Use a 3-letter code'),
   rate: z.coerce
     .number({ invalid_type_error: 'Enter a rate' })
@@ -226,8 +223,10 @@ function EntryDialog({
       form.setError('rate', { message: 'Enter a positive rate' })
       return
     }
-    const estimated = values.estimated === '' || values.estimated == null ? null : Number(values.estimated)
-    const actual = values.actual === '' || values.actual == null ? null : Number(values.actual)
+    // Blank/whitespace already became null in the schema (see optionalAmount),
+    // so these only pass a real number through.
+    const estimated = values.estimated == null ? null : Number(values.estimated)
+    const actual = values.actual == null ? null : Number(values.actual)
     // Store the canonical "everyone" as null (not the full id list) so a member
     // who joins later is automatically included and settlement keeps the
     // historic default. A real subset is stored verbatim, in member order.

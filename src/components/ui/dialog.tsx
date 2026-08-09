@@ -39,8 +39,30 @@ export function DialogContent({
   children,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
+  /*
+    Escape belongs to the innermost thing that's open. Radix listens on
+    document in the capture phase, so a nested control (the place-autocomplete
+    listbox) cannot stopPropagation its way out — by the time its own keydown
+    handler runs, the dialog would already be closing and the half-filled form
+    gone. Decline the dismiss while focus sits in an expanded combobox: that
+    control collapses its list on the same keypress, aria-expanded flips to
+    false, and the next Escape closes the dialog normally.
+  */
+  const handleEscapeKeyDown = (e: KeyboardEvent) => {
+    onEscapeKeyDown?.(e)
+    if (e.defaultPrevented) return
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      active.getAttribute('role') === 'combobox' &&
+      active.getAttribute('aria-expanded') === 'true'
+    ) {
+      e.preventDefault()
+    }
+  }
   const handleCloseAutoFocus = (e: Event) => {
     onCloseAutoFocus?.(e)
     const opener = lastFocusOutsideOverlays
@@ -71,6 +93,7 @@ export function DialogContent({
         tabIndex={-1}
         onOpenAutoFocus={handleOpenAutoFocus}
         onCloseAutoFocus={handleCloseAutoFocus}
+        onEscapeKeyDown={handleEscapeKeyDown}
         className={cn(
           // Bottom sheet on mobile, centered dialog on desktop. The close
           // button lives outside the scrollable inner div (below) so it
