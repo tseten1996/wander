@@ -1,5 +1,11 @@
 import type { ItineraryItem } from '@/types'
 
+/** A multi-day span (#166) — mirrors `isSpanning` in `spans.ts`, inlined so this
+ *  module stays dependency-free and loadable raw by the Node test runner. */
+function isSpan(i: ItineraryItem): boolean {
+  return !!i.day && !!i.end_day && i.end_day > i.day
+}
+
 /** Minutes since midnight, or null if the time string is empty/malformed. */
 function toMinutes(t: string | null): number | null {
   if (!t) return null
@@ -32,16 +38,22 @@ function intervalsOverlap(a: ItineraryItem, b: ItineraryItem): boolean {
  * For one day's items, map each item id to the other items whose times overlap
  * it. Derived purely from the already-loaded rows — no query, no migration.
  * Items without a `start_time` never appear in the map and are never matched.
+ *
+ * Multi-day span items (#166 — a hotel checked in on this day, a rail pass) are
+ * excluded entirely: they anchor to a day but occupy no single clock interval,
+ * so a check-in time colliding with a dinner is not a real "you can't be in two
+ * places" conflict. Excluding them keeps the same-day overlap warning honest.
  */
 export function overlapsByItem(items: ItineraryItem[]): Map<string, ItineraryItem[]> {
+  const timed = items.filter((i) => !isSpan(i))
   const conflicts = new Map<string, ItineraryItem[]>()
   const add = (id: string, other: ItineraryItem) =>
     conflicts.set(id, [...(conflicts.get(id) ?? []), other])
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      if (intervalsOverlap(items[i], items[j])) {
-        add(items[i].id, items[j])
-        add(items[j].id, items[i])
+  for (let i = 0; i < timed.length; i++) {
+    for (let j = i + 1; j < timed.length; j++) {
+      if (intervalsOverlap(timed[i], timed[j])) {
+        add(timed[i].id, timed[j])
+        add(timed[j].id, timed[i])
       }
     }
   }

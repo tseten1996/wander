@@ -1,4 +1,5 @@
 import { MEMBER_COLORS, FALLBACK_MEMBER_COLOR } from '@/lib/colors'
+import { coveredDays } from './spans'
 import type { ItineraryItem } from '@/types'
 
 /**
@@ -36,9 +37,11 @@ export const UNSCHEDULED_DAY: DayInfo = {
  * everywhere.
  */
 export function buildDayIndex(items: ItineraryItem[]): Map<string, DayInfo> {
-  const days = [...new Set(items.map((i) => i.day).filter((d): d is string => !!d))].sort((a, b) =>
-    a.localeCompare(b)
-  )
+  // Include every day a span covers, not just item start days, so a gap day in
+  // the middle of a multi-night stay (#166) still gets its own "Day N".
+  const daySet = new Set<string>()
+  for (const item of items) for (const d of coveredDays(item)) daySet.add(d)
+  const days = [...daySet].sort((a, b) => a.localeCompare(b))
   const index = new Map<string, DayInfo>()
   days.forEach((day, i) => {
     index.set(day, {

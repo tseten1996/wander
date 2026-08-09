@@ -124,6 +124,11 @@ export interface ItineraryItem {
   title: string
   category: ItineraryCategory
   day: string | null
+  /** Optional closing day of a multi-day span (#166): a stay/rail-pass/rental
+   *  that runs from `day` to `end_day`. null = a single-day item (`end_time` is
+   *  then the same-day end). Never earlier than `day` (DB CHECK + form guard).
+   *  `end_time` doubles as the clock time on this closing day (check-out time). */
+  end_day: string | null
   start_time: string | null
   end_time: string | null
   location: string | null
