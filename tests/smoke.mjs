@@ -100,6 +100,20 @@ const OWNER_MEMBER = {
   joined_at: '2026-02-01T00:00:00Z',
 }
 
+// A second member, so the budget/settle-up scenario has someone to split with
+// and owe (settle-up is trivially "everyone's even" with a single member). The
+// roster only returns this member while `twoMembers` is set (below), so every
+// other scenario keeps its single-member roster untouched.
+const SECOND_MEMBER = {
+  id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  trip_id: TRIP_ID,
+  user_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+  display_name: 'Sam',
+  color: '#b45309',
+  role: 'member',
+  joined_at: '2026-02-01T00:10:00Z',
+}
+
 // One unread item in the owner's inbox (#182), so the header bell shows a badge
 // and the dropdown has something to render + deep-link.
 const NOTIFICATION_ROW = {
@@ -171,6 +185,14 @@ const INVITE_PREVIEW = {
 // the retryable state recovers in place. The test controls the flip so the
 // assertion is deterministic no matter how many times the effect re-runs.
 let flakyRecovered = false
+
+// Budget/settle-up scenario state, scoped to `runBudget` (set/reset there):
+//   twoMembers    — the roster returns planner + Sam only during that scenario
+//   budgetEntries — a stateful expense store so an entry the UI just POSTed
+//                   survives the mutation's invalidate → refetch and shows up in
+//                   the totals and settle-up the scenario asserts on
+let twoMembers = false
+let budgetEntries = []
 
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
@@ -256,8 +278,27 @@ async function routeSupabase(route) {
   }
   if (pathname.endsWith('/rest/v1/members')) {
     if (method !== 'GET') return json([])
-    if (search.includes('order=')) return json([OWNER_MEMBER]) // trip page roster
+    // Trip page roster: two members only while the budget scenario runs, so
+    // settle-up has someone to split with; one member everywhere else.
+    if (search.includes('order='))
+      return json(twoMembers ? [OWNER_MEMBER, SECOND_MEMBER] : [OWNER_MEMBER])
     return json(OWNER_MEMBER) // .single() after create
+  }
+
+  // Budget expenses (#187): a stateful store so the settle-up scenario can add
+  // entries through the real UI and have them survive the mutation's
+  // invalidate → refetch. insert().select('id').single() wants one row back with
+  // its id; the GET returns newest-first like the real `.order('created_at')`.
+  if (pathname.endsWith('/rest/v1/budget_entries')) {
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = budgetEntries.length + 1
+      const row = { id: `be-${n}`, created_at: `2026-03-01T00:00:0${n}Z`, ...payload }
+      budgetEntries.push(row)
+      return json({ id: row.id }, 201)
+    }
+    if (method === 'GET') return json([...budgetEntries].reverse())
+    return json([]) // PATCH/DELETE unused by this scenario
   }
 
   // Notification inbox (#182): the shell header bell reads the recipient's own
@@ -778,6 +819,119 @@ async function runAvailabilityPoll(browser) {
   }
 }
 
+/*
+  Budget / settle-up money surface (#187).
+
+  The most logic-dense, most-churned surface — multi-currency entry, converted
+  totals and "who owes who" — had no integration coverage: unit tests exercise
+  the pure math, but a wrong converted total on a summary card or a broken
+  settle-up render would reach `main` with nothing catching it. This drives the
+  real Budget page end-to-end against the stubbed Supabase (plus a stubbed ECB
+  rates host, the one extra network dependency the page has), adding two
+  mixed-currency expenses and asserting both the converted trip total and the
+  settle-up output.
+
+  The scenario:
+    - trip currency USD, two members (planner = the signed-in owner, and Sam)
+    - expense A: €200 paid by planner at 1 EUR = 1.25 USD → 250 USD, split evenly
+    - expense B: $80 paid by Sam, split evenly
+  So the trip totals 330 USD (250 converted + 80), and settle-up nets
+  planner +85 / Sam −85 → Sam owes planner $85.
+*/
+const FRANKFURTER_HOST = 'api.frankfurter.dev'
+
+async function runBudget(browser) {
+  console.log('\n▶ budget / settle-up (mixed-currency total + who-owes-who)')
+  budgetEntries = []
+  twoMembers = true
+  const context = await newContext(browser, OWNER_SESSION)
+  // Stub the ECB rates host the same way the geocoder is stubbed elsewhere, so
+  // the currency picker offers EUR (the page degrades to trip-currency-only when
+  // rates are unreachable). The rate itself is typed in the form, so these
+  // numbers only need to make EUR selectable.
+  await context.route(
+    (url) => url.hostname === FRANKFURTER_HOST,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({
+          amount: 1,
+          base: 'USD',
+          date: '2026-03-01',
+          rates: { EUR: 0.8, GBP: 0.75, CAD: 1.35, AUD: 1.5, JPY: 150, CHF: 0.9 },
+        }),
+      })
+  )
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+
+  // Add one expense through the dialog. `currency`/`rate` are only touched for a
+  // foreign entry; `payer` is the member name to attribute it to.
+  async function addExpense({ title, amount, currency, rate, payer }) {
+    await page.getByRole('button', { name: 'Add expense' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#b-title').waitFor({ state: 'visible', timeout: 10_000 })
+    await dialog.locator('#b-title').fill(title)
+    if (currency && currency !== 'USD') {
+      await page.getByRole('combobox', { name: 'Entry currency' }).click()
+      await page.getByRole('option', { name: currency, exact: true }).click()
+      await dialog.locator('#b-rate').waitFor({ state: 'visible', timeout: 10_000 })
+      await dialog.locator('#b-rate').fill(String(rate))
+    }
+    await dialog.locator('#b-act').fill(String(amount))
+    // "Paid by" is the combobox defaulting to "Shared / not paid yet".
+    await page.getByRole('combobox').filter({ hasText: 'Shared / not paid yet' }).click()
+    await page.getByRole('option', { name: payer, exact: true }).click()
+    // Submit is the dialog's own "Add expense" (distinct from the header one).
+    await dialog.getByRole('button', { name: 'Add expense' }).click()
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+  }
+
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/budget`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('button', { name: 'Add expense' }).waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    ok('the budget page renders for the owner')
+
+    // €200 at 1.25 → $250, paid by the owner.
+    await addExpense({ title: 'Hotel', amount: 200, currency: 'EUR', rate: 1.25, payer: 'planner' })
+    // The foreign entry shows both its converted trip-currency total and the
+    // original amount — the conversion actually happened, and was frozen.
+    const hotelRow = page.getByText('Hotel').locator('xpath=../..')
+    await hotelRow.getByText('$250').waitFor({ state: 'visible', timeout: 10_000 })
+    await hotelRow.getByText('€200').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a €200 entry at 1.25 converts to $250 and keeps its original amount')
+
+    // $80 in the trip currency, paid by Sam.
+    await addExpense({ title: 'Dinner', amount: 80, payer: 'Sam' })
+    await page.getByText('Dinner').waitFor({ state: 'visible', timeout: 10_000 })
+
+    // Converted trip total: $250 (from EUR) + $80 = $330 on the Planned card. A
+    // broken conversion (summing raw 200 + 80) would read $280 here.
+    const planned = page.getByText('Planned').locator('xpath=..')
+    await planned.getByText('$330').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the trip total sums the converted amounts to $330')
+
+    // Settle-up "who owes who": planner fronted 250 + shares 165 → owed $85; Sam
+    // fronted 80 + shares 165 → owes $85; minimal transfer is Sam → planner $85.
+    await page.getByText('Settle up').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('gets back $85').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('owes $85').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('settle-up nets the mixed-currency expenses to Sam owes planner $85')
+
+    if (errors.length) throw new Error(`Uncaught page error on the budget page: ${errors[0]}`)
+    ok('the budget flow raised no uncaught errors')
+  } finally {
+    twoMembers = false
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -854,6 +1008,7 @@ async function main() {
     await runSignOut(browser)
     await runTripPresence(browser)
     await runAvailabilityPoll(browser)
+    await runBudget(browser)
     await runErrorReporting(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
