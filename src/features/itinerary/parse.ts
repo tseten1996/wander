@@ -23,6 +23,9 @@ export interface ParsedBooking {
   category: ItineraryCategory | null
   /** ISO `YYYY-MM-DD`, or null. */
   day: string | null
+  /** Closing day of a multi-day span (#166), e.g. a lodging check-out date;
+   *  null for a single-day draft. */
+  end_day: string | null
   /** 24-hour `HH:MM`, or null. */
   start_time: string | null
   end_time: string | null
@@ -220,6 +223,7 @@ export function parseBooking(
       title: null,
       category: null,
       day: null,
+      end_day: null,
       start_time: null,
       end_time: null,
       location: null,
@@ -232,6 +236,7 @@ export function parseBooking(
     title: detectTitle(text),
     category: detectCategory(text),
     day,
+    end_day: null,
     start_time,
     end_time,
     location,
@@ -358,12 +363,12 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
   if (crosses) {
     return [
       {
-        title, category: 'flight', day: depDay, start_time: depTime,
+        title, category: 'flight', day: depDay, end_day: null, start_time: depTime,
         end_time: null, location: routeStr, notes, matched: true,
       },
       {
         title: `${code} arrives ${route.to}`, category: 'flight', day: arrDay,
-        start_time: arrTime, end_time: null, location: routeStr,
+        end_day: null, start_time: arrTime, end_time: null, location: routeStr,
         // The raw fallback already rode along on the departure item above; the
         // arrival anchor only needs the confirmation code (or nothing).
         notes: detectReference(text), matched: true,
@@ -373,7 +378,7 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
 
   return [
     {
-      title, category: 'flight', day: depDay, start_time: depTime,
+      title, category: 'flight', day: depDay, end_day: null, start_time: depTime,
       end_time: arrTime, location: routeStr, notes, matched: true,
     },
   ]
@@ -381,31 +386,37 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
 
 /**
  * Recognize a lodging confirmation. Requires both a check-in and a check-out
- * date; produces two anchored itinerary points (check-in on its day, check-out
- * on its day) with the property as location and the confirmation number in
- * notes. Returns null when either date is missing, so a one-sided paste falls
- * through to the generic parser (which already handles a lone check-in).
+ * date; produces ONE multi-day span (#166) anchored on the check-in day and
+ * running through the check-out day, with the property as title/location, the
+ * check-in time as `start_time`, the check-out time as `end_time`, and the
+ * confirmation number in notes. Returns null when either date is missing, so a
+ * one-sided paste falls through to the generic parser (which already handles a
+ * lone check-in). A same-day booking simply yields `end_day === day`, which the
+ * span layer treats as a single-day item.
  */
 function detectLodging(text: string, referenceYear: number): ParsedBooking[] | null {
   const checkIn = labeledDateTime(text, CHECKIN_RE, referenceYear)
   const checkOut = labeledDateTime(text, CHECKOUT_RE, referenceYear)
   if (!checkIn || !checkOut) return null
+  // A check-out before check-in is a mis-parse, not a real span — drop back to
+  // the generic parser rather than emit an end-before-start item the DB rejects.
+  if (checkOut.day < checkIn.day) return null
 
   const name = detectTitle(text)
   const location = parseLocation(text) ?? name
-  const ref = detectReference(text)
 
   return [
     {
-      title: `Check-in: ${name ?? 'Stay'}`.slice(0, 120),
-      category: 'hotel', day: checkIn.day, start_time: checkIn.time,
-      end_time: null, location, notes: reservationNotes(text), matched: true,
-    },
-    {
-      title: `Check-out: ${name ?? 'Stay'}`.slice(0, 120),
-      category: 'hotel', day: checkOut.day, start_time: checkOut.time,
-      // Raw text already preserved on the check-in anchor; keep the code here.
-      end_time: null, location, notes: ref, matched: true,
+      title: (name ?? 'Stay').slice(0, 120),
+      category: 'hotel',
+      day: checkIn.day,
+      end_day: checkOut.day,
+      start_time: checkIn.time,
+      // `end_time` carries the check-out time on the closing day of the span.
+      end_time: checkOut.time,
+      location,
+      notes: reservationNotes(text),
+      matched: true,
     },
   ]
 }

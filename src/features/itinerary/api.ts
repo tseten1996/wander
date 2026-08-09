@@ -30,6 +30,8 @@ export interface ItineraryInput {
   title: string
   category: ItineraryCategory
   day: string | null
+  /** Closing day of a multi-day span (#166); null for a single-day item. */
+  end_day: string | null
   start_time: string | null
   end_time: string | null
   location: string | null

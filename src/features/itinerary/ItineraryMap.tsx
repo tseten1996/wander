@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { MapPinOff, Sparkles, X } from 'lucide-react'
 import { ITINERARY_META } from './meta'
 import { dayInfoFor, type DayInfo } from './days'
+import { isSpanning } from './spans'
 import { onColor } from '@/lib/colors'
 import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -426,12 +427,16 @@ export default function ItineraryMap({
 
     // Day-coloured route lines between consecutive located stops of the same
     // day (issue 123). `located` arrives in (day, position) order, so adjacent
-    // entries sharing a day are the legs the list also annotates. Drawn first
-    // and non-interactive so pins stay on top and remain the only click target;
+    // entries sharing a day are the legs the list also annotates. Multi-day
+    // spans (#166 — a hotel, a rail pass) are dropped from the route first: they
+    // anchor to a day but aren't a sequential stop you travel between, so they
+    // must not create a bogus leg (they keep their pin below). Drawn first and
+    // non-interactive so pins stay on top and remain the only click target;
     // vector paths live below markers in Leaflet's pane order regardless.
-    for (let i = 0; i < located.length - 1; i++) {
-      const a = located[i]
-      const b = located[i + 1]
+    const routeStops = located.filter((l) => !isSpanning(l))
+    for (let i = 0; i < routeStops.length - 1; i++) {
+      const a = routeStops[i]
+      const b = routeStops[i + 1]
       if (a.day == null || a.day !== b.day) continue
       L.polyline(
         [

@@ -28,6 +28,7 @@ import { buildDayIndex, type DayInfo } from './days'
 import { buildDayDirections } from './directions'
 import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
+import { coveredDays, isSpanning, spanPosition } from './spans'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { ItemBudgetLink } from './BudgetLink'
@@ -68,6 +69,7 @@ const itinerarySchema = z
     title: z.string().trim().min(1, 'Give it a title').max(120, 'Keep it under 120 characters'),
     category: z.enum(['flight', 'hotel', 'activity', 'restaurant', 'transport', 'free']),
     day: z.string().optional().nullable(),
+    end_day: z.string().optional().nullable(),
     start_time: z.string().optional().nullable(),
     end_time: z.string().optional().nullable(),
     location: z.string().trim().max(160, 'Keep it under 160 characters').optional().nullable(),
@@ -92,10 +94,26 @@ const itinerarySchema = z
     */
     cost: optionalAmount({ negative: 'Cost can’t be negative' }),
   })
-  .refine((v) => !v.start_time || !v.end_time || v.end_time >= v.start_time, {
-    message: 'Ends before it starts',
-    path: ['end_time'],
+  // A closing day needs a start day to hang off, and can't precede it (#166).
+  .refine((v) => !v.end_day || !!v.day, {
+    message: 'Pick a start day first',
+    path: ['end_day'],
   })
+  .refine((v) => !v.end_day || !v.day || v.end_day >= v.day, {
+    message: 'Ends before it starts',
+    path: ['end_day'],
+  })
+  // The end time must follow the start time only within a single day; on a
+  // multi-day span the end time lives on the later `end_day`, so check-out
+  // 11:00 after a 15:00 check-in is valid and must not trip this rule.
+  .refine(
+    (v) =>
+      (!!v.end_day && !!v.day && v.end_day > v.day) ||
+      !v.start_time ||
+      !v.end_time ||
+      v.end_time >= v.start_time,
+    { message: 'Ends before it starts', path: ['end_time'] }
+  )
 
 type ItineraryFormValues = z.input<typeof itinerarySchema>
 
@@ -326,9 +344,90 @@ function DayDirectionsAction({ items, dayLabel }: { items: ItineraryItem[]; dayL
   )
 }
 
+/**
+ * A multi-day span (#166) rendered as a persistent band pinned atop each day it
+ * covers — a lodging strip, a rail pass, a festival — rather than a single
+ * draggable row on its start day only. It is deliberately outside the day's
+ * sortable list and its leg-distance / overlap math (those are single-day
+ * concerns): it just marks "this runs through today", showing where in the span
+ * today falls and the check-in / check-out time on the edge days.
+ */
+function SpanBandCard({ item, day }: { item: ItineraryItem; day: string }) {
+  const { trip, me, isOwner } = useTripContext()
+  const deleteItem = useDeleteItineraryItem(trip.id)
+  const [editOpen, setEditOpen] = React.useState(false)
+  const meta = ITINERARY_META[item.category]
+  const canDelete = isOwner || item.created_by === me.id
+
+  const pos = spanPosition(item, day)
+  const isFirst = pos?.index === 1
+  const isLast = pos != null && pos.index === pos.total
+  const isHotel = item.category === 'hotel'
+  // Only the edge days carry a clock time: check-in on the first, check-out on
+  // the last. The middle days of a stay have no time of their own.
+  const edgeTime = isFirst ? item.start_time : isLast ? item.end_time : null
+  const edgeLabel = isFirst
+    ? isHotel ? 'Check-in' : 'Starts'
+    : isLast
+      ? isHotel ? 'Check-out' : 'Ends'
+      : null
+
+  const detail =
+    [
+      pos && `Day ${pos.index} of ${pos.total}`,
+      edgeTime && edgeLabel ? `${edgeLabel} ${formatTime(edgeTime)}` : null,
+      item.location,
+    ]
+      .filter(Boolean)
+      .join(' · ') || meta.label
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken/60 px-3 py-2">
+      <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', meta.chip)}>
+        <meta.icon className="size-4.5" />
+      </span>
+      <button
+        type="button"
+        onClick={() => setEditOpen(true)}
+        className="min-w-0 flex-1 text-left"
+        aria-label={`Edit ${item.title}`}
+      >
+        <p className="truncate text-sm font-semibold">{item.title}</p>
+        <p className="truncate text-xs text-muted">{detail}</p>
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Itinerary item actions">
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setEditOpen(true)}>
+            <Pencil /> Edit
+          </DropdownMenuItem>
+          {canDelete && (
+            <DropdownMenuItem
+              destructive
+              onClick={() =>
+                deleteItem.mutate(item.id, {
+                  onSuccess: () => toast.success('Removed from itinerary'),
+                })
+              }
+            >
+              <Trash2 /> Delete
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ItemDialog open={editOpen} onOpenChange={setEditOpen} item={item} />
+    </div>
+  )
+}
+
 function DaySection({
   day,
   items,
+  spanning,
   weather,
   dayInfo,
   selectedId,
@@ -336,6 +435,8 @@ function DaySection({
 }: {
   day: string | null
   items: ItineraryItem[]
+  /** Multi-day span items covering this day, shown as bands above the rows. */
+  spanning: ItineraryItem[]
   weather?: DailyWeather
   /** Day number + colour, matching the map's pins/legend (absent when undated). */
   dayInfo?: DayInfo
@@ -389,9 +490,16 @@ function DaySection({
           </span>
         )}
         {day ? longDate(day) : 'Not scheduled yet'}
-        <span className="text-xs font-normal text-faint">
-          {items.length} {items.length === 1 ? 'item' : 'items'}
-        </span>
+        {(() => {
+          // Spanning bands count toward the day's total so a gap day in the
+          // middle of a stay never reads as "0 items".
+          const count = items.length + spanning.length
+          return (
+            <span className="text-xs font-normal text-faint">
+              {count} {count === 1 ? 'item' : 'items'}
+            </span>
+          )
+        })()}
         {weather && (() => {
           const { label, Icon } = describeWeather(weather.code)
           const hi = Math.round(weather.tempMax)
@@ -408,6 +516,15 @@ function DaySection({
           )
         })()}
       </h2>
+      {/* Multi-day spans (#166) sit at the top of every day they cover, pinned
+          above the day's own rows and outside the drag list. */}
+      {day && spanning.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {spanning.map((s) => (
+            <SpanBandCard key={s.id} item={s} day={day} />
+          ))}
+        </div>
+      )}
       {/* Route action for real days only — the "Not scheduled yet" bucket shares
           no actual day to navigate, exactly as the leg hints below are skipped. */}
       {day && <DayDirectionsAction items={items} dayLabel={longDate(day)} />}
@@ -473,6 +590,7 @@ function ItemDialog({
     title: '',
     category: 'activity',
     day: trip.start_date,
+    end_day: '',
     start_time: '',
     end_time: '',
     location: '',
@@ -495,6 +613,7 @@ function ItemDialog({
               title: item.title,
               category: item.category,
               day: item.day ?? '',
+              end_day: item.end_day ?? '',
               start_time: item.start_time ?? '',
               end_time: item.end_time ?? '',
               location: item.location ?? '',
@@ -512,10 +631,15 @@ function ItemDialog({
 
   async function onSubmit(values: ItineraryFormValues) {
     const location = values.location?.trim() || null
+    // Persist end_day only when it's a real span (a later day than the start);
+    // an equal or empty end_day normalises to a plain single-day item.
+    const day = values.day || null
+    const end_day = day && values.end_day && values.end_day > day ? values.end_day : null
     const payload: ItineraryInput = {
       title: values.title.trim(),
       category: values.category as ItineraryCategory,
-      day: values.day || null,
+      day,
+      end_day,
       start_time: values.start_time || null,
       end_time: values.end_time || null,
       location,
@@ -602,6 +726,29 @@ function ItemDialog({
                 )}
               />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="it-end-day">End day</Label>
+            <Controller
+              control={form.control}
+              name="end_day"
+              render={({ field }) => (
+                <DateInput
+                  id="it-end-day"
+                  value={field.value ?? ''}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                  aria-invalid={err.end_day ? true : undefined}
+                />
+              )}
+            />
+            {err.end_day ? (
+              <p className="text-xs text-danger">{err.end_day.message}</p>
+            ) : (
+              <p className="text-xs text-faint">
+                Leave blank for a single day. Set it for a stay or pass that runs across nights.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -702,6 +849,7 @@ function toPrefill(p: ParsedBooking): Partial<ItineraryFormValues> {
   if (p.title) pf.title = p.title
   if (p.category) pf.category = p.category
   if (p.day) pf.day = p.day
+  if (p.end_day) pf.end_day = p.end_day
   if (p.start_time) pf.start_time = p.start_time
   if (p.end_time) pf.end_time = p.end_time
   if (p.location) pf.location = p.location
@@ -791,6 +939,7 @@ export default function ItineraryPage() {
           title: place.name,
           category,
           day: trip.start_date,
+          end_day: null,
           start_time: null,
           end_time: null,
           location: place.name,
@@ -874,16 +1023,27 @@ export default function ItineraryPage() {
     }
   }
 
+  // Multi-day spans (#166) render as bands across every day they cover, so they
+  // are grouped separately from the single-day rows that fill each day's list.
+  const spanItems = items.filter(isSpanning)
   const byDay = new Map<string | null, ItineraryItem[]>()
   for (const item of items) {
+    if (isSpanning(item)) continue
     const key = item.day
     byDay.set(key, [...(byDay.get(key) ?? []), item])
   }
-  const days = [...byDay.keys()].sort((a, b) => {
-    if (a === null) return 1
-    if (b === null) return -1
-    return a.localeCompare(b)
-  })
+  // A day is shown when a single-day item is on it OR a span covers it — the
+  // latter surfaces gap days in the middle of a stay that have no rows of their own.
+  const datedDays = new Set<string>()
+  for (const key of byDay.keys()) if (key) datedDays.add(key)
+  for (const s of spanItems) for (const d of coveredDays(s)) datedDays.add(d)
+  const days: (string | null)[] = [...datedDays].sort((a, b) => a.localeCompare(b))
+  if (byDay.has(null)) days.push(null) // undated bucket always sinks to the end
+  // Which spans cover each day, precomputed once so DaySection stays a pure view.
+  const spansByDay = new Map<string, ItineraryItem[]>()
+  for (const s of spanItems) for (const d of coveredDays(s)) {
+    spansByDay.set(d, [...(spansByDay.get(d) ?? []), s])
+  }
 
   return (
     <div>
@@ -962,7 +1122,8 @@ export default function ItineraryPage() {
                 <DaySection
                   key={day ?? 'unscheduled'}
                   day={day}
-                  items={byDay.get(day)!}
+                  items={byDay.get(day) ?? []}
+                  spanning={day ? spansByDay.get(day) ?? [] : []}
                   weather={day ? weather.data?.get(day) : undefined}
                   dayInfo={day ? dayIndex.get(day) : undefined}
                   selectedId={selectedId}

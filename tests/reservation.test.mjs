@@ -104,7 +104,7 @@ test('a distinct arrival date with no arrival time still splits into two anchors
   assert.equal(arr.start_time, null)
 })
 
-test('a hotel confirmation becomes check-in and check-out anchors', () => {
+test('a hotel confirmation becomes one multi-day span (#166), not two anchors', () => {
   const text = [
     'Your reservation is confirmed',
     'The Ritz-Carlton Kyoto',
@@ -115,21 +115,21 @@ test('a hotel confirmation becomes check-in and check-out anchors', () => {
   ].join('\n')
   const r = parseReservation(text, YEAR)
   assert.equal(r.kind, 'lodging')
-  assert.equal(r.drafts.length, 2)
-  const [ci, co] = r.drafts
-  assert.equal(ci.category, 'hotel')
-  assert.equal(ci.title, 'Check-in: The Ritz-Carlton Kyoto')
-  assert.equal(ci.day, '2026-08-15')
-  assert.equal(ci.start_time, '15:00')
-  assert.equal(ci.location, 'Kamogawa Nijo-Ohashi Hotori, Kyoto')
-  assert.equal(ci.notes, 'Confirmation: HTL45678')
-  assert.equal(co.title, 'Check-out: The Ritz-Carlton Kyoto')
-  assert.equal(co.day, '2026-08-18')
-  assert.equal(co.start_time, '11:00')
-  assert.equal(co.notes, 'Confirmation: HTL45678')
+  assert.equal(r.drafts.length, 1)
+  const [stay] = r.drafts
+  assert.equal(stay.category, 'hotel')
+  // Title is the property itself; the span carries both dates so it renders
+  // across every covered day rather than as two disconnected rows.
+  assert.equal(stay.title, 'The Ritz-Carlton Kyoto')
+  assert.equal(stay.day, '2026-08-15')
+  assert.equal(stay.end_day, '2026-08-18')
+  assert.equal(stay.start_time, '15:00') // check-in time on the first day
+  assert.equal(stay.end_time, '11:00') // check-out time on the closing day
+  assert.equal(stay.location, 'Kamogawa Nijo-Ohashi Hotori, Kyoto')
+  assert.equal(stay.notes, 'Confirmation: HTL45678')
 })
 
-test('a hotel with no explicit address falls back to the property as location', () => {
+test('a hotel with no explicit address falls back to the property as location and spans the nights', () => {
   const text = [
     'Hotel Okura Tokyo',
     'Check-in: Aug 15, 2026',
@@ -137,8 +137,10 @@ test('a hotel with no explicit address falls back to the property as location', 
   ].join('\n')
   const r = parseReservation(text, YEAR)
   assert.equal(r.kind, 'lodging')
+  assert.equal(r.drafts.length, 1)
   assert.equal(r.drafts[0].location, 'Hotel Okura Tokyo')
-  assert.equal(r.drafts[1].day, '2026-08-17')
+  assert.equal(r.drafts[0].day, '2026-08-15')
+  assert.equal(r.drafts[0].end_day, '2026-08-17')
 })
 
 test('a lone check-in (no check-out) falls through to the generic parser', () => {
