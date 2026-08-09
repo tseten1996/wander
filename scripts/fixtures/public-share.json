@@ -1,0 +1,66 @@
+{
+  "auth": { "as": "anon" },
+  "tables": {},
+  "rpcs": {
+    "get_public_itinerary": {
+      "trip": {
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-18"
+      },
+      "items": [
+        {
+          "id": "it-1",
+          "title": "Flight to Osaka (KIX)",
+          "category": "flight",
+          "day": "2026-11-14",
+          "end_day": null,
+          "start_time": "09:20:00",
+          "end_time": "13:05:00",
+          "location": "KIX Terminal 1",
+          "notes": "Haruka express into Kyoto Station after landing."
+        },
+        {
+          "id": "it-2",
+          "title": "Machiya townhouse",
+          "category": "hotel",
+          "day": "2026-11-14",
+          "end_day": "2026-11-18",
+          "start_time": "15:00:00",
+          "end_time": null,
+          "location": "Higashiyama",
+          "notes": null
+        },
+        {
+          "id": "it-3",
+          "title": "Fushimi Inari at dawn",
+          "category": "activity",
+          "day": "2026-11-15",
+          "end_day": null,
+          "start_time": "06:30:00",
+          "end_time": "09:00:00",
+          "location": "Fushimi Inari Taisha",
+          "notes": "Beat the crowds up the torii gates."
+        },
+        {
+          "id": "it-4",
+          "title": "Kaiseki dinner",
+          "category": "restaurant",
+          "day": "2026-11-15",
+          "end_day": null,
+          "start_time": "19:00:00",
+          "end_time": null,
+          "location": "Pontocho",
+          "notes": null
+        }
+      ]
+    }
+  },
+  "routes": ["/p/sharetoken"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
