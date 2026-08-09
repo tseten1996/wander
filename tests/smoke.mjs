@@ -455,6 +455,144 @@ async function runCreateTrip(browser) {
   }
 }
 
+/*
+  Place autocomplete (destination + itinerary location fields).
+
+  The geocoder is the one external host the app talks to besides Supabase, so
+  it gets stubbed here the same way — hermetic, and it lets the dropdown
+  actually appear, which no earlier scenario could do. What's asserted is the
+  behaviour that used to make the field fight the user: re-querying the label
+  it had just written back (so the list reopened on the thing you picked),
+  opening itself over a form nobody had touched, and taking the whole dialog
+  down with Escape.
+*/
+const PHOTON_HOST = 'photon.komoot.io'
+
+function photonFeature(name, city, country, lon, lat) {
+  return { geometry: { coordinates: [lon, lat] }, properties: { name, city, country } }
+}
+
+async function runPlaceAutocomplete(browser) {
+  console.log('\n▶ place autocomplete (suggestions stay out of the way)')
+  const context = await newContext(browser, OWNER_SESSION)
+  let photonRequests = 0
+  await context.route(
+    (url) => url.hostname === PHOTON_HOST,
+    async (route) => {
+      photonRequests += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          features: [
+            photonFeature('Lisbon', null, 'Portugal', -9.1393, 38.7223),
+            photonFeature('Lisboa Santa Apolónia', 'Lisbon', 'Portugal', -9.1224, 38.7139),
+          ],
+        }),
+      })
+    }
+  )
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('button', { name: 'New trip' }).first().click()
+    await page.locator('#trip-name').waitFor({ state: 'visible', timeout: 10_000 })
+
+    const dest = page.locator('#trip-dest')
+    const listbox = page.locator('#trip-dest-listbox')
+
+    await dest.fill('Lis')
+    await listbox.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('typing a place opens the suggestion list')
+
+    const firstOption = listbox.getByRole('option').first()
+    const chosen = (await firstOption.textContent())?.trim()
+    await firstOption.click()
+    await listbox.waitFor({ state: 'hidden', timeout: 10_000 })
+    if ((await dest.inputValue()) !== chosen) {
+      throw new Error(`picking a suggestion did not fill the field with "${chosen}"`)
+    }
+    ok('picking a suggestion fills the field and closes the list')
+
+    // The regression: select() writes the label into `value`, which used to
+    // re-trigger the debounced query and reopen the list on the chosen item.
+    const afterSelect = photonRequests
+    await page.waitForTimeout(800) // debounce is 300ms — well clear of it
+    if (photonRequests !== afterSelect) {
+      throw new Error('selecting a suggestion re-queried the geocoder')
+    }
+    if (await listbox.isVisible()) {
+      throw new Error('the suggestion list reopened after a selection')
+    }
+    ok('selecting a suggestion does not re-query or reopen the list')
+
+    // Escape belongs to the innermost open thing: the list, then the dialog.
+    await dest.fill('Lisb')
+    await listbox.waitFor({ state: 'visible', timeout: 10_000 })
+    await dest.press('Escape')
+    await listbox.waitFor({ state: 'hidden', timeout: 10_000 })
+    if (!(await page.locator('#trip-name').isVisible())) {
+      throw new Error('Escape closed the whole dialog instead of just the suggestions')
+    }
+    ok('Escape dismisses the suggestions and keeps the dialog open')
+
+    await dest.press('Escape')
+    await page.locator('#trip-name').waitFor({ state: 'hidden', timeout: 10_000 })
+    ok('a second Escape then closes the dialog as usual')
+
+    // Mobile: the field sits above Cost/Link/Notes and the submit button in a
+    // bottom sheet, so a tall panel buries the very control you're reaching
+    // for — and a suggestion row is a tap target like any other (44px floor).
+    await page.setViewportSize({ width: 375, height: 720 })
+    await page.getByRole('button', { name: 'New trip' }).first().click()
+    await page.locator('#trip-name').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.locator('#trip-dest').fill('Lis')
+    await listbox.waitFor({ state: 'visible', timeout: 10_000 })
+
+    const optionBox = await listbox.getByRole('option').first().boundingBox()
+    if (!optionBox || optionBox.height < 44) {
+      throw new Error(`suggestion row is ${optionBox?.height ?? 0}px tall, below the 44px floor`)
+    }
+    ok('suggestion rows meet the 44px mobile tap floor')
+
+    const listBox = await listbox.boundingBox()
+    const submitBox = await page.getByRole('button', { name: 'Create trip' }).boundingBox()
+    if (listBox && submitBox) {
+      const overlaps =
+        listBox.y < submitBox.y + submitBox.height && submitBox.y < listBox.y + listBox.height
+      if (overlaps) {
+        throw new Error('the suggestion list covers the Create trip button at 375px')
+      }
+    }
+    ok('the suggestion list does not bury the submit button at 375px')
+
+    await page.locator('#trip-dest').press('Escape')
+    await page.locator('#trip-name').press('Escape')
+    await page.locator('#trip-name').waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.setViewportSize({ width: 1280, height: 800 })
+
+    // A prefilled field (editing an existing trip) must not summon the list:
+    // the value changes programmatically, which is not the user typing.
+    const before = photonRequests
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/settings`, { waitUntil: 'domcontentloaded' })
+    const settingsDest = page.locator('#s-dest')
+    await settingsDest.waitFor({ state: 'visible', timeout: 10_000 })
+    if (!((await settingsDest.inputValue()) ?? '').trim()) {
+      throw new Error('settings destination was empty — the prefill case is not being exercised')
+    }
+    await page.waitForTimeout(800)
+    if (await page.locator('#s-dest-listbox').isVisible()) {
+      throw new Error('the suggestion list opened over an untouched form')
+    }
+    if (photonRequests !== before) {
+      throw new Error('a prefilled destination queried the geocoder without user input')
+    }
+    ok('a prefilled destination neither queries nor opens the list')
+  } finally {
+    await context.close()
+  }
+}
+
 async function runDuplicateTrip(browser) {
   console.log('\n▶ duplicate trip (owner reuses a trip as a starting point)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -710,6 +848,7 @@ async function main() {
     await runJoinDeadLink(browser)
     await runJoinTransientError(browser)
     await runCreateTrip(browser)
+    await runPlaceAutocomplete(browser)
     await runDuplicateTrip(browser)
     await runOffline(browser)
     await runSignOut(browser)

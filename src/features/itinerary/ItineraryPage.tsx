@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/select'
 import { cn, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
+import { optionalAmount } from '@/lib/forms'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { NearbyPlace } from '@/lib/places'
@@ -84,12 +85,12 @@ const itinerarySchema = z
         message: 'Must be a full http(s) link',
       }),
     notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
-    cost: z.coerce
-      .number({ invalid_type_error: 'Enter a number' })
-      .min(0, 'Cost can’t be negative')
-      .optional()
-      .nullable()
-      .or(z.literal('')),
+    /*
+      Blank must stay blank — every item saved without a cost used to store a
+      real 0.00, which ItemBudgetLink then read as "has a cost" and decorated
+      with a "not in budget yet" chip it never earned. See optionalAmount.
+    */
+    cost: optionalAmount({ negative: 'Cost can’t be negative' }),
   })
   .refine((v) => !v.start_time || !v.end_time || v.end_time >= v.start_time, {
     message: 'Ends before it starts',
@@ -524,7 +525,9 @@ function ItemDialog({
       longitude: location ? values.longitude ?? null : null,
       url: values.url?.trim() || null,
       notes: values.notes?.trim() || null,
-      cost: values.cost === '' || values.cost == null ? null : Number(values.cost),
+      // The schema already normalised blank/whitespace to null (see above), so
+      // this only has to pass a real number through.
+      cost: values.cost == null ? null : Number(values.cost),
     }
     try {
       if (item) {
