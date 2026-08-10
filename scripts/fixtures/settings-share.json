@@ -1,0 +1,39 @@
+{
+  "auth": { "as": "owner", "userId": "22222222-2222-4222-8222-222222222222", "email": "planner@example.com", "tripId": "de300000-0000-4000-8000-000000000001" },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "share_token": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z"
+      }
+    ]
+  },
+  "routes": ["/trip/{trip}/settings"],
+  "breakpoints": [{ "name": "desktop", "width": 1280 }],
+  "colorScheme": "light"
+}

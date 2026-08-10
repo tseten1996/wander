@@ -180,6 +180,43 @@ const INVITE_PREVIEW = {
   end_date: null,
 }
 
+// Public read-only itinerary share (#127). A valid token dereferences to this
+// whitelisted projection through get_public_itinerary; an invalid/revoked token
+// returns SQL null. The token is 64 hex chars, like the real minted one.
+const SHARE_TOKEN = 'a'.repeat(64)
+const PUBLIC_ITINERARY = {
+  trip: {
+    name: 'Lisbon in Spring',
+    destination: 'Lisbon, Portugal',
+    start_date: '2026-05-01',
+    end_date: '2026-05-05',
+  },
+  items: [
+    {
+      id: 'it-1',
+      title: 'Flight to Lisbon',
+      category: 'flight',
+      day: '2026-05-01',
+      end_day: null,
+      start_time: '09:00:00',
+      end_time: '11:30:00',
+      location: 'LIS',
+      notes: 'Window seat booked',
+    },
+    {
+      id: 'it-2',
+      title: 'Check in at the hostel',
+      category: 'hotel',
+      day: '2026-05-01',
+      end_day: '2026-05-05',
+      start_time: '14:00:00',
+      end_time: null,
+      location: 'Alfama',
+      notes: null,
+    },
+  ],
+}
+
 // The `flaky` invite drops every join_trip call (a real network failure) until
 // the retry test flips this to true right before clicking "Try again" — proving
 // the retryable state recovers in place. The test controls the flip so the
@@ -257,6 +294,16 @@ async function routeSupabase(route) {
     return json(JSON.stringify(TRIP_ID)) // scalar text → a bare JSON string
   }
   if (pathname.endsWith('/rest/v1/rpc/get_invite_preview')) return json([INVITE_PREVIEW])
+  // get_public_itinerary (#127) returns a jsonb object for a valid token, or SQL
+  // null (→ body "null") for an invalid/revoked one — the not-found signal.
+  if (pathname.endsWith('/rest/v1/rpc/get_public_itinerary')) {
+    return json(body.p_token === SHARE_TOKEN ? PUBLIC_ITINERARY : null)
+  }
+  // set_trip_share (#127) mints/clears the token owner-side and returns it as a
+  // scalar text (a bare JSON string), or null when disabling.
+  if (pathname.endsWith('/rest/v1/rpc/set_trip_share')) {
+    return json(body.p_enabled ? JSON.stringify(SHARE_TOKEN) : null)
+  }
   // duplicate_trip (#80) copies a trip server-side and returns the new trip id
   // as a scalar text → a bare JSON string, exactly like join_trip.
   if (pathname.endsWith('/rest/v1/rpc/duplicate_trip')) return json(JSON.stringify(NEW_TRIP_ID))
@@ -990,6 +1037,89 @@ async function runErrorReporting(browser) {
   }
 }
 
+async function runPublicShare(browser) {
+  console.log('\n▶ public share (read-only itinerary for someone with no account)')
+  // No initSession: an outsider with no Wander session must reach the page
+  // through the token alone — the whole point of the public-read surface.
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/p/${SHARE_TOKEN}`, { waitUntil: 'domcontentloaded' })
+
+    await page.getByRole('heading', { name: 'Lisbon in Spring' }).waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    ok('a valid share link renders the itinerary with no session')
+
+    // Day-grouped, read-only content: the first day header and an item render.
+    await page.getByText('Day 1').first().waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Flight to Lisbon').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the itinerary is day-grouped with its items')
+
+    // Read-only: no join, no chat, no edit affordances leak onto the page.
+    for (const forbidden of ['Join the trip', 'Add item', 'Chat', 'Edit']) {
+      if ((await page.getByRole('button', { name: forbidden }).count()) > 0) {
+        throw new Error(`public page exposed a "${forbidden}" control`)
+      }
+    }
+    ok('no join / chat / edit affordances appear on the public page')
+
+    if (errors.length) throw new Error(`Uncaught page error on the public page: ${errors[0]}`)
+    ok('the public page raised no uncaught errors')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runPublicShareRevoked(browser) {
+  console.log('\n▶ public share: a revoked / invalid token is a clean not-found')
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/p/${'b'.repeat(64)}`, { waitUntil: 'domcontentloaded' })
+    // The RPC returned null → the honest "link isn’t available" state, never
+    // partial data and never a crash.
+    await page
+      .getByText('This link isn’t available')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an invalid token yields the "link isn’t available" state')
+    if (await page.getByText('Flight to Lisbon').isVisible().catch(() => false)) {
+      throw new Error('a revoked token still leaked itinerary content')
+    }
+    ok('no itinerary content leaks for an invalid token')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runPublicShareToggle(browser) {
+  console.log('\n▶ public share: owner enables the link from Settings')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/settings`, { waitUntil: 'domcontentloaded' })
+    // The owner-only "Public share link" card renders with its toggle.
+    await page.getByText('Public share link').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the owner sees the Public share link card')
+
+    const shareRpc = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/rpc/set_trip_share') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('switch', { name: 'Read-only share link active' }).click()
+    const req = await shareRpc
+    if (req.postDataJSON()?.p_enabled !== true) {
+      throw new Error('enabling the share did not call set_trip_share with p_enabled=true')
+    }
+    ok('toggling on calls set_trip_share to mint the token')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -1010,6 +1140,9 @@ async function main() {
     await runAvailabilityPoll(browser)
     await runBudget(browser)
     await runErrorReporting(browser)
+    await runPublicShare(browser)
+    await runPublicShareRevoked(browser)
+    await runPublicShareToggle(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()

@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, GitMerge,
-  Link2, RefreshCw, Trash2, Upload, UserMinus, LogOut,
+  Globe, Link2, RefreshCw, Trash2, Upload, UserMinus, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -15,6 +15,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { exportTripJson, importTripJson } from '@/lib/export'
 import { friendlyError } from '@/lib/errors'
 import { useInviteLink } from '@/lib/invite'
+import { tripShareUrl } from '@/lib/share'
 import { MEMBER_COLORS } from '@/lib/colors'
 import { cn, randomCode } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -328,6 +329,82 @@ function InviteCard() {
             </label>
             <Button variant="ghost" size="sm" onClick={regenerate}>
               <RefreshCw /> Regenerate link
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Public share link (owner only) ─────────────────────────────────────── */
+
+function PublicShareCard() {
+  const { trip } = useTripContext()
+  const queryClient = useQueryClient()
+  const [busy, setBusy] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const copyTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  React.useEffect(() => () => clearTimeout(copyTimer.current), [])
+
+  const shareUrl = tripShareUrl(trip)
+  const enabled = !!trip.share_token
+
+  async function setShare(next: boolean) {
+    setBusy(true)
+    const { error } = await supabase.rpc('set_trip_share', {
+      p_trip_id: trip.id,
+      p_enabled: next,
+    })
+    setBusy(false)
+    if (error) {
+      toast.error(friendlyError(error, 'Could not update the share link'))
+      return
+    }
+    toast.success(next ? 'Public share link is on' : 'Public share link turned off — old links no longer work')
+    void queryClient.invalidateQueries({ queryKey: ['trip', trip.id] })
+  }
+
+  async function copy() {
+    if (!shareUrl) return
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 1500)
+      toast.success('Share link copied')
+    } catch {
+      toast.error('Could not copy the link — try again')
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="size-4 text-primary" /> Public share link
+        </CardTitle>
+        <CardDescription>
+          Share a read-only view of the itinerary with someone who shouldn’t
+          edit — a parent, a maybe-friend. They see the plan only; no chat, no
+          edits, no way to join. Turning it off breaks the link instantly.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <Switch
+            checked={enabled}
+            disabled={busy}
+            onCheckedChange={setShare}
+            aria-label="Read-only share link active"
+          />
+          Read-only share link active
+        </label>
+        {enabled && shareUrl && (
+          <div className="flex gap-2">
+            <Input readOnly value={shareUrl} className="font-mono text-xs" aria-label="Public share link" />
+            <Button variant="secondary" size="icon" onClick={copy} aria-label="Copy share link">
+              {copied ? <Check className="text-success" /> : <Copy />}
             </Button>
           </div>
         )}
@@ -704,6 +781,7 @@ export default function SettingsPage() {
         {isOwner && <TripInfoCard />}
         <ProfileCard />
         <InviteCard />
+        {isOwner && <PublicShareCard />}
         <MembersCard />
         <ExportCard />
         {/* Duplicating creates a NEW trip owned by the caller; only real

@@ -30,6 +30,10 @@ export interface Trip {
   currency: string
   invite_code: string
   invite_enabled: boolean
+  /** Unguessable token for the read-only public share link (#127). null = the
+   *  trip is not publicly shared. Owner-writable through the set_trip_share RPC
+   *  only; never exposed to non-members, and never in the public projection. */
+  share_token: string | null
   archived: boolean
   checklist_starter_dismissed: boolean
   created_at: string
@@ -296,4 +300,32 @@ export interface InvitePreview {
   member_count: number
   start_date: string | null
   end_date: string | null
+}
+
+/** A single read-only itinerary item as returned by the get_public_itinerary
+ *  RPC (#127). A strict, whitelisted subset of ItineraryItem — no ids that leak
+ *  authorship, no cost, no coordinates, no invite code. */
+export interface PublicItineraryItem {
+  id: string
+  title: string
+  category: ItineraryCategory
+  day: string | null
+  end_day: string | null
+  start_time: string | null
+  end_time: string | null
+  location: string | null
+  notes: string | null
+}
+
+/** The whole payload of the public share page: whitelisted trip meta plus the
+ *  read-only itinerary. The RPC returns SQL null (→ null here) for an invalid,
+ *  revoked, or absent token, which the page renders as "link unavailable". */
+export interface PublicItinerary {
+  trip: {
+    name: string
+    destination: string | null
+    start_date: string | null
+    end_date: string | null
+  }
+  items: PublicItineraryItem[]
 }
