@@ -1,7 +1,7 @@
 -- Carry itinerary→budget links through duplicate_trip.
 --
 -- duplicate_trip() copies itinerary_items and budget_entries independently, so
--- the `budget_entry_id` link added in 20260730153000_itinerary_budget_link.sql
+-- the `budget_entry_id` link added in 20260730183756_itinerary_budget_link.sql
 -- was silently dropped: a duplicated trip came back with every costed item
 -- reading "planning note, not in budget" even though the matching estimate had
 -- been copied alongside it. The link is part of the reusable structure the
