@@ -81,15 +81,19 @@ All tables live in `public`, keyed by `uuid`. Every content table carries a
 
 ```
 trips ────────────┬─ members            (person ↔ trip, role, name, color)
+  │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
   │               ├─ messages ─ message_reactions   (threads via reply_to)
   │               ├─ questions           (asked / answered)
   │               ├─ checklist_items     (assignee, due date, done)
   │               ├─ itinerary_items     (day, time, category, position, latitude/longitude)
   │               ├─ budget_entries      (estimated vs actual, paid_by, currency + *_converted)
+  │               ├─ repayments          (settle-up transfers: from/to member, amount)
   │               ├─ packing_items       (category, packed)
   │               ├─ notes               (markdown)
   │               ├─ inspiration_items   (image / link board)
+  │               ├─ notifications       (per-recipient inbox: type, entity, read state)
+  │               ├─ error_reports       (write-only client error telemetry)
   │               └─ activity            (lightweight event feed)
 ```
 
@@ -107,6 +111,32 @@ Notable decisions:
   frozen into the trip currency at entry time (the client reads
   `converted ?? raw`), so roll-ups and the settle-up math stay correct even if
   reference rates move afterwards.
+* **Destinations** model a multi-city trip as an ordered list of legs (place +
+  optional geocoded pin + date range), sharing the same float `position`
+  ordering. Members read (`is_trip_member`); **owner-only** writes
+  (`is_trip_owner` on insert/update/delete) — the route is trip structure, like
+  the dates.
+* **Repayments** record settle-up transfers between members. Any member reads
+  (`is_trip_member`) and logs a transfer they created (`created_by =
+  my_member_id`); a transfer is deletable by its creator or the owner.
+* **Notifications** are a per-recipient inbox (`type`, soft `entity_id` pointer,
+  title snapshot, `read_at`). You read (`select`) and mark-read (`update`) only
+  your own rows (`recipient_id = my_member_id`); inserts are self-attributed and
+  trip-scoped (`is_trip_member AND actor_id = my_member_id`), so no member can
+  forge a notification as someone else or across trips. `type` is a `CHECK`-listed
+  set (`checklist_assigned`, `poll_opened`, `expense_owed`, `mention`).
+* **Error reports** are a write-only telemetry sink for uncaught client errors.
+  The anon key may `INSERT` (self-attributed: `user_id = auth.uid()` and
+  `trip_id IS NULL OR is_trip_member`), but rows are **not** world-readable —
+  `SELECT` is owner-only for trip-scoped rows, and deploy-level (`trip_id IS
+  NULL`) rows are readable only via the dashboard `service_role`. No `UPDATE` /
+  `DELETE` policies, so the log is append-only.
+* **Public share link** (read-only): an owner mints an unguessable `share_token`
+  on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
+  read-only itinerary projection through the `get_public_itinerary` (SECURITY
+  DEFINER) RPC — no membership, no write, no member PII, no invite code. It is
+  the app's only public-read surface and is kept entirely separate from the join
+  path (there is no public `SELECT` policy on any base table).
 * **Realtime** is enabled for all content tables via the
   `supabase_realtime` publication; the client subscribes per-trip and simply
   invalidates the matching query keys.
@@ -128,7 +158,9 @@ src/
 │   ├── device.ts            # device id in Local Storage
 │   ├── colors.ts            # avatar palette
 │   ├── activity.ts          # fire-and-forget writes to the trip activity feed
+│   ├── notify.ts            # fire-and-forget writes to the per-recipient notification inbox
 │   ├── errors.ts            # Postgres/PostgREST codes → friendly toast copy (friendlyError)
+│   ├── errorReporting.ts    # global onerror/unhandledrejection → error_reports telemetry
 │   ├── confetti.ts          # canvas-confetti burst when planning hits 100%
 │   ├── geo.ts               # keyless haversine distance + travel-time estimate between itinerary stops
 │   ├── geocode.ts           # keyless place autocomplete via Photon (komoot/OSM)
@@ -150,8 +182,9 @@ src/
     ├── trips/               # home: trip list, create trip
     ├── join/                # invite landing page (name + colour → in)
     ├── dashboard/           # countdown, progress, summaries
+    ├── destinations/        # multi-city legs: editor + leg/route derivation (owner-only)
     ├── polls/
-    ├── messages/
+    ├── messages/            # chat: replies, reactions, pins, @-mentions → inbox
     ├── questions/
     ├── checklist/
     ├── itinerary/           # timeline + list ⇄ Leaflet/OSM map view, per-leg distance, weather
@@ -161,7 +194,10 @@ src/
     ├── notes/
     ├── inspiration/
     ├── search/              # ⌘/Ctrl-K command-palette over cached trip data
-    └── settings/            # trip info, members, invite link, danger zone
+    ├── notifications/       # personal inbox bell (per-recipient, cross-device)
+    ├── me/                  # cross-trip personal view ("my stuff")
+    ├── share/               # public read-only itinerary page (token RPC, no session)
+    └── settings/            # trip info, members, invite link, share link, danger zone
 ```
 
 Each feature folder contains its **api.ts** (TanStack Query hooks — the only

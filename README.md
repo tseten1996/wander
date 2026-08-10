@@ -66,11 +66,13 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Area | What you get |
 |------|--------------|
 | Dashboard | Cover hero, countdown, planning-progress bar (confetti at 100%), budget summary, upcoming items, live activity feed |
+| Notifications | Personal inbox bell — a per-recipient, cross-device stream of "things that need me" (assigned tasks, opened polls, expenses you owe, @-mentions) with read state |
 | Presence | Live "who's here now" avatars in the trip header, driven by Supabase realtime presence |
 | Polls | Categories, expiry, one vote per member, live results, winner highlight, owner/creator close |
-| Chat | Realtime messages, replies, emoji reactions, pinned messages, edit/delete |
+| Chat | Realtime messages, replies, emoji reactions, pinned messages, edit/delete, and @-mentions that notify the mentioned member |
 | Questions | Ask → answer → done; anyone can answer |
 | Checklist | Assignees, due dates (overdue badges), notes, optimistic toggles |
+| Destinations | Multi-city trips as an ordered list of legs (place + date range); itinerary, calendar and the trip header read leg-aware (owner-managed) |
 | Itinerary | Day-by-day timeline, six categories, drag-to-reorder, times/locations/costs, straight-line distance between stops, a list ⇄ map view (Leaflet + OpenStreetMap) with per-day pins and routes, and a daily weather forecast |
 | Budget | Trip budget vs planned vs spent, per-category chart, paid-by tracking, multi-currency entries converted to the trip currency (ECB reference rates), and a minimal settle-up summary |
 | Packing | Five categories, per-category progress, quick add |
@@ -78,7 +80,8 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Notes | Shared markdown notes with preview, pinning |
 | Ideas | Pinterest-style masonry board with category filters |
 | Search | Command-palette search (⌘/Ctrl-K) across polls, chat, checklist, notes and ideas, jumping straight to the match |
-| Settings | Trip details, profile, invite management, members, export/import JSON, print-to-PDF summary, archive/delete |
+| Share | A read-only public itinerary link — an owner mints an unguessable token so anyone (no account, no edit access) can view the plan; revocable instantly |
+| Settings | Trip details, profile, invite management, members, public share link, export/import JSON, print-to-PDF summary, archive/delete |
 
 ## Data & security model (summary)
 
@@ -87,7 +90,8 @@ Every table carries `trip_id` and is protected by RLS: you must have a
 (`is_trip_member`, `is_trip_owner`, `my_member_id`) are `SECURITY DEFINER`
 Postgres functions; joining happens exclusively through the `join_trip(code,
 name, color)` RPC so invite codes are validated server-side. Full schema in
-[supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql).
+[supabase/migrations/20260719012557_init.sql](supabase/migrations/20260719012557_init.sql)
+plus the incremental migrations alongside it.
 
 `supabase/seed.sql` contains demo data for a local `supabase db reset`.
 
