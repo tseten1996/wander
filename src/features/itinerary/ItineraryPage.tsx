@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/select'
 import { cn, dateRange, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
+import { geocodeFirst } from '@/lib/geocode'
 import { optionalAmount } from '@/lib/forms'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
@@ -656,6 +657,31 @@ function ItemDialog({
     // an equal or empty end_day normalises to a plain single-day item.
     const day = values.day || null
     const end_day = day && values.end_day && values.end_day > day ? values.end_day : null
+    // Coordinates only mean anything with a location; a cleared location drops
+    // its pin rather than stranding stale coordinates on the map.
+    let latitude = location ? values.latitude ?? null : null
+    let longitude = location ? values.longitude ?? null : null
+    // A typed address that was never confirmed via autocomplete (or one whose
+    // text was edited after picking, which clears the pin) reaches here with a
+    // location but no coordinates. Resolve it best-effort against the same
+    // keyless Photon geocoder so it still pins — never blocking the save: a
+    // miss, a timeout, or an unreachable geocoder just saves it unpinned, and
+    // the user's typed text is always kept as the label.
+    if (location && (latitude == null || longitude == null)) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 4000)
+      try {
+        const hit = await geocodeFirst(location, controller.signal)
+        if (hit) {
+          latitude = hit.lat
+          longitude = hit.lon
+        }
+      } catch {
+        // Best-effort only — leave it unpinned on any failure or timeout.
+      } finally {
+        clearTimeout(timeout)
+      }
+    }
     const payload: ItineraryInput = {
       title: values.title.trim(),
       category: values.category as ItineraryCategory,
@@ -664,10 +690,8 @@ function ItemDialog({
       start_time: values.start_time || null,
       end_time: values.end_time || null,
       location,
-      // Coordinates only mean anything with a location; a cleared location
-      // drops its pin rather than stranding stale coordinates on the map.
-      latitude: location ? values.latitude ?? null : null,
-      longitude: location ? values.longitude ?? null : null,
+      latitude,
+      longitude,
       url: values.url?.trim() || null,
       notes: values.notes?.trim() || null,
       // The schema already normalised blank/whitespace to null (see above), so
