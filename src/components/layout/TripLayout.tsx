@@ -7,6 +7,8 @@ import {
   Search, Settings, Sun, UserCheck, Vote, HelpCircle,
 } from 'lucide-react'
 import { TripProvider, useTripContext } from '@/hooks/useTrip'
+import { useDestinations } from '@/features/destinations/api'
+import { routeText } from '@/features/destinations/route'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
 import { useUnreadDots, type UnreadRoute } from '@/hooks/useUnreadDots'
@@ -107,6 +109,9 @@ function MoreSheet({ open, onOpenChange, items, unread }: {
 
 function Shell() {
   const { trip, members, me } = useTripContext()
+  // Route across legs when the trip has destinations, else the single
+  // `trips.destination` (#197).
+  const route = routeText(useDestinations(trip.id).data ?? [], trip.destination)
   const { dark, toggle } = useTheme()
   const location = useLocation()
   const [moreOpen, setMoreOpen] = React.useState(false)
@@ -143,8 +148,8 @@ function Shell() {
           </Link>
           <div className="min-w-0 flex-1">
             <p className="truncate font-display text-sm font-bold leading-tight">{trip.name}</p>
-            {trip.destination && (
-              <p className="truncate text-xs text-muted">{trip.destination}</p>
+            {route && (
+              <p className="truncate text-xs text-muted">{route}</p>
             )}
           </div>
           <NotificationBell className="shrink-0" />

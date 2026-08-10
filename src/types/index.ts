@@ -39,6 +39,24 @@ export interface Trip {
   created_at: string
 }
 
+/** An ordered leg of a multi-destination trip (#197, epic #196). Purely
+ *  additive: a trip with zero destinations falls back to `trips.destination`
+ *  and behaves exactly as before. A day is assigned to whichever destination's
+ *  [start_date, end_date] contains it — derived client-side, no FK. */
+export interface Destination {
+  id: string
+  trip_id: string
+  name: string
+  /** Optional geocoded pin from the shared place autocomplete. */
+  latitude: number | null
+  longitude: number | null
+  /** Optional leg date range; a null on either side is an open/dateless leg. */
+  start_date: string | null
+  end_date: string | null
+  position: number
+  created_at: string
+}
+
 export interface Member {
   id: string
   trip_id: string

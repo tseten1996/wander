@@ -5,9 +5,12 @@ import {
   addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay,
   isSameMonth, isToday, parseISO, startOfMonth, startOfWeek,
 } from 'date-fns'
-import { CalendarClock, ChevronLeft, ChevronRight, CreditCard, Plane } from 'lucide-react'
+import { CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useTripContext } from '@/hooks/useTrip'
+import { useDestinations } from '@/features/destinations/api'
+import { hasRange, legForDay } from '@/features/destinations/legs'
+import { legColor, legHeading } from '@/features/destinations/route'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -94,6 +97,10 @@ export default function CalendarPage() {
   const { trip } = useTripContext()
   const events = useCalendarEvents(trip.id)
   const weather = useTripWeather(trip)
+  // Legs that own days (a full date range). Days in a leg's range are tinted
+  // with its colour and labelled below; in-trip days in no leg stay neutral
+  // ("Unassigned"). Empty for a single-destination trip → calendar unchanged.
+  const rangedLegs = (useDestinations(trip.id).data ?? []).filter(hasRange)
   const [month, setMonth] = React.useState(() =>
     trip.start_date ? parseISO(trip.start_date) : new Date()
   )
@@ -106,6 +113,9 @@ export default function CalendarPage() {
     end: endOfWeek(endOfMonth(month), { weekStartsOn: 1 }),
   })
   const selectedEvents = (events.data ?? []).filter((e) => isSameDay(e.date, selected))
+  const selectedLeg = rangedLegs.length
+    ? legForDay(format(selected, 'yyyy-MM-dd'), rangedLegs)
+    : null
 
   return (
     <div>
@@ -129,6 +139,24 @@ export default function CalendarPage() {
           </div>
         </div>
 
+        {rangedLegs.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-1.5" aria-label="Trip destinations">
+            {rangedLegs.map((leg) => (
+              <span
+                key={leg.id}
+                className="flex items-center gap-1.5 rounded-full bg-sunken px-2.5 py-1 text-xs font-medium text-ink-soft"
+              >
+                <span
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: legColor(leg, rangedLegs) }}
+                  aria-hidden
+                />
+                {legHeading(leg)}
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-7 text-center text-xs font-medium text-faint">
           {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
             <div key={d} className="py-1.5">{d}</div>
@@ -146,11 +174,17 @@ export default function CalendarPage() {
               const inTrip =
                 trip.start_date && trip.end_date &&
                 day >= parseISO(trip.start_date) && day <= parseISO(trip.end_date)
+              // Tint the cell by the leg that owns this day (#197); in-trip days
+              // in no leg keep the neutral trip-range tint.
+              const leg = rangedLegs.length ? legForDay(format(day, 'yyyy-MM-dd'), rangedLegs) : null
+              const legTint = leg ? legColor(leg, rangedLegs) : null
               return (
                 <button
                   key={day.toISOString()}
                   type="button"
                   onClick={() => setSelected(day)}
+                  style={legTint ? { backgroundColor: `${legTint}22` } : undefined}
+                  title={leg ? legHeading(leg) : undefined}
                   className={cn(
                     // No forced aspect ratio on mobile: with up to 4 event
                     // dots per day, a strict square can be shorter than its
@@ -160,7 +194,7 @@ export default function CalendarPage() {
                     // reclaims the neat fixed shape once there's more room.
                     'flex min-h-11 cursor-pointer flex-col items-center justify-start gap-0.5 overflow-hidden rounded-lg pt-1.5 text-sm transition-colors sm:aspect-[4/3]',
                     !isSameMonth(day, month) && 'text-faint/60',
-                    inTrip && 'bg-primary-faint/60',
+                    inTrip && !legTint && 'bg-primary-faint/60',
                     isSameDay(day, selected) && 'ring-2 ring-primary',
                     'hover:bg-sunken'
                   )}
@@ -207,7 +241,15 @@ export default function CalendarPage() {
         transition={{ duration: 0.2 }}
         className="mt-5"
       >
-        <h3 className="mb-2.5 font-display font-semibold">{longDate(selected.toISOString())}</h3>
+        <h3 className={cn('font-display font-semibold', !selectedLeg && 'mb-2.5')}>
+          {longDate(selected.toISOString())}
+        </h3>
+        {selectedLeg && (
+          <p className="mb-2.5 flex items-center gap-1.5 text-sm text-muted">
+            <MapPin className="size-3.5 shrink-0 text-primary" aria-hidden />
+            {legHeading(selectedLeg)}
+          </p>
+        )}
         {selectedEvents.length === 0 ? (
           <p className="text-sm text-muted">Nothing on this day.</p>
         ) : (
