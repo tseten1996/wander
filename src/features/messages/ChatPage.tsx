@@ -248,6 +248,11 @@ export default function ChatPage() {
     if (!mention) return []
     return matchMembers(members.filter((m) => m.id !== me.id), mention.query).slice(0, 6)
   }, [mention, members, me.id])
+  // Stable ids so the composer can announce the active option to screen readers
+  // via aria-activedescendant (mirrors place-autocomplete's combobox wiring).
+  const mentionListboxId = React.useId()
+  const mentionOptionId = (i: number) => `${mentionListboxId}-opt-${i}`
+  const mentionOpen = mention !== null && mentionCandidates.length > 0
 
   function syncMention(el: HTMLTextAreaElement) {
     setMention(detectActiveMention(el.value, el.selectionStart ?? el.value.length))
@@ -375,8 +380,9 @@ export default function ChatPage() {
           </div>
         )}
         <div className="relative flex items-end gap-2">
-          {mention && mentionCandidates.length > 0 && (
+          {mentionOpen && (
             <ul
+              id={mentionListboxId}
               role="listbox"
               aria-label="Mention a member"
               className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-line bg-elevated p-1 shadow-lg"
@@ -385,6 +391,7 @@ export default function ChatPage() {
                 <li key={m.id}>
                   <button
                     type="button"
+                    id={mentionOptionId(i)}
                     role="option"
                     aria-selected={i === mentionIndex}
                     // mousedown (not click) so the textarea keeps focus/selection
@@ -395,7 +402,8 @@ export default function ChatPage() {
                     }}
                     onMouseEnter={() => setMentionIndex(i)}
                     className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm',
+                      // min-h-11 keeps each row at the 44px mobile tap floor.
+                      'flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm md:min-h-0',
                       i === mentionIndex ? 'bg-sunken' : 'hover:bg-sunken'
                     )}
                   >
@@ -411,6 +419,11 @@ export default function ChatPage() {
             placeholder="Message the group…"
             value={draft}
             rows={1}
+            role="combobox"
+            aria-expanded={mentionOpen}
+            aria-autocomplete="list"
+            aria-controls={mentionOpen ? mentionListboxId : undefined}
+            aria-activedescendant={mentionOpen ? mentionOptionId(mentionIndex) : undefined}
             onChange={(e) => {
               setDraft(e.target.value)
               syncMention(e.target)
