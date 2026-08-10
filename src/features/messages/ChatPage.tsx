@@ -22,6 +22,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { searchAnchorId } from '@/features/search/anchor'
 import { cn } from '@/lib/utils'
 import { FALLBACK_MEMBER_COLOR } from '@/lib/colors'
+import { MentionText } from './MentionText'
+import {
+  applyMention, detectActiveMention, matchMembers, mentionsToPlainText,
+  type ActiveMention,
+} from './mentions'
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
 const MESSAGE_MAX_LENGTH = 4000
@@ -113,7 +118,7 @@ function Bubble({
             )}
           >
             <span className="font-medium">{repliedAuthor?.display_name ?? 'Someone'}: </span>
-            <span className="line-clamp-2">{repliedTo.content}</span>
+            <span className="line-clamp-2">{mentionsToPlainText(repliedTo.content)}</span>
           </div>
         )}
 
@@ -156,7 +161,7 @@ function Bubble({
                 : 'rounded-tl-sm border border-line bg-surface'
             )}
           >
-            {message.content}
+            <MentionText content={message.content} onPrimary={mine} />
           </div>
         )}
 
@@ -225,14 +230,49 @@ function Bubble({
 }
 
 export default function ChatPage() {
-  const { trip, me, membersById } = useTripContext()
+  const { trip, me, members, membersById } = useTripContext()
   const messages = useMessages(trip.id)
   const sendMessage = useSendMessage(trip.id, me.id)
 
   const [draft, setDraft] = React.useState('')
   const [replyTo, setReplyTo] = React.useState<MessageWithReactions | null>(null)
   const bottomRef = React.useRef<HTMLDivElement>(null)
+  const composerRef = React.useRef<HTMLTextAreaElement>(null)
   const count = messages.data?.length ?? 0
+
+  // @-mention autocomplete (#193): the active `@query` under the caret and the
+  // highlighted candidate. Everyone but yourself is mentionable.
+  const [mention, setMention] = React.useState<ActiveMention | null>(null)
+  const [mentionIndex, setMentionIndex] = React.useState(0)
+  const mentionCandidates = React.useMemo(() => {
+    if (!mention) return []
+    return matchMembers(members.filter((m) => m.id !== me.id), mention.query).slice(0, 6)
+  }, [mention, members, me.id])
+  // Stable ids so the composer can announce the active option to screen readers
+  // via aria-activedescendant (mirrors place-autocomplete's combobox wiring).
+  const mentionListboxId = React.useId()
+  const mentionOptionId = (i: number) => `${mentionListboxId}-opt-${i}`
+  const mentionOpen = mention !== null && mentionCandidates.length > 0
+
+  function syncMention(el: HTMLTextAreaElement) {
+    setMention(detectActiveMention(el.value, el.selectionStart ?? el.value.length))
+  }
+
+  function pickMention(member: { id: string; display_name: string }) {
+    if (!mention) return
+    const next = applyMention(draft, mention, member)
+    setDraft(next.text)
+    setMention(null)
+    setMentionIndex(0)
+    // Restore focus and caret after React re-renders the controlled textarea.
+    requestAnimationFrame(() => {
+      const el = composerRef.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(next.caret, next.caret)
+      }
+    })
+  }
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -253,6 +293,7 @@ export default function ChatPage() {
     // Optimistically clear the composer so a successful send feels instant.
     setDraft('')
     setReplyTo(null)
+    setMention(null)
     try {
       await sendMessage.mutateAsync({ content, replyTo: reply })
     } catch {
@@ -277,7 +318,7 @@ export default function ChatPage() {
               <Pin className="mt-0.5 size-3 shrink-0 text-accent" />
               <span className="line-clamp-1">
                 <strong>{(m.member_id && membersById.get(m.member_id)?.display_name) ?? 'Someone'}:</strong>{' '}
-                {m.content}
+                {mentionsToPlainText(m.content)}
               </span>
             </p>
           ))}
@@ -331,20 +372,88 @@ export default function ChatPage() {
         {replyTo && (
           <div className="mb-2 flex items-center justify-between rounded-lg bg-sunken px-3 py-1.5 text-xs">
             <span className="line-clamp-1 text-muted">
-              Replying to <strong>{replyAuthor?.display_name ?? 'someone'}</strong>: {replyTo.content}
+              Replying to <strong>{replyAuthor?.display_name ?? 'someone'}</strong>: {mentionsToPlainText(replyTo.content)}
             </span>
             <Button variant="ghost" size="icon" className="size-6" onClick={() => setReplyTo(null)} aria-label="Cancel reply">
               <X className="size-3.5" />
             </Button>
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <div className="relative flex items-end gap-2">
+          {mentionOpen && (
+            <ul
+              id={mentionListboxId}
+              role="listbox"
+              aria-label="Mention a member"
+              className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-line bg-elevated p-1 shadow-lg"
+            >
+              {mentionCandidates.map((m, i) => (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    id={mentionOptionId(i)}
+                    role="option"
+                    aria-selected={i === mentionIndex}
+                    // mousedown (not click) so the textarea keeps focus/selection
+                    // through the insert; preventDefault stops the blur.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      pickMention(m)
+                    }}
+                    onMouseEnter={() => setMentionIndex(i)}
+                    className={cn(
+                      // min-h-11 keeps each row at the 44px mobile tap floor.
+                      'flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm md:min-h-0',
+                      i === mentionIndex ? 'bg-sunken' : 'hover:bg-sunken'
+                    )}
+                  >
+                    <MemberAvatar name={m.display_name} color={m.color} size="sm" />
+                    <span className="truncate">{m.display_name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <Textarea
+            ref={composerRef}
             placeholder="Message the group…"
             value={draft}
             rows={1}
-            onChange={(e) => setDraft(e.target.value)}
+            role="combobox"
+            aria-expanded={mentionOpen}
+            aria-autocomplete="list"
+            aria-controls={mentionOpen ? mentionListboxId : undefined}
+            aria-activedescendant={mentionOpen ? mentionOptionId(mentionIndex) : undefined}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              syncMention(e.target)
+              setMentionIndex(0)
+            }}
+            onSelect={(e) => syncMention(e.currentTarget)}
             onKeyDown={(e) => {
+              const picking = mention && mentionCandidates.length > 0
+              if (picking) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setMentionIndex((i) => (i + 1) % mentionCandidates.length)
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
+                  return
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault()
+                  pickMention(mentionCandidates[mentionIndex])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setMention(null)
+                  return
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void send()

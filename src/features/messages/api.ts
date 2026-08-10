@@ -2,9 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
+import { notify } from '@/lib/notify'
+import { extractMentionIds, mentionsToPlainText } from './mentions'
 import type { Message, MessageReaction } from '@/types'
 
 export type MessageWithReactions = Message & { message_reactions: MessageReaction[] }
+
+/** Cap the mention notification's title snapshot so a long message doesn't
+ *  bloat the inbox row. */
+const MENTION_TITLE_MAX = 140
 
 export function useMessages(tripId: string) {
   return useQuery({
@@ -31,13 +37,32 @@ export function useSendMessage(tripId: string, memberId: string) {
   const invalidate = useInvalidateMessages(tripId)
   return useMutation({
     mutationFn: async ({ content, replyTo }: { content: string; replyTo: string | null }) => {
-      const { error } = await supabase.from('messages').insert({
-        trip_id: tripId,
-        member_id: memberId,
-        content,
-        reply_to: replyTo,
-      })
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          trip_id: tripId,
+          member_id: memberId,
+          content,
+          reply_to: replyTo,
+        })
+        .select('id')
+        .single()
       if (error) throw error
+      // Ping every member @-mentioned in the message (#193). notify() drops the
+      // sender and duplicates, so a self-mention or repeated mention is a no-op.
+      const mentioned = extractMentionIds(content)
+      if (mentioned.length > 0) {
+        const plain = mentionsToPlainText(content)
+        notify({
+          tripId,
+          actorId: memberId,
+          recipientIds: mentioned,
+          type: 'mention',
+          entityId: data.id,
+          title:
+            plain.length > MENTION_TITLE_MAX ? `${plain.slice(0, MENTION_TITLE_MAX - 1)}…` : plain,
+        })
+      }
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not send that message')),
