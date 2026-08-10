@@ -291,7 +291,8 @@ export interface AvailabilityResponse {
   created_at: string
 }
 
-export type NotificationType = 'checklist_assigned' | 'poll_opened' | 'expense_owed'
+export type NotificationType =
+  | 'checklist_assigned' | 'poll_opened' | 'expense_owed' | 'mention'
 
 export interface Notification {
   id: string

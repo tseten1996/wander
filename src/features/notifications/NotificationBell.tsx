@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { Bell, CheckCheck, Inbox, ListChecks, PiggyBank, Vote } from 'lucide-react'
+import { AtSign, Bell, CheckCheck, Inbox, ListChecks, PiggyBank, Vote } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,7 @@ const TYPE_META: Record<NotificationType, { tab: string; icon: LucideIcon; verb:
   checklist_assigned: { tab: 'checklist', icon: ListChecks, verb: 'assigned you a task' },
   poll_opened: { tab: 'polls', icon: Vote, verb: 'opened a poll' },
   expense_owed: { tab: 'budget', icon: PiggyBank, verb: 'added an expense you owe on' },
+  mention: { tab: 'chat', icon: AtSign, verb: 'mentioned you' },
 }
 
 /** Deep link to the relevant tab, flashing the entity when it still exists. */
@@ -171,7 +172,7 @@ export function NotificationBell({ className }: { className?: string }) {
             <EmptyState
               icon={Inbox}
               title="You’re all caught up"
-              description="When someone assigns you a task, opens a poll, or logs an expense you owe, it shows up here."
+              description="When someone assigns you a task, opens a poll, logs an expense you owe, or @-mentions you in chat, it shows up here."
             />
           </div>
         ) : (
