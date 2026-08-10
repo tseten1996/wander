@@ -7,6 +7,8 @@ import {
 } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { useInviteLink } from '@/lib/invite'
+import { useDestinations } from '@/features/destinations/api'
+import { routeText } from '@/features/destinations/route'
 import { useDashboard, planningProgress } from './api'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
@@ -25,6 +27,9 @@ const fadeUp = {
 function Hero() {
   const { trip, members, isOwner } = useTripContext()
   const { copied, copy } = useInviteLink(trip)
+  // The route across legs (Paris → Amsterdam → Berlin) when the trip has
+  // destinations, falling back to the single `trips.destination` (#197).
+  const route = routeText(useDestinations(trip.id).data ?? [], trip.destination)
   const days = trip.start_date ? daysUntil(trip.start_date) : null
   const started = days != null && days <= 0
   const ended = trip.end_date ? daysUntil(trip.end_date) < 0 : false
@@ -59,9 +64,10 @@ function Hero() {
         <div className="relative flex min-h-44 flex-col justify-end p-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              {trip.destination && (
+              {route && (
                 <p className="flex items-center gap-1.5 text-sm font-medium text-white/80">
-                  <MapPin className="size-4" /> {trip.destination}
+                  <MapPin className="size-4 shrink-0" />
+                  <span className="truncate">{route}</span>
                 </p>
               )}
               <h1 className="mt-1 font-display text-3xl font-bold tracking-tight md:text-4xl">

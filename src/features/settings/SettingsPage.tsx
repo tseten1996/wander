@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
+import { DestinationsCard } from '@/features/destinations/DestinationsCard'
 import { CoverPicker } from '@/features/trips/CoverPicker'
 import { DuplicateTripDialog } from '@/features/trips/DuplicateTripDialog'
 import { isPresetCover } from '@/features/trips/covers'
@@ -779,6 +780,7 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Trip details, members and your profile." />
       <div className="space-y-5">
         {isOwner && <TripInfoCard />}
+        {isOwner && <DestinationsCard />}
         <ProfileCard />
         <InviteCard />
         {isOwner && <PublicShareCard />}

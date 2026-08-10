@@ -24,6 +24,8 @@ import {
   useReorderItinerary, useUpdateItineraryItem, type ItineraryInput,
 } from './api'
 import { ITINERARY_META } from './meta'
+import { useDestinations } from '@/features/destinations/api'
+import { groupDaysByLeg, hasLegs } from '@/features/destinations/legs'
 import { buildDayIndex, type DayInfo } from './days'
 import { buildDayDirections } from './directions'
 import { onColor } from '@/lib/colors'
@@ -52,13 +54,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { cn, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
+import { cn, dateRange, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { optionalAmount } from '@/lib/forms'
 import { useTripWeather } from '@/hooks/useWeather'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
 import type { NearbyPlace } from '@/lib/places'
-import type { ItineraryCategory, ItineraryItem } from '@/types'
+import type { Destination, ItineraryCategory, ItineraryItem } from '@/types'
 
 // Leaflet + the map view load only when the Map tab is opened, keeping the
 // map library out of the itinerary page's initial chunk (bundle budget).
@@ -554,6 +556,25 @@ function DaySection({
   )
 }
 
+/**
+ * A leg header banding the days of one destination together (#197). Rendered
+ * only when the trip has dated legs; days that fall in no leg's range group
+ * under an "Unassigned" header so nothing is ever hidden.
+ */
+function LegHeader({ leg }: { leg: Destination | null }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line pb-1.5">
+      <span className="flex items-center gap-1.5 font-display text-lg font-bold">
+        <MapPin className="size-4 shrink-0 self-center text-primary" aria-hidden />
+        {leg ? leg.name : 'Unassigned'}
+      </span>
+      {leg && (leg.start_date || leg.end_date) && (
+        <span className="text-xs font-medium text-muted">{dateRange(leg.start_date, leg.end_date)}</span>
+      )}
+    </div>
+  )
+}
+
 const CATEGORY_OPTIONS = Object.entries(ITINERARY_META) as [
   ItineraryCategory,
   (typeof ITINERARY_META)[ItineraryCategory],
@@ -925,6 +946,7 @@ function PasteBookingDialog({
 export default function ItineraryPage() {
   const { trip, me } = useTripContext()
   const itinerary = useItinerary(trip.id)
+  const destinations = useDestinations(trip.id).data ?? []
   const weather = useTripWeather(trip)
   // One-tap "Add to itinerary" from a Nearby map suggestion (#165). A found
   // place becomes a plain itinerary item — name + coordinates prefilled, day
@@ -1037,13 +1059,31 @@ export default function ItineraryPage() {
   const datedDays = new Set<string>()
   for (const key of byDay.keys()) if (key) datedDays.add(key)
   for (const s of spanItems) for (const d of coveredDays(s)) datedDays.add(d)
-  const days: (string | null)[] = [...datedDays].sort((a, b) => a.localeCompare(b))
-  if (byDay.has(null)) days.push(null) // undated bucket always sinks to the end
+  const sortedDatedDays = [...datedDays].sort((a, b) => a.localeCompare(b))
+  const hasUndated = byDay.has(null) // undated bucket always sinks to the end
+  // Group the dated days under their destination leg (#197). With no dated
+  // legs this is a single headerless group of every day, so the list renders
+  // exactly as before; with legs, days outside every range fall under an
+  // "Unassigned" group. The undated bucket stays separate, below the legs.
+  const legged = hasLegs(destinations)
+  const legGroups = groupDaysByLeg(sortedDatedDays, destinations)
   // Which spans cover each day, precomputed once so DaySection stays a pure view.
   const spansByDay = new Map<string, ItineraryItem[]>()
   for (const s of spanItems) for (const d of coveredDays(s)) {
     spansByDay.set(d, [...(spansByDay.get(d) ?? []), s])
   }
+  const renderDay = (day: string | null) => (
+    <DaySection
+      key={day ?? 'unscheduled'}
+      day={day}
+      items={byDay.get(day) ?? []}
+      spanning={day ? spansByDay.get(day) ?? [] : []}
+      weather={day ? weather.data?.get(day) : undefined}
+      dayInfo={day ? dayIndex.get(day) : undefined}
+      selectedId={selectedId}
+      onSelect={toggleSelect}
+    />
+  )
 
   return (
     <div>
@@ -1118,18 +1158,13 @@ export default function ItineraryPage() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              {days.map((day) => (
-                <DaySection
-                  key={day ?? 'unscheduled'}
-                  day={day}
-                  items={byDay.get(day) ?? []}
-                  spanning={day ? spansByDay.get(day) ?? [] : []}
-                  weather={day ? weather.data?.get(day) : undefined}
-                  dayInfo={day ? dayIndex.get(day) : undefined}
-                  selectedId={selectedId}
-                  onSelect={toggleSelect}
-                />
+              {legGroups.map((group) => (
+                <div key={group.key} className="space-y-8">
+                  {legged && <LegHeader leg={group.leg} />}
+                  {group.days.map((day) => renderDay(day))}
+                </div>
               ))}
+              {hasUndated && renderDay(null)}
             </motion.div>
           </TabsContent>
           <TabsContent value="map">
