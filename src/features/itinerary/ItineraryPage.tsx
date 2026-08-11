@@ -49,7 +49,9 @@ import {
 import { cn, dateRange, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
+import { useTempUnit } from '@/hooks/useTempUnit'
 import { describeWeather, type DailyWeather } from '@/lib/weather'
+import { formatTemp } from '@/lib/units'
 import type { NearbyPlace } from '@/lib/places'
 import type { Destination, ItineraryCategory, ItineraryItem } from '@/types'
 
@@ -385,6 +387,7 @@ function DaySection({
 }) {
   const { trip } = useTripContext()
   const reorder = useReorderItinerary(trip.id)
+  const { unit } = useTempUnit()
   // Same-day timed items whose intervals intersect are flagged inline. Skipped
   // for the "Not scheduled yet" bucket, where items share no actual day.
   const conflicts = React.useMemo(
@@ -442,16 +445,16 @@ function DaySection({
         })()}
         {weather && (() => {
           const { label, Icon } = describeWeather(weather.code)
-          const hi = Math.round(weather.tempMax)
-          const lo = Math.round(weather.tempMin)
+          const hi = formatTemp(weather.tempMax, unit)
+          const lo = formatTemp(weather.tempMin, unit)
           return (
             <span
               className="ml-auto flex items-center gap-1 self-center rounded-full bg-sunken px-2 py-0.5 text-xs font-normal text-muted"
-              title={`${label} · High ${hi}° Low ${lo}°`}
+              title={`${label} · High ${hi} Low ${lo}`}
             >
               <Icon className="size-3.5 shrink-0" aria-hidden />
-              <span className="tabular-nums">{hi}° / {lo}°</span>
-              <span className="sr-only">{`${label}, high ${hi} degrees, low ${lo} degrees`}</span>
+              <span className="tabular-nums">{hi} / {lo}</span>
+              <span className="sr-only">{`${label}, high ${hi}, low ${lo}`}</span>
             </span>
           )
         })()}

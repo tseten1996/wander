@@ -17,7 +17,9 @@ import { Card } from '@/components/ui/card'
 import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, formatTime, longDate } from '@/lib/utils'
 import { useTripWeather } from '@/hooks/useWeather'
+import { useTempUnit } from '@/hooks/useTempUnit'
 import { describeWeather } from '@/lib/weather'
+import { formatTemp } from '@/lib/units'
 import type { BudgetEntry, ChecklistItem, ItineraryItem } from '@/types'
 
 interface CalendarEvent {
@@ -97,6 +99,7 @@ export default function CalendarPage() {
   const { trip } = useTripContext()
   const events = useCalendarEvents(trip.id)
   const weather = useTripWeather(trip)
+  const { unit } = useTempUnit()
   // Legs that own days (a full date range). Days in a leg's range are tinted
   // with its colour and labelled below; in-trip days in no leg stay neutral
   // ("Unassigned"). Empty for a single-destination trip → calendar unchanged.
@@ -214,16 +217,16 @@ export default function CalendarPage() {
                   </span>
                   {dayWeather && (() => {
                     const { label, Icon } = describeWeather(dayWeather.code)
-                    const hi = Math.round(dayWeather.tempMax)
-                    const lo = Math.round(dayWeather.tempMin)
+                    const hi = formatTemp(dayWeather.tempMax, unit)
+                    const lo = formatTemp(dayWeather.tempMin, unit)
                     return (
                       <span
                         className="mt-auto flex items-center gap-0.5 pb-0.5 text-[10px] leading-none text-muted"
-                        title={`${label} · High ${hi}° Low ${lo}°`}
+                        title={`${label} · High ${hi} Low ${lo}`}
                       >
                         <Icon className="size-3 shrink-0" aria-hidden />
-                        <span className="tabular-nums">{hi}°</span>
-                        <span className="sr-only">{`${label}, high ${hi} degrees, low ${lo} degrees`}</span>
+                        <span className="tabular-nums">{hi}</span>
+                        <span className="sr-only">{`${label}, high ${hi}, low ${lo}`}</span>
                       </span>
                     )
                   })()}

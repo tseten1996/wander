@@ -40,11 +40,27 @@ function isWetCode(code: number): boolean {
 }
 
 /**
+ * Format a Celsius temperature for a nudge message. Defaults to °C so the
+ * behaviour is unchanged when no formatter is supplied — the display unit is
+ * injected by the caller (`WeatherNudges`) rather than imported here, so this
+ * module keeps its single runtime dependency (lucide-react) and stays directly
+ * importable by the Node unit tests without any path-alias resolution.
+ */
+export type TempFormatter = (celsius: number) => string
+
+const defaultFormatTemp: TempFormatter = (c) => `${Math.round(c)}°C`
+
+/**
  * Derive advisory packing nudges from the trip's daily forecast. Purely
  * additive: at most one nudge each for rain, cold, and heat, and nothing at all
- * when the forecast is unavailable.
+ * when the forecast is unavailable. Temperatures in the copy are rendered
+ * through `formatTemp`, so the member's unit preference is respected without
+ * moving the thresholds off their internal Celsius scale.
  */
-export function derivePackingSuggestions(days: DailyWeather[]): PackingSuggestion[] {
+export function derivePackingSuggestions(
+  days: DailyWeather[],
+  formatTemp: TempFormatter = defaultFormatTemp,
+): PackingSuggestion[] {
   if (days.length === 0) return []
 
   const suggestions: PackingSuggestion[] = []
@@ -69,7 +85,7 @@ export function derivePackingSuggestions(days: DailyWeather[]): PackingSuggestio
     suggestions.push({
       id: 'cold',
       Icon: Snowflake,
-      message: `Lows near ${Math.round(coldest)}°C — bring warm layers.`,
+      message: `Lows near ${formatTemp(coldest)} — bring warm layers.`,
       items: [{ name: 'Warm layers', category: 'clothes' }],
     })
   }
@@ -79,7 +95,7 @@ export function derivePackingSuggestions(days: DailyWeather[]): PackingSuggestio
     suggestions.push({
       id: 'heat',
       Icon: Sun,
-      message: `Highs around ${Math.round(hottest)}°C — sun protection and water.`,
+      message: `Highs around ${formatTemp(hottest)} — sun protection and water.`,
       items: [
         { name: 'Sunscreen', category: 'toiletries' },
         { name: 'Sunglasses', category: 'misc' },
