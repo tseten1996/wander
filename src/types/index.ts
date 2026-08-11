@@ -188,6 +188,12 @@ export interface BudgetEntry {
   /** Member ids that share this cost in settle-up. null / empty = shared by all
    *  current members (the historic default) — see settlement.ts. */
   participants: string[] | null
+  /** Per-sharer weights for an unequal split (#203): a `{ member_id: weight }`
+   *  map. null / empty = equal split across `participants` (the historic
+   *  default). When present, the keys are authoritative for *who* shares and
+   *  each member's cost is `amount * weight_i / Σweights` — see settlement.ts.
+   *  Weights encode shares, exact amounts, or percentages interchangeably. */
+  shares: Record<string, number> | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null

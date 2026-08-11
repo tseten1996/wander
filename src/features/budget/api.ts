@@ -39,6 +39,9 @@ export interface BudgetInput {
   exchange_rate: number | null
   /** Members who share this cost; null = shared by all current members. */
   participants: string[] | null
+  /** Per-sharer weights for an unequal split (#203); null = equal split. When
+   *  present its keys are the sharers — see settlement.ts. */
+  shares: Record<string, number> | null
   paid_by: string | null
   entry_date: string | null
   notes: string | null
@@ -82,8 +85,17 @@ export function useCreateBudgetEntry(tripId: string, memberId: string, memberIds
       // unset), minus the payer themselves. A merely estimated/unpaid entry owes
       // no one, so nothing is sent.
       if (input.actual != null && input.paid_by) {
+        // Who owes on this expense, in settle-up's own precedence: a weighted
+        // split's keys (#203) win, else the named participants (#104), else
+        // everyone. Keeps the "you owe" notification aimed at exactly the
+        // members the settle-up math will charge.
+        const weighted = input.shares ? Object.keys(input.shares) : []
         const sharers =
-          input.participants && input.participants.length > 0 ? input.participants : memberIds
+          weighted.length > 0
+            ? weighted
+            : input.participants && input.participants.length > 0
+              ? input.participants
+              : memberIds
         notify({
           tripId,
           actorId: memberId,

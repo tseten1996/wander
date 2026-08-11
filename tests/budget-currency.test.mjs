@@ -184,6 +184,132 @@ test('computeBalances: if every participant left, the cost falls back to everyon
   assert.equal(byId.b.net, -50)
 })
 
+/* ── Weighted / unequal splits (#203) ─────────────────────────────────────── */
+
+test('computeBalances: a shares map divides an entry by weight, not equally (#203)', () => {
+  // A fronts a $120 room split 2:1 — A took the suite, B the bunk. A bears
+  // 2/3 ($80), B 1/3 ($40), instead of $60 each. A net = 120 − 80 = +40.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const room = entry({ actual: 120, paid_by: 'a', shares: { a: 2, b: 1 } })
+  const byId = Object.fromEntries(
+    computeBalances([room], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 40)
+  assert.equal(byId.b.net, -40)
+})
+
+test('computeBalances: exact-amount weights reproduce the entered amounts (#203)', () => {
+  // "By exact amount" stores the per-member amounts as weights; a $100 bill
+  // split $30/$70 must charge exactly that. Weight sum equals the total, so
+  // amount * weight_i / Σ = weight_i.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const bill = entry({ actual: 100, paid_by: 'a', shares: { a: 30, b: 70 } })
+  const byId = Object.fromEntries(
+    computeBalances([bill], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 70) // fronted 100, own share 30
+  assert.equal(byId.b.net, -70)
+})
+
+test('computeBalances: percentage weights split by proportion (#203)', () => {
+  // "By percent" stores percentages as weights (they sum to 100), so a $200
+  // cost at 25%/75% charges $50 / $150.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const e = entry({ actual: 200, paid_by: 'a', shares: { a: 25, b: 75 } })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 150) // fronted 200, own share 50
+  assert.equal(byId.b.net, -150)
+})
+
+test('computeBalances: weighted split settles on the converted amount (#203)', () => {
+  // Trip USD. A €100 hotel frozen at $110, paid by A, weighted 1:3 between A
+  // and B. Settle-up must weight the $110 converted figure, not the raw €100:
+  // A bears 110/4 = 27.5, B bears 82.5.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const hotel = entry({
+    actual: 100, currency: 'EUR', actual_converted: 110, paid_by: 'a',
+    shares: { a: 1, b: 3 },
+  })
+  const byId = Object.fromEntries(
+    computeBalances([hotel], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.paid, 110)
+  assert.equal(byId.a.net, 82.5) // fronted 110, own share 27.5
+  assert.equal(byId.b.net, -82.5)
+})
+
+test('computeBalances: a weighted sharer who left redistributes by remaining weight (#203)', () => {
+  // Room split 1:1:2 among A, B, C, but C has since left. The cost now divides
+  // by the two remaining weights (1:1) over the $100 → $50 each, not a third.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const room = entry({ actual: 100, paid_by: 'a', shares: { a: 1, b: 1, c: 2 } })
+  const byId = Object.fromEntries(
+    computeBalances([room], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // fronted 100, own share 50
+  assert.equal(byId.b.net, -50)
+})
+
+test('computeBalances: non-positive / non-numeric weights are dropped (#203)', () => {
+  // Defensive: shares is client-written. A zero weight means "no share" and a
+  // NaN is meaningless — both must be excluded so they never poison the
+  // division. $90 with weights {a:2, b:1, c:0} splits 2:1 over A and B only.
+  const members = ['a', 'b', 'c'].map((id) => ({ id, name: id }))
+  const e = entry({ actual: 90, paid_by: 'a', shares: { a: 2, b: 1, c: 0 } })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 30) // fronted 90, own share 60
+  assert.equal(byId.b.net, -30)
+  assert.equal(byId.c.net, 0) // zero weight → no share
+})
+
+test('computeBalances: a shares map whose members all left falls back to equal (#203)', () => {
+  // Every weighted sharer has departed → no usable weight, so the cost reverts
+  // to a shared-by-all equal split rather than being dropped, keeping the payer
+  // whole (same safety net as the participants path).
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const e = entry({ actual: 100, paid_by: 'a', shares: { x: 1, y: 3 } })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // equal split across current members
+  assert.equal(byId.b.net, -50)
+})
+
+test('computeBalances: an empty shares map behaves as an equal split (#203 additive)', () => {
+  // null and {} both mean "no weighting" — existing rows (shares absent) and a
+  // cleared map settle exactly as the equal participants split, so no backfill
+  // is needed.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  for (const shares of [null, {}, undefined]) {
+    const e = entry({ actual: 80, paid_by: 'a', shares })
+    const byId = Object.fromEntries(
+      computeBalances([e], members).map((b) => [b.member.id, b]),
+    )
+    assert.equal(byId.a.net, 40)
+    assert.equal(byId.b.net, -40)
+  }
+})
+
+test('computeBalances: shares override participants when both are present (#203)', () => {
+  // A weighted map is authoritative for who shares. If a stale `participants`
+  // set disagrees, the weights win — C, absent from the map, owes nothing even
+  // though participants still lists them.
+  const members = ['a', 'b', 'c'].map((id) => ({ id, name: id }))
+  const e = entry({
+    actual: 100, paid_by: 'a', participants: ['a', 'b', 'c'], shares: { a: 1, b: 1 },
+  })
+  const byId = Object.fromEntries(
+    computeBalances([e], members).map((b) => [b.member.id, b]),
+  )
+  assert.equal(byId.a.net, 50) // 1:1 over A and B only
+  assert.equal(byId.b.net, -50)
+  assert.equal(byId.c.net, 0)
+})
+
 test('computeBalances: a recorded repayment nets the debtor and creditor toward zero (#125)', () => {
   // A fronted a $100 cost split two ways → A +50, B -50. B then Venmos A $50.
   // Recording that repayment must square both sides to zero, not leave B still

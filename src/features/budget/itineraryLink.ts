@@ -28,8 +28,8 @@ export function itineraryCategoryToBudget(category: ItineraryCategory): BudgetCa
  * Cost field uses `trip.currency`), so the draft is trip-currency only — no FX
  * freezing, none of the `*_converted` machinery. The amount seeds `estimated`
  * (a planned cost), leaving `actual` for what someone really pays later, and
- * the split defaults to everyone (`participants: null`) exactly like a hand-
- * entered expense.
+ * the split defaults to everyone, equally (`participants: null`, `shares: null`)
+ * exactly like a hand-entered expense.
  */
 export function budgetDraftFromItinerary(item: ItineraryItem): BudgetInput {
   return {
@@ -42,6 +42,7 @@ export function budgetDraftFromItinerary(item: ItineraryItem): BudgetInput {
     actual_converted: null,
     exchange_rate: null,
     participants: null,
+    shares: null,
     paid_by: null,
     entry_date: item.day,
     notes: null,

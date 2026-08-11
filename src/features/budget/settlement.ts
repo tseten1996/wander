@@ -13,6 +13,16 @@ import { repaymentTripAmount, tripActual } from './amounts'
  * they fronted minus the sum of their per-entry shares. Positive = they're owed
  * money, negative = they owe. Shared / not-yet-paid entries never create a debt.
  *
+ * An entry may also carry an unequal split (issue 203): a `shares` map of
+ * `{ member_id: weight }`. When present it is authoritative — the keys are the
+ * sharers and each bears `amount * weight_i / Σweights` instead of an equal
+ * fraction. Shares subsume `participants` (the same weights encode "by shares",
+ * "by exact amount", and "by percent" — the mode is a UI concern). A null/empty
+ * map falls through to the equal `participants` split above, so unweighted rows
+ * are untouched. Departed members and non-positive/non-numeric weights are
+ * dropped defensively; if nothing valid survives, the cost falls back to the
+ * equal split so the payer is still made whole rather than the amount dropped.
+ *
  * If every named participant of an entry has since left the trip, the entry
  * falls back to being shared by all current members so the money paid is still
  * accounted for rather than silently dropped; a participant who left while
@@ -47,6 +57,30 @@ export interface Transfer {
 /** Half a cent — smooths floating-point dust so near-zero balances read as settled. */
 const EPSILON = 0.005
 
+/**
+ * The valid, current-member weights of an entry's `shares` map (issue 203).
+ *
+ * Mirrors the defensive posture the participant split takes: `shares` is
+ * client-written, so keep only entries whose key is still a trip member and
+ * whose weight is a finite positive number — a zero, negative, or NaN weight is
+ * meaningless in a split and must never reach the division. Returns an empty map
+ * when there is no usable weight, which the caller reads as "fall back to the
+ * equal split".
+ */
+function cleanShares(
+  shares: Record<string, number> | null | undefined,
+  isMember: Set<string>,
+): Map<string, number> {
+  const weights = new Map<string, number>()
+  if (!shares) return weights
+  for (const [id, weight] of Object.entries(shares)) {
+    if (!isMember.has(id)) continue
+    if (typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0) continue
+    weights.set(id, weight)
+  }
+  return weights
+}
+
 export function computeBalances(
   entries: BudgetEntry[],
   members: Member[],
@@ -63,21 +97,38 @@ export function computeBalances(
     if (amount == null || !e.paid_by) continue
     if (!isMember.has(e.paid_by)) continue // payer is no longer a member — skip
 
-    // Who shares this cost: the entry's participants restricted to current
-    // members, or everyone when unset/empty (the historic default). If every
-    // named participant has since left, fall back to everyone so the amount is
-    // still accounted for rather than dropped.
+    paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + amount)
+
+    // Unequal split (#203): a `shares` map weights each sharer, so the cost
+    // divides proportionally (`amount * weight_i / Σweights`) rather than
+    // evenly. It is authoritative when it holds at least one usable weight —
+    // its keys are the sharers. A map that is empty, or whose every sharer has
+    // since left the trip, yields no weights and falls through to the equal
+    // split below, so the payment is still accounted for.
+    const weights = cleanShares(e.shares, isMember)
+    if (weights.size > 0) {
+      let totalWeight = 0
+      for (const w of weights.values()) totalWeight += w
+      for (const [id, w] of weights) {
+        owed.set(id, (owed.get(id) ?? 0) + (amount * w) / totalWeight)
+      }
+      continue
+    }
+
+    // Who shares this cost equally: the entry's participants restricted to
+    // current members, or everyone when unset/empty (the historic default). If
+    // every named participant has since left, fall back to everyone so the
+    // amount is still accounted for rather than dropped.
     //
     // `participants` is client-written and `budget_update` is gated only by
     // `is_trip_member`, so any member can hand-craft the array via PostgREST.
     // Dedupe before splitting: a repeated id like ['a','a','b'] would otherwise
-    // give A a double share — the arbitrary-weighted split this slice scopes
-    // out — with no UI trace. A `CHECK` on the column backs this at the DB
+    // give A a double share — the arbitrary-weighted split now handled above via
+    // `shares` — with no UI trace. A `CHECK` on the column backs this at the DB
     // boundary; the `Set` here keeps the math correct regardless of row content.
     const named = [...new Set((e.participants ?? []).filter((id) => isMember.has(id)))]
     const sharers = named.length > 0 ? named : memberIds
 
-    paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + amount)
     const share = amount / sharers.length
     for (const id of sharers) owed.set(id, (owed.get(id) ?? 0) + share)
   }
