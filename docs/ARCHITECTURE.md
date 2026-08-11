@@ -7,6 +7,9 @@ through an **invite link** in under 15 seconds — no accounts, no passwords.
 This document explains the overall approach, the database schema, and the
 folder structure. Read it before touching the code.
 
+For how AI fits on top of all of this — and what it is deliberately not allowed
+to do — see [`AI-ARCHITECTURE.md`](./AI-ARCHITECTURE.md).
+
 ---
 
 ## 1. High-level approach
