@@ -133,7 +133,104 @@ work, not as an extension.
 
 ---
 
-## 4. The service boundary
+## 4. Credentials and the provider
+
+### 4.1 This is Wander's first true secret
+
+`#191` establishes the distinction that resolves most credential questions: a
+**public credential with scoped authority** (the Supabase anon key, a
+referrer-locked geocoding key) is safe to ship because its blast radius is bounded
+by something other than secrecy. A **true secret** must never reach the client.
+
+Its top recommendation — *prefer having no secret at all* — has worked every time
+so far, and **it does not survive contact with this case.** There is no
+referrer-locked public LLM key; these credentials are bearer tokens carrying
+billing authority. AI is the first feature that genuinely needs somewhere to put
+a secret, which is why it depends on #191 rather than merely relating to it.
+
+### 4.2 Where the key lives
+
+```bash
+# From a developer machine, once. Never from CI.
+supabase secrets set OPENROUTER_API_KEY=sk-or-… --project-ref qqmfxbcroxunvtgxxray
+```
+
+Read it in the function as `Deno.env.get('OPENROUTER_API_KEY')`. That is the
+whole mechanism. Rotation is the same command plus a function redeploy.
+
+Three places it must never go:
+
+| Never | Why |
+|---|---|
+| `VITE_*` at build time | Ships inside the JS bundle, readable in devtools. #191 calls this *laundering a secret into a public artifact* — it looks legitimate because CI is involved and is exactly as exposed as hardcoding it. |
+| GitHub Secrets | Unnecessary: `supabase secrets set` writes straight to the project, so the key never enters a workflow environment and can never be caught by a `set -x` or a debug print. The repo already holds `SUPABASE_ACCESS_TOKEN` and the DB password; a third credential in a system that does not need it is pure downside. Fewer copies, fewer leaks. |
+| Supabase Vault | Trust-domain separation (#191). A Vault secret decrypts inside Postgres, which already holds trip data, member identities and invite codes — one Postgres compromise would take both the data and the credential. |
+
+### 4.3 Choosing a provider — the criteria that actually matter here
+
+Not "which model is best". This architecture caps context at ~1,000 tokens and
+gives the model a narrow job, which makes model quality far less decisive than
+the four properties below.
+
+1. **Does it hard-stop, or does it bill you?** The same question #191 asks of a
+   geocoding key, and it matters more here. Because invite links mint anonymous
+   sessions (§3.2), the realistic incident is not a stolen key — it is volume. A
+   **prepaid credit balance that fails when exhausted** is structurally safer
+   than postpaid billing with alerts, because a burst cannot outrun it.
+2. **Native structured output, reliably.** The whole safety argument — propose,
+   validate, preview, approve — rests on schema-valid JSON. A provider where that
+   is best-effort turns a guarantee into a retry loop, and retries double the bill
+   exactly where value is least likely.
+3. **Data retention defaults.** See §4.5.
+4. **Two tiers from one account** — a cheap model for extraction (#212) and a
+   stronger one for judgement (#213), without two billing relationships.
+
+### 4.4 Recommendation: an aggregator for the pilot, direct once settled
+
+**Use OpenRouter (or an equivalent aggregator) for phases 1–3.** It scores well
+on criteria 1 and 4, which are the two that bite first: prepaid credits are a hard
+cap *by construction*, and one key reaching many models is worth real money while
+it is still unknown which model does "Improve this day" well.
+
+Three conditions:
+
+- **Turn prompt logging and training off explicitly** (§4.5).
+- **Keep it behind the `ModelProvider` interface** (§5.3) so switching to a direct
+  provider is a one-file change, not a refactor.
+- **Verify structured-output behaviour on the specific model chosen**, not in
+  general — support varies by underlying provider through a proxy, and that is
+  precisely where an aggregator's abstraction leaks.
+
+**Switch to direct once a model is settled.** At that point the aggregator's main
+benefit is spent and it costs a markup plus an extra network hop and one more
+party in the trust chain.
+
+*Pricing, retention defaults and structured-output support in this space change
+monthly. Re-check all three against current provider documentation before
+committing — do not trust the state of the world described here.*
+
+### 4.5 Retention, and the thing Wander has not decided
+
+Some model routes are cheaper **because the underlying provider retains prompts
+or trains on them.** Wander's prompts carry itinerary items, place names and
+budget figures for someone's actual holiday. Configure retention off at the
+account level and restrict to routes that honour it; do not assume the default is
+acceptable.
+
+Two things follow that are worth stating plainly:
+
+- **Wander has no privacy policy.** Today that is defensible — every service it
+  calls is keyless and receives almost nothing. The AI feature is the **first time
+  user content leaves Wander's infrastructure**, and because of guardrail #3
+  friends never signed up for anything or agreed to terms. Not a blocker and not a
+  legal opinion, but the UI should say what is sent and to whom at the point AI is
+  invoked.
+- This is a second, independent reason to keep context minimal — beyond token
+  cost — and to keep member names out of it entirely, which §6 already does.
+
+---
+
+## 5. The service boundary
 
 The API key cannot live in the bundle, so AI requests go through a Supabase Edge
 Function. **This is the first server-side code in Wander** — it brings a second
@@ -142,7 +239,7 @@ Vite, and a new failure mode (function down / cold / rate-limited) that the PWA
 has never had to render. Plan it as "Wander gets a backend", not "we add an
 endpoint".
 
-### 4.1 Which client reads the data
+### 5.1 Which client reads the data
 
 The critical decision. Get it wrong and the security boundary quietly moves from
 Postgres into TypeScript.
@@ -172,7 +269,7 @@ Two rules, and they are the whole model:
   membership check anyway, so the caller gets a clean `403` rather than a
   confusing empty result.
 
-### 4.2 Contract
+### 5.2 Contract
 
 `zod` is already a dependency, so the contract costs no bundle weight. The
 function runs on Deno and the app on Vite, so rather than fight cross-runtime
@@ -200,9 +297,30 @@ Use the provider's native structured-output mode rather than parsing free text.
 It removes an entire failure class; the one it doesn't remove (a well-formed
 object that is semantically wrong) is caught by zod plus the approval UI.
 
+### 5.3 Model abstraction
+
+One interface, one implementation. Do not build a provider registry for a single
+provider — the point of the interface is that §4.4's "aggregator now, direct
+later" is a one-file change, not that several providers coexist.
+
+```ts
+export interface ModelProvider {
+  complete(args: {
+    system: string
+    user: string
+    schema: JsonSchema        // native structured output, not "please reply in JSON"
+    maxOutputTokens: number   // bounded in code, not only in the schema
+    tier: 'cheap' | 'reasoning'
+  }): Promise<{ json: unknown; inputTokens: number; outputTokens: number }>
+}
+```
+
+`tier` rather than a model name, so the choice of model lives in one place and
+the call sites stay honest about *why* they want a given tier (§9).
+
 ---
 
-## 5. Context builder
+## 6. Context builder
 
 The abstraction worth building carefully, because it is where cost is actually
 decided. Everything else is plumbing.
@@ -227,6 +345,15 @@ Responsibilities: **retrieve** the minimum set of facts for the intent,
 **rank** by value-per-token, **fit** to budget, **report** what was dropped so a
 bad answer can be diagnosed as a retrieval failure rather than a model failure.
 
+**Never put a person in the context.** No `display_name`, no `member_id`, no
+"paid by" attribution, no chat authorship — refer to people positionally
+("someone in the group") when a suggestion needs to mention them at all. Two
+reasons, and the second is the one that lasts: the model does not need identities
+to reorder a day, and every prompt leaves Wander's infrastructure (§4.5), so the
+cheapest way to keep a friend group's names out of a third party's logs is never
+to send them. This is a rule about the *builder*, not about each call site
+remembering — a context field carrying a name is a bug in this module.
+
 Two rules:
 
 - **Compress by dropping whole fields, never by truncating.** A half-serialized
@@ -243,7 +370,7 @@ the decision is whether to include a field, not how to pack to the byte.
 
 ---
 
-## 6. Relational retrieval — Postgres as the graph
+## 7. Relational retrieval — Postgres as the graph
 
 Wander's traversals are shallow and fixed-depth (trip → day → item → linked
 budget entry), every edge is a foreign key, and every traversal is a join
@@ -313,9 +440,9 @@ dozen rows is instantaneous, and avoids adding an extension to a database whose
 
 ---
 
-## 7. Memory
+## 8. Memory
 
-### 7.1 Stated, not mined
+### 8.1 Stated, not mined
 
 The tempting design is to extract durable preferences from chat — *"Sarah
 prefers moderately priced restaurants."* **Do not build this.** The objection is
@@ -346,7 +473,7 @@ never derived from chat a member could not reasonably expect to be mined.
 | Group norms the group agreed to | Inferences about a person's money or health |
 | Free-form trip intent ("a slow architecture trip") | Anything that changes — budgets, itinerary state |
 
-### 7.2 Schema
+### 8.2 Schema
 
 ```sql
 create table public.ai_memories (
@@ -374,7 +501,7 @@ create policy ai_memories_delete on public.ai_memories for delete
 
 Note the absent `embedding` column — see below.
 
-### 7.3 pgvector is deferred, and may never be needed
+### 8.3 pgvector is deferred, and may never be needed
 
 Do the arithmetic. A single trip's durable preferences are perhaps 10–40 short
 strings; at ~12 tokens each that is under 500 tokens — **the entire corpus fits
@@ -398,7 +525,7 @@ For storage: a 1536-dimension vector is ~6 KB per row, so 10,000 memories is
 
 ---
 
-## 8. Model routing
+## 9. Model routing
 
 Three tiers, and the first has no model in it.
 
@@ -426,7 +553,7 @@ when Ask Wander arrives.
 
 ---
 
-## 9. Cost and quota
+## 10. Cost and quota
 
 At roughly $0.001 per action, unit cost is not the risk. **The risk is volume
 you did not authorize** (§3.2).
@@ -467,6 +594,22 @@ Two repo-specific notes:
   version into the remote history, desynchronizing local and remote — the
   failure that silently blocked six migrations for eleven days in August 2026.
 
+### Two controls that live outside the code
+
+**A hard spend cap at the provider, configured before the first line is written.**
+This is the most important control in the system and none of it is code. Every
+control below is defence in depth *behind* it; if all of them fail, the cap is the
+difference between an annoying morning and a four-figure bill. Prefer a prepaid
+balance that stops (§4.3) over a limit that alerts. Use a project or account
+scoped to Wander alone, so a runaway is bounded by that budget rather than a
+personal account's.
+
+**A kill switch — a flag that disables AI without a redeploy.** When something is
+going wrong and it is not yet clear what, the useful lever is one that turns the
+feature off in a click. A deploy pipeline is not that lever. Check it in the
+function before the quota check and fail closed on a read error, the same as the
+quota itself.
+
 ### Cheap wins, in order of value
 
 1. **Deterministic-first.** Every question answered by SQL is a 100% saving.
@@ -481,7 +624,7 @@ Two repo-specific notes:
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 The constraint that shapes everything: **CI must never call a model.**
 Non-deterministic, costs money, fails offline.
@@ -505,18 +648,18 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 
 ---
 
-## 11. Phases
+## 12. Phases
 
 | Phase | Database | Server | Frontend | Complexity |
 |---|---|---|---|---|
-| **0 · Foundation** | `ai_usage` + RLS | `wander-ai`: auth, per-trip quota, usage log, no model call | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
+| **0 · Foundation** | `ai_usage` + RLS | `wander-ai`: auth, per-trip quota, usage log, kill switch, no model call | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
 | **1 · Paste anything** | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
 | **2 · Improve this day** | `get_ai_day_context` | Context builder, reasoning model, action authorization | Preview cards, approve/reject, apply via existing mutations | High |
 | **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
 | **4 · Ask Wander** | Query RPCs per intent | Intent classification, deterministic answers first | Cmd-K row, single-turn, no history | High |
 | **5 · pgvector** | `vector` extension, embeddings | Semantic retrieval | — | Medium |
 
-Phases 4 and 5 are gated on trigger conditions (§3.3, §7.3), not on the calendar.
+Phases 4 and 5 are gated on trigger conditions (§3.3, §8.3), not on the calendar.
 
 **Why "Paste anything" is phase 1 rather than "Improve this day":** it needs no
 context builder, no RPC, and no retrieval — the entire prompt is the pasted
@@ -536,7 +679,7 @@ the preview will offer an action that then fails at the database.
 
 ---
 
-## 12. Folder structure
+## 13. Folder structure
 
 Four server files, not nine directories. Split when a file becomes
 uncomfortable — that is a real signal; anticipating the split is not.
@@ -562,7 +705,7 @@ function is the only client.
 
 ---
 
-## 13. Core types
+## 14. Core types
 
 ```ts
 export type Intent = 'PARSE_BOOKING' | 'IMPROVE_DAY'
@@ -600,7 +743,7 @@ collapse the entire safety argument into "trust the model".
 
 ---
 
-## 14. Not building yet
+## 15. Not building yet
 
 | Thing | Build it when |
 |---|---|
@@ -621,7 +764,7 @@ decisions before the evidence that should inform them exists.
 
 ---
 
-## 15. Summary
+## 16. Summary
 
 Build the boring, secure, observable pipe first and put the cheapest possible
 feature through it. The deterministic layer is already there and already good;
