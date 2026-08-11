@@ -3,10 +3,12 @@ import { motion } from 'framer-motion'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ExternalLink, Lightbulb, Plus, Trash2 } from 'lucide-react'
+import { CalendarPlus, ExternalLink, Lightbulb, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import { useCreateInspiration, useDeleteInspiration, useInspiration } from './api'
+import { ItemDialog, type ItineraryFormValues } from '@/features/itinerary/ItemDialog'
+import { itineraryPrefillFromInspiration } from '@/features/itinerary/fromInspiration'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -63,7 +65,13 @@ function hostOf(url: string): string {
   }
 }
 
-function IdeaCard({ item }: { item: InspirationItem }) {
+function IdeaCard({
+  item,
+  onAddToItinerary,
+}: {
+  item: InspirationItem
+  onAddToItinerary: (item: InspirationItem) => void
+}) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const deleteItem = useDeleteInspiration(trip.id)
   const author = item.created_by ? membersById.get(item.created_by) : null
@@ -97,20 +105,32 @@ function IdeaCard({ item }: { item: InspirationItem }) {
               </a>
             )}
           </div>
-          {canDelete && (
+          <div className="flex shrink-0 items-center gap-0.5">
             <Button
               variant="ghost"
               size="icon"
-              className="size-9 shrink-0 text-danger transition-opacity md:size-7 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
-              aria-label="Delete idea"
-              onClick={() => {
-                deleteItem.mutate(item.id)
-                toast.success('Idea removed')
-              }}
+              className="size-9 text-muted hover:text-primary md:size-7"
+              aria-label="Add to itinerary"
+              title="Add to itinerary"
+              onClick={() => onAddToItinerary(item)}
             >
-              <Trash2 className="size-4" />
+              <CalendarPlus className="size-4" />
             </Button>
-          )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 text-danger transition-opacity md:size-7 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                aria-label="Delete idea"
+                onClick={() => {
+                  deleteItem.mutate(item.id)
+                  toast.success('Idea removed')
+                }}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
         </div>
         {item.note && <p className="mt-1.5 text-sm text-muted">{item.note}</p>}
         {author && (
@@ -131,6 +151,11 @@ export default function InspirationPage() {
 
   const [filter, setFilter] = React.useState<InspirationCategory | 'all'>('all')
   const [newOpen, setNewOpen] = React.useState(false)
+  // "Add to itinerary" (#204): opening the shared itinerary create dialog seeded
+  // from an idea. The prefill is kept in state (not recomputed each render) so
+  // its identity is stable while the dialog is open and never resets what the
+  // member is typing.
+  const [addPrefill, setAddPrefill] = React.useState<Partial<ItineraryFormValues> | null>(null)
   const emptyIdea: IdeaFormValues = { title: '', url: '', image_url: '', note: '', category: 'general' }
   const form = useForm<IdeaFormValues>({
     resolver: zodResolver(ideaSchema),
@@ -216,7 +241,11 @@ export default function InspirationPage() {
           className="columns-1 gap-4 sm:columns-2 lg:columns-3"
         >
           {items.map((item) => (
-            <IdeaCard key={item.id} item={item} />
+            <IdeaCard
+              key={item.id}
+              item={item}
+              onAddToItinerary={(i) => setAddPrefill(itineraryPrefillFromInspiration(i))}
+            />
           ))}
         </motion.div>
       )}
@@ -301,6 +330,19 @@ export default function InspirationPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* The shared itinerary create dialog (#204), seeded from an idea. Reusing
+          it — not a second write path — means an added idea geocodes on save
+          (#201) and pins on the map exactly like a hand-entered stop. */}
+      <ItemDialog
+        open={addPrefill !== null}
+        onOpenChange={(o) => !o && setAddPrefill(null)}
+        prefill={addPrefill ?? undefined}
+        onCreated={() => {
+          setAddPrefill(null)
+          toast.success('Added to your itinerary')
+        }}
+      />
     </div>
   )
 }
