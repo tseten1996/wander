@@ -255,6 +255,13 @@ let budgetEntries = []
 // suite stubs the network entirely — no realtime socket — so this exercises the
 // deterministic send/render path, exactly the coverage the suite gives every
 // other surface. One seed message proves the surface reads from the route.
+// A 1×1 transparent PNG the storage stub hands back for any object/signed-URL
+// GET, so an image message's <img> resolves instead of erroring in the harness.
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64'
+)
+
 const CHAT_SEED_MESSAGE = {
   id: 'msg-seed-1',
   trip_id: TRIP_ID,
@@ -348,6 +355,36 @@ async function routeSupabase(route) {
   // returns void → an empty 204, exactly like a no-return RPC.
   if (pathname.endsWith('/rest/v1/rpc/apply_availability_dates'))
     return route.fulfill({ status: 204, body: '' })
+
+  // ── Storage (chat images #51) ──
+  // Signed-URL minting (createSignedUrls): POST { paths } → one row per path
+  // with a relative signedURL the client prefixes with the storage host.
+  if (pathname.startsWith('/storage/v1/object/sign/')) {
+    if (method === 'POST') {
+      const paths = Array.isArray(body.paths) ? body.paths : []
+      return json(
+        paths.map((p) => ({ error: null, path: p, signedURL: `/object/sign/chat-images/${p}?token=stub` }))
+      )
+    }
+    // GET of a signed URL → a tiny PNG so the <img> actually resolves.
+    return route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'access-control-allow-origin': '*' },
+      body: TINY_PNG,
+    })
+  }
+  if (pathname.startsWith('/storage/v1/object/')) {
+    // upload(): POST /storage/v1/object/chat-images/<path> → { Key }
+    if (method === 'POST') return json({ Key: pathname.replace('/storage/v1/object/', '') }, 200)
+    if (method === 'DELETE') return json({}) // remove() cleanup — unused in the happy path
+    return route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'access-control-allow-origin': '*' },
+      body: TINY_PNG,
+    })
+  }
 
   // ── REST tables ──
   // Discriminate by the query shape so one stub serves several call sites:
@@ -1118,6 +1155,45 @@ async function runChat(browser) {
       throw new Error('composer did not clear after a successful send')
     }
     ok('the composer clears after a successful send')
+
+    // Image message (#51): attach a PNG through the composer's file input, send,
+    // and prove it round-trips — the POST references a path in the trip's folder
+    // (what the Storage RLS scopes on), and the image renders + opens a lightbox.
+    const imagePost = page.waitForRequest(
+      (req) =>
+        req.url().includes('/rest/v1/messages') &&
+        req.method() === 'POST' &&
+        !!req.postDataJSON()?.image_path,
+      { timeout: 10_000 }
+    )
+    await page.setInputFiles('input[type="file"]', {
+      name: 'lisbon.png',
+      mimeType: 'image/png',
+      buffer: TINY_PNG,
+    })
+    // The attachment chip shows the picked file and enables the send.
+    await page.getByText('lisbon.png').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByRole('button', { name: 'Send message' }).click()
+
+    const imgPayload = (await imagePost).postDataJSON()
+    if (!String(imgPayload.image_path).startsWith(`${TRIP_ID}/`)) {
+      throw new Error(`image message path not scoped to the trip folder: ${imgPayload.image_path}`)
+    }
+    ok('sending an image posts a message whose path is scoped to the trip folder')
+
+    // After the refetch, the image renders (its signed URL resolved by the app).
+    const chatImage = page.getByRole('img', { name: 'Shared in chat' })
+    await chatImage.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a sent image renders in the thread')
+
+    // Clicking it opens the full-screen lightbox; Escape closes it.
+    await page.getByRole('button', { name: 'Open image' }).click()
+    const lightbox = page.getByRole('dialog', { name: 'Image preview' })
+    await lightbox.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('clicking a chat image opens the lightbox')
+    await page.keyboard.press('Escape')
+    await lightbox.waitFor({ state: 'hidden', timeout: 10_000 })
+    ok('the lightbox closes on Escape')
 
     if (errors.length) throw new Error(`Uncaught page error on the chat page: ${errors[0]}`)
     ok('the chat flow raised no uncaught errors')

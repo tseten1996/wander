@@ -102,6 +102,9 @@ export interface Message {
   trip_id: string
   member_id: string | null
   content: string
+  /** Path into the private `chat-images` bucket for an image message (#51),
+   *  or null for a plain text message. Rendered via a short-lived signed URL. */
+  image_path: string | null
   reply_to: string | null
   pinned: boolean
   edited_at: string | null

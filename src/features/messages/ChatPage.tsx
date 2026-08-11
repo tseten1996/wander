@@ -1,15 +1,17 @@
 import * as React from 'react'
 import { motion } from 'framer-motion'
 import {
-  CornerUpLeft, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff,
+  CornerUpLeft, ImagePlus, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff,
   SendHorizonal, SmilePlus, Trash2, X,
 } from 'lucide-react'
 import { format, isSameDay, parseISO } from 'date-fns'
+import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
   useDeleteMessage, useEditMessage, useMessages, useSendMessage,
-  useSetPinned, useToggleReaction, type MessageWithReactions,
+  useSetPinned, useToggleReaction, validateChatImage, type MessageWithReactions,
 } from './api'
+import { ImageLightbox } from './ImageLightbox'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/input'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -71,14 +73,44 @@ function Reactions({
   )
 }
 
+function ChatImage({ src, onOpen }: { src?: string | null; onOpen: () => void }) {
+  // The signed URL rides with the message (see useMessages), so it's resolved
+  // by the time this renders; a missing one is an honest fallback (a signing
+  // error, or an object the viewer's membership can't read).
+  if (!src) {
+    return (
+      <div className="flex h-32 w-48 items-center justify-center rounded-2xl border border-line bg-sunken text-xs text-muted">
+        Image unavailable
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label="Open image"
+      className="block cursor-zoom-in overflow-hidden rounded-2xl border border-line bg-sunken transition-shadow hover:shadow-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
+      <img
+        src={src}
+        alt="Shared in chat"
+        loading="lazy"
+        className="max-h-72 w-auto max-w-full object-cover"
+      />
+    </button>
+  )
+}
+
 function Bubble({
   message,
   byId,
   onReply,
+  onOpenImage,
 }: {
   message: MessageWithReactions
   byId: Map<string, MessageWithReactions>
   onReply: (m: MessageWithReactions) => void
+  onOpenImage: (src: string) => void
 }) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const editMessage = useEditMessage(trip.id)
@@ -122,6 +154,15 @@ function Bubble({
           </div>
         )}
 
+        {message.image_path && (
+          <div className={cn('mb-1', mine && 'flex justify-end')}>
+            <ChatImage
+              src={message.image_url}
+              onOpen={() => message.image_url && onOpenImage(message.image_url)}
+            />
+          </div>
+        )}
+
         {editing ? (
           <div className="space-y-2">
             <Textarea
@@ -153,16 +194,18 @@ function Bubble({
             </div>
           </div>
         ) : (
-          <div
-            className={cn(
-              'inline-block whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-left text-sm',
-              mine
-                ? 'rounded-tr-sm bg-primary text-on-primary'
-                : 'rounded-tl-sm border border-line bg-surface'
-            )}
-          >
-            <MentionText content={message.content} onPrimary={mine} />
-          </div>
+          message.content && (
+            <div
+              className={cn(
+                'inline-block whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-left text-sm',
+                mine
+                  ? 'rounded-tr-sm bg-primary text-on-primary'
+                  : 'rounded-tl-sm border border-line bg-surface'
+              )}
+            >
+              <MentionText content={message.content} onPrimary={mine} />
+            </div>
+          )
         )}
 
         <Reactions message={message} onToggle={(emoji) => toggleReaction.mutate({ message, emoji })} />
@@ -201,7 +244,7 @@ function Bubble({
             <DropdownMenuItem onClick={() => onReply(message)}>
               <CornerUpLeft /> Reply
             </DropdownMenuItem>
-            {mine && (
+            {mine && message.content && (
               <DropdownMenuItem onClick={() => { setDraft(message.content); setEditing(true) }}>
                 <Pencil /> Edit
               </DropdownMenuItem>
@@ -217,7 +260,10 @@ function Bubble({
             {(mine || isOwner) && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem destructive onClick={() => deleteMessage.mutate(message.id)}>
+                <DropdownMenuItem
+                  destructive
+                  onClick={() => deleteMessage.mutate({ id: message.id, imagePath: message.image_path })}
+                >
                   <Trash2 /> Delete
                 </DropdownMenuItem>
               </>
@@ -236,9 +282,23 @@ export default function ChatPage() {
 
   const [draft, setDraft] = React.useState('')
   const [replyTo, setReplyTo] = React.useState<MessageWithReactions | null>(null)
+  // A pending image attachment (#51): the File to upload on the next send.
+  const [attachment, setAttachment] = React.useState<File | null>(null)
+  const [lightbox, setLightbox] = React.useState<string | null>(null)
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
   const count = messages.data?.length ?? 0
+
+  function attachImage(file: File | null | undefined) {
+    if (!file) return
+    const problem = validateChatImage(file)
+    if (problem) {
+      toast.error(problem)
+      return
+    }
+    setAttachment(file)
+  }
 
   // @-mention autocomplete (#193): the active `@query` under the caret and the
   // highlighted candidate. Everyone but yourself is mentionable.
@@ -287,15 +347,22 @@ export default function ChatPage() {
 
   async function send() {
     const content = draft.trim()
-    if (!content || content.length > MESSAGE_MAX_LENGTH) return
+    if (content.length > MESSAGE_MAX_LENGTH) return
+    // Send when there's text, an image, or both — but never an empty message.
+    if (!content && !attachment) return
     const previousReplyTo = replyTo
     const reply = replyTo?.id ?? null
-    // Optimistically clear the composer so a successful send feels instant.
+    const sendingFile = attachment
+    // Optimistically clear the typed context so a successful send feels instant.
+    // The image chip stays until the upload resolves (it's mid-flight), then
+    // clears on success — on failure it's left so the user can retry.
     setDraft('')
     setReplyTo(null)
     setMention(null)
     try {
-      await sendMessage.mutateAsync({ content, replyTo: reply })
+      await sendMessage.mutateAsync({ content, replyTo: reply, image: sendingFile })
+      // Only drop the attachment if the user hasn't swapped in a new one since.
+      setAttachment((current) => (current === sendingFile ? null : current))
     } catch {
       // The send failed (useSendMessage already surfaces a toast). Restore the
       // user's typed text and reply context so their input isn't lost — but only
@@ -356,7 +423,7 @@ export default function ChatPage() {
                     <div className="h-px flex-1 bg-line" />
                   </div>
                 )}
-                <Bubble message={m} byId={byId} onReply={setReplyTo} />
+                <Bubble message={m} byId={byId} onReply={setReplyTo} onOpenImage={setLightbox} />
               </React.Fragment>
             )
           })
@@ -368,6 +435,16 @@ export default function ChatPage() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         className="border-t border-line pt-3"
+        // Claim file drags so the browser doesn't navigate to the dropped image
+        // (dragover must preventDefault for a drop to fire at all).
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          attachImage(e.dataTransfer.files[0])
+        }}
       >
         {replyTo && (
           <div className="mb-2 flex items-center justify-between rounded-lg bg-sunken px-3 py-1.5 text-xs">
@@ -379,6 +456,32 @@ export default function ChatPage() {
             </Button>
           </div>
         )}
+        {attachment && (
+          <div className="mb-2 inline-flex max-w-full items-center gap-2 rounded-xl border border-line bg-surface py-1.5 pl-3 pr-2 text-xs text-ink-soft">
+            <ImagePlus className="size-4 shrink-0 text-muted" />
+            <span className="truncate">{attachment.name}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              onClick={() => setAttachment(null)}
+              aria-label="Remove image"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            attachImage(e.target.files?.[0])
+            // Reset so picking the same file again still fires onChange.
+            e.target.value = ''
+          }}
+        />
         <div className="relative flex items-end gap-2">
           {mentionOpen && (
             <ul
@@ -414,6 +517,15 @@ export default function ChatPage() {
               ))}
             </ul>
           )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11 shrink-0 rounded-xl"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach an image"
+          >
+            <ImagePlus />
+          </Button>
           <Textarea
             ref={composerRef}
             placeholder="Message the group…"
@@ -428,6 +540,16 @@ export default function ChatPage() {
               setDraft(e.target.value)
               syncMention(e.target)
               setMentionIndex(0)
+            }}
+            onPaste={(e) => {
+              // Pasting an image from the clipboard attaches it (desktop).
+              const file = [...e.clipboardData.items]
+                .find((it) => it.kind === 'file' && it.type.startsWith('image/'))
+                ?.getAsFile()
+              if (file) {
+                e.preventDefault()
+                attachImage(file)
+              }
             }}
             onSelect={(e) => syncMention(e.currentTarget)}
             onKeyDown={(e) => {
@@ -464,8 +586,12 @@ export default function ChatPage() {
           />
           <Button
             size="icon"
-            className="size-11 rounded-xl"
-            disabled={!draft.trim() || draft.length > MESSAGE_MAX_LENGTH || sendMessage.isPending}
+            className="size-11 shrink-0 rounded-xl"
+            disabled={
+              (!draft.trim() && !attachment) ||
+              draft.length > MESSAGE_MAX_LENGTH ||
+              sendMessage.isPending
+            }
             onClick={send}
             aria-label="Send message"
           >
@@ -476,6 +602,8 @@ export default function ChatPage() {
           <p className="mt-1 text-xs text-danger">Keep it under {MESSAGE_MAX_LENGTH} characters</p>
         )}
       </motion.div>
+
+      <ImageLightbox src={lightbox} open={lightbox !== null} onOpenChange={(o) => !o && setLightbox(null)} />
     </div>
   )
 }
