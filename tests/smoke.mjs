@@ -249,6 +249,25 @@ let flakyRecovered = false
 let twoMembers = false
 let budgetEntries = []
 
+// Chat/messages scenario state (#214), scoped to `runChat` (set/reset there).
+// A stateful message store, like `budgetEntries` above: a message the UI just
+// POSTed survives the send mutation's invalidate → refetch and renders. The
+// suite stubs the network entirely — no realtime socket — so this exercises the
+// deterministic send/render path, exactly the coverage the suite gives every
+// other surface. One seed message proves the surface reads from the route.
+const CHAT_SEED_MESSAGE = {
+  id: 'msg-seed-1',
+  trip_id: TRIP_ID,
+  member_id: OWNER_MEMBER.id,
+  content: 'Kicking off the planning here 🎒',
+  reply_to: null,
+  pinned: false,
+  edited_at: null,
+  created_at: '2026-03-01T00:00:00Z',
+  message_reactions: [],
+}
+let chatMessages = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -364,6 +383,31 @@ async function routeSupabase(route) {
     }
     if (method === 'GET') return json([...budgetEntries].reverse())
     return json([]) // PATCH/DELETE unused by this scenario
+  }
+
+  // Chat messages (#214): a stateful store so a message the chat composer POSTs
+  // survives the send mutation's invalidate → refetch and renders in the thread.
+  // The GET embeds `message_reactions(*)`, so every row carries the array;
+  // useSendMessage's insert().select('id').single() wants one row with its id.
+  if (pathname.endsWith('/rest/v1/messages')) {
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = chatMessages.length + 1
+      const row = {
+        id: `msg-${n}`,
+        pinned: false,
+        edited_at: null,
+        reply_to: null,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+        message_reactions: [],
+      }
+      chatMessages.push(row)
+      return json({ id: row.id }, 201)
+    }
+    // Already in created_at-ascending order (seed first, then each send).
+    if (method === 'GET') return json([...chatMessages])
+    return json([]) // edit/delete/pin PATCH + DELETE unused by this scenario
   }
 
   // Notification inbox (#182): the shell header bell reads the recipient's own
@@ -1013,6 +1057,76 @@ async function runBudget(browser) {
   }
 }
 
+/*
+  Chat / messages surface (#214).
+
+  Chat is Wander's flagship collaboration surface — the wedge against the
+  400-message group chat — and the most-used screen in a live trip, yet it had
+  no smoke coverage and the harness had no `/rest/v1/messages` route, so it
+  could regress silently through any merge. This drives the real ChatPage
+  end-to-end against the stubbed Supabase: a seeded message proves the surface
+  reads from the route, then a send exercises the composer → POST → invalidate →
+  refetch path and asserts the new message renders. No realtime socket is
+  involved (the suite is hermetic); this is the deterministic network path the
+  rest of the suite covers.
+*/
+async function runChat(browser) {
+  console.log('\n▶ chat (messages surface renders + a sent message appears)')
+  chatMessages = [{ ...CHAT_SEED_MESSAGE }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/chat`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded message prove the surface renders from the
+    // /rest/v1/messages route (not just an empty "say hi" state).
+    await page.getByRole('heading', { name: 'Chat' }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page
+      .getByText('Kicking off the planning here 🎒')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the chat surface renders a message from the messages route')
+
+    // Sending: the composer POSTs to /rest/v1/messages; the stateful store lets
+    // the send's invalidate → refetch bring the new row back so it renders.
+    const sent = 'Booking the hostel tonight'
+    const sendPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/messages') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    const composer = page.getByPlaceholder('Message the group…')
+    await composer.fill(sent)
+    await page.getByRole('button', { name: 'Send message' }).click()
+
+    // The POST carries the trip id, the sender's member id, and the typed text.
+    const payload = (await sendPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.member_id !== OWNER_MEMBER.id ||
+      payload?.content !== sent
+    ) {
+      throw new Error(`send POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('sending posts the message with trip, sender, and content')
+
+    // After the refetch the new message renders in the thread, and the composer
+    // has cleared — the send round-tripped end to end.
+    await page.getByText(sent).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a sent message appears in the thread')
+    if ((await composer.inputValue()) !== '') {
+      throw new Error('composer did not clear after a successful send')
+    }
+    ok('the composer clears after a successful send')
+
+    if (errors.length) throw new Error(`Uncaught page error on the chat page: ${errors[0]}`)
+    ok('the chat flow raised no uncaught errors')
+  } finally {
+    chatMessages = []
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -1173,6 +1287,7 @@ async function main() {
     await runTripPresence(browser)
     await runAvailabilityPoll(browser)
     await runBudget(browser)
+    await runChat(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
     await runPublicShareRevoked(browser)
