@@ -16,6 +16,8 @@ import {
   categorizePoi,
   parseOverpassElements,
   buildOverpassQuery,
+  snapCenter,
+  NEARBY_SNAP_DP,
   POI_CATEGORY_LABEL,
 } from '../src/lib/places.ts'
 
@@ -97,4 +99,75 @@ test('buildOverpassQuery embeds a rounded radius and the point, and asks for cen
 
 test('POI_CATEGORY_LABEL covers every category', () => {
   assert.deepEqual(Object.keys(POI_CATEGORY_LABEL).sort(), ['drink', 'eat', 'see'])
+})
+
+/* ── snapCenter: the Nearby cache key (#219) ─────────────────────────────── */
+
+test('snapCenter collapses taps within a cell onto one key', () => {
+  // The regression: the query keyed on raw tap floats, so two taps a few metres
+  // apart were two cache misses and two requests to a volunteer Overpass mirror.
+  const a = snapCenter({ lat: 48.85662, lon: 2.35221 })
+  const b = snapCenter({ lat: 48.85655, lon: 2.35238 })
+  assert.deepEqual(a, b, 'taps within one cell must share a key')
+  assert.deepEqual(a, { lat: 48.857, lon: 2.352 })
+})
+
+test('snapCenter bounds the error, not the hit rate — boundary taps still miss', () => {
+  // Honest about what grid snapping does and does not buy: these two points are
+  // ~19 m apart but sit either side of a latitude cell boundary, so they remain
+  // separate keys. The win is statistical — orders of magnitude fewer distinct
+  // keys — not a guarantee about any particular pair. A coarser grid would trade
+  // more hits for searching further from where the user actually tapped.
+  const a = snapCenter({ lat: 48.85661, lon: 2.35222 })
+  const b = snapCenter({ lat: 48.85644, lon: 2.35222 })
+  assert.notDeepEqual(a, b)
+})
+
+test('snapCenter keeps genuinely different neighbourhoods apart', () => {
+  const louvre = snapCenter({ lat: 48.8606, lon: 2.3376 })
+  const eiffel = snapCenter({ lat: 48.8584, lon: 2.2945 })
+  assert.notDeepEqual(louvre, eiffel)
+})
+
+test('snapCenter is pure and idempotent — the property the cache key rests on', () => {
+  const once = snapCenter({ lat: 35.68, lon: 139.7649 })
+  assert.deepEqual(snapCenter(once), once)
+  assert.deepEqual(snapCenter({ lat: 35.68, lon: 139.7649 }), once)
+})
+
+test('snapCenter never returns -0, which would key differently from 0', () => {
+  const { lat, lon } = snapCenter({ lat: -0.0001, lon: -0.0002 })
+  assert.ok(Object.is(lat, 0), 'latitude -0 normalised')
+  assert.ok(Object.is(lon, 0), 'longitude -0 normalised')
+})
+
+test('snapCenter canonicalises the antimeridian to one key', () => {
+  // +180 and -180 name the same meridian; a wrap must not split one place in two.
+  assert.deepEqual(snapCenter({ lat: -16.5, lon: 179.99991 }).lon, -180)
+  assert.deepEqual(snapCenter({ lat: -16.5, lon: -179.99991 }).lon, -180)
+})
+
+test('snapCenter wraps a map panned past the edge of the world', () => {
+  // Leaflet can hand back a longitude outside [-180, 180) after repeated panning.
+  // 362.352° is the same place as 2.352° and must not get its own cache entry.
+  assert.deepEqual(snapCenter({ lat: 48.8566, lon: 362.3522 }), snapCenter({ lat: 48.8566, lon: 2.3522 }))
+  assert.deepEqual(snapCenter({ lat: 48.8566, lon: -357.6478 }), snapCenter({ lat: 48.8566, lon: 2.3522 }))
+})
+
+test('snapCenter clamps an impossible latitude rather than passing it to Overpass', () => {
+  assert.equal(snapCenter({ lat: 95, lon: 0 }).lat, 90)
+  assert.equal(snapCenter({ lat: -95, lon: 0 }).lat, -90)
+})
+
+test('snapCenter cell stays small against the 1500 m search radius', () => {
+  // The honesty check behind the whole approach: worst case is a tap on a cell
+  // corner, half a diagonal from the centre we actually search around. Widest at
+  // the equator, where a degree of longitude is as long as a degree of latitude —
+  // ~79 m, about 5% of the radius. Pinned so coarsening the grid has to be a
+  // deliberate decision with this number re-checked, not a silent one-char edit.
+  const metresPerDegree = 111_320
+  const cell = 10 ** -NEARBY_SNAP_DP * metresPerDegree
+  const worstOffset = (cell * Math.SQRT2) / 2
+  assert.ok(worstOffset < 100, `worst-case offset ${worstOffset.toFixed(0)} m must stay under 100 m`)
+  assert.ok(worstOffset / 1500 < 0.06, 'and under 6% of the search radius')
 })

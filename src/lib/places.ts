@@ -134,6 +134,63 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
 ]
 
+/**
+ * Decimal places the search centre is rounded to before it becomes a cache key.
+ *
+ * 3 dp is ~111 m of latitude, and ~73–90 m of longitude at the latitudes people
+ * actually plan trips for (Paris ~73 m, Tokyo ~90 m). The worst case — a tap on
+ * a cell corner — puts the cached centre ~67 m away at those latitudes, and ~79 m
+ * at the equator where longitude degrees are widest. Against a 1500 m radius
+ * that is ~5%: materially the same disc of places, which is what makes reusing
+ * the response honest rather than merely convenient.
+ *
+ * Note this bounds the *error*, not the hit rate. Two taps 20 m apart still miss
+ * each other if they straddle a cell boundary — grid snapping cuts the number of
+ * distinct keys by orders of magnitude, it does not guarantee any single pair
+ * collides. That is the right trade: a coarser grid would buy more hits at the
+ * cost of searching further from where the user actually pointed.
+ */
+export const NEARBY_SNAP_DP = 3
+
+/** Longitude normalised into [-180, 180), so a panned-past-the-edge map and the
+ *  same physical place don't produce two different cache keys. */
+function wrapLongitude(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180
+}
+
+/**
+ * Quantise a search centre onto a fixed grid, so nearby taps collapse onto one
+ * cache entry instead of each issuing its own Overpass request.
+ *
+ * This exists because the map's search centre is a *tap* — continuous floats —
+ * so keying a query on it directly means a tap three metres from the last one is
+ * a fresh round trip to a volunteer-run mirror. Pure and total: the same input
+ * always yields the same cell, which is the property the cache key depends on.
+ *
+ * Callers should keep measuring distances from the user's real tap, not from the
+ * snapped centre — this is a key, not a correction to what the user meant.
+ */
+export function snapCenter(
+  center: { lat: number; lon: number },
+  decimals: number = NEARBY_SNAP_DP,
+): { lat: number; lon: number } {
+  const factor = 10 ** decimals
+  // `Object.is` guard: -0.0001 rounds to -0, which is a different key from 0
+  // under some hashers even though it is the same meridian.
+  const round = (v: number) => {
+    const r = Math.round(v * factor) / factor
+    return Object.is(r, -0) ? 0 : r
+  }
+  // Clamp before rounding: a latitude outside the sphere is meaningless to
+  // Overpass, and clamping first keeps the returned cell inside the grid.
+  const lat = round(Math.min(90, Math.max(-90, center.lat)))
+  const lon = round(wrapLongitude(center.lon))
+  // Rounding can push a longitude just short of the antimeridian up onto +180,
+  // which names the same meridian as -180 — canonicalise so the wrap doesn't
+  // split one place across two keys.
+  return { lat, lon: lon === 180 ? -180 : lon }
+}
+
 export interface NearbyOptions {
   /** Search radius in metres (default 1500 — a walkable neighbourhood). */
   radiusMeters?: number

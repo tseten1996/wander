@@ -11,8 +11,10 @@ import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { haversineKm } from '@/lib/geo'
 import {
-  fetchNearbyPlaces, POI_CATEGORY_LABEL, type NearbyPlace, type PoiCategory,
+  fetchNearbyPlaces, snapCenter, POI_CATEGORY_LABEL,
+  type NearbyPlace, type PoiCategory,
 } from '@/lib/places'
+import { PERSIST_MAX_AGE } from '@/lib/queryClient'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/misc'
 import type { ItineraryItem } from '@/types'
@@ -161,6 +163,10 @@ function popupContent(item: ItineraryItem, info: DayInfo, onOpen: () => void): H
 
   return root
 }
+
+/** Search radius for Nearby, in metres — a walkable neighbourhood. Named
+ *  because it is part of the cache key (#219), not just a call argument. */
+const NEARBY_RADIUS_M = 1500
 
 // Nearby suggestion pins are deliberately unlike the solid, numbered day pins:
 // a hollow ring on a surface fill, tinted per category. Colour is backed up by
@@ -356,12 +362,31 @@ export default function ItineraryMap({
     nearbyOnRef.current = nearbyOn
   })
 
+  // The centre the *query* uses, quantised onto a ~110 m grid (#219). A tap is
+  // a continuous float, so keying on it directly meant two taps a few metres
+  // apart were two cache misses and two requests to a volunteer-run Overpass
+  // mirror. Distances in the popups still come from `searchCenter` — the point
+  // the user actually tapped — so the grid is a cache key, never a claim about
+  // where they pointed.
+  const snapped = React.useMemo(
+    () => (searchCenter ? snapCenter(searchCenter) : null),
+    [searchCenter],
+  )
+
   const nearby = useQuery({
-    queryKey: ['nearby_places', searchCenter?.lat, searchCenter?.lon],
-    queryFn: ({ signal }) => fetchNearbyPlaces(searchCenter!, { radiusMeters: 1500 }, signal),
-    enabled: nearbyOn && !!searchCenter,
-    staleTime: 30 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
+    // `radiusMeters` belongs in the key even though it is constant today: the
+    // moment it becomes a control, an omitted radius would serve 1500 m results
+    // for a tighter search with nothing to notice it.
+    queryKey: ['nearby_places', snapped?.lat, snapped?.lon, NEARBY_RADIUS_M],
+    queryFn: ({ signal }) =>
+      fetchNearbyPlaces(snapped!, { radiusMeters: NEARBY_RADIUS_M }, signal),
+    enabled: nearbyOn && !!snapped,
+    // OSM POIs change on a timescale of months, so the old 30 min / 1 h pair was
+    // far tighter than the data warrants. `gcTime` matching the persister's
+    // maxAge is the load-bearing part: anything shorter is collected before the
+    // snapshot can restore it, so suggestions never survived a reload.
+    staleTime: PERSIST_MAX_AGE,
+    gcTime: PERSIST_MAX_AGE,
     retry: false,
     refetchOnWindowFocus: false,
   })
