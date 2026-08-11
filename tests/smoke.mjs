@@ -128,6 +128,24 @@ const NOTIFICATION_ROW = {
   read_at: null,
 }
 
+// One checklist item assigned to the owner, not done, with a due date far in
+// the past, so a *derived* time-based reminder (#195) always fires regardless
+// of when the suite runs — proving the bell surfaces "due soon / overdue" with
+// no persisted row behind it. Deliberately titled unlike NOTIFICATION_ROW so
+// the two sections are unambiguous.
+const OVERDUE_TASK_ROW = {
+  id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  trip_id: TRIP_ID,
+  title: 'Renew passport',
+  notes: null,
+  assignee_id: OWNER_MEMBER.id,
+  due_date: '2020-01-01',
+  done: false,
+  position: 1,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-02-02T00:00:00Z',
+}
+
 // One open availability poll (#176) with two candidate ranges. The owner has
 // marked the first range "yes", so it is the group's best overlap — the page
 // must highlight it and offer the owner-only "Apply to trip" action.
@@ -353,6 +371,14 @@ async function routeSupabase(route) {
   if (pathname.endsWith('/rest/v1/notifications')) {
     if (method === 'GET') return json([NOTIFICATION_ROW])
     return json([]) // PATCH mark-read / anything else
+  }
+
+  // Checklist (#195 reminders): both the bell's reminder derivation and the
+  // dashboard's `select('id, done')` read this endpoint. One overdue task
+  // assigned to the owner is enough to make a reminder appear deterministically.
+  if (pathname.endsWith('/rest/v1/checklist_items')) {
+    if (method === 'GET') return json([OVERDUE_TASK_ROW])
+    return json([]) // insert/update/delete unused by these scenarios
   }
 
   // Availability poll (#176): the Dates page reads the poll with its candidates
@@ -801,18 +827,26 @@ async function runTripPresence(browser) {
     if (errors.length) throw new Error(`Uncaught page error on the trip page: ${errors[0]}`)
     ok('trip page raised no realtime presence / uncaught errors')
 
-    // Personal notification inbox (#182): the header bell reflects the unread
-    // count and opens the inbox listing the item with a deep link.
+    // Personal notification inbox (#182) + derived reminders (#195): the header
+    // bell's badge reflects both unread notifications and live reminders, and
+    // the dropdown lists each in its own section with a deep link.
     const bell = page.getByRole('button', { name: /Notifications/ }).first()
     await bell.waitFor({ state: 'visible', timeout: 10_000 })
-    if (!/unread/.test((await bell.getAttribute('aria-label')) ?? '')) {
-      throw new Error('notification bell did not reflect the unread count')
+    if (!/\d+ need attention/.test((await bell.getAttribute('aria-label')) ?? '')) {
+      throw new Error('notification bell did not reflect the attention count')
     }
-    ok('the header notification bell shows an unread badge')
+    ok('the header notification bell shows an attention badge')
 
     await bell.click()
     await page.getByText('Book flights').waitFor({ state: 'visible', timeout: 10_000 })
     ok('opening the inbox lists the notification')
+
+    // The overdue checklist item surfaces as a derived reminder — never a
+    // persisted notification — under its own "Reminders" heading (#195).
+    await page.getByText('Reminders').first().waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Renew passport').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText(/Overdue by/).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a time-based reminder shows in its own section, distinct from notifications')
   } finally {
     await context.close()
   }
