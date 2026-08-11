@@ -61,6 +61,90 @@ const CATEGORIES: { value: BudgetCategory; label: string }[] = [
 
 const SHARED = 'shared'
 
+/**
+ * Unequal-split modes (#203). All three weighted modes reduce to the same
+ * proportional division (`amount * weight_i / Σweights`), so they differ only in
+ * how a member enters the weight — raw shares, exact amounts, or percentages.
+ * The mode is a UI concern; only the resolved weights are persisted.
+ */
+const SPLIT_MODES = ['equal', 'shares', 'exact', 'percent'] as const
+type SplitMode = (typeof SPLIT_MODES)[number]
+const SPLIT_MODE_LABELS: Record<SplitMode, string> = {
+  equal: 'Equally',
+  shares: 'By shares',
+  exact: 'By amount',
+  percent: 'By percent',
+}
+
+/** The sum of a weighted split's per-member inputs (blank/invalid count as 0). */
+function weightsSum(ids: string[], weights: Record<string, string> | undefined): number {
+  return ids.reduce((sum, id) => {
+    const n = Number(weights?.[id])
+    return sum + (Number.isFinite(n) && n > 0 ? n : 0)
+  }, 0)
+}
+
+/**
+ * Seed sensible, already-valid weights when a member first picks a weighted
+ * mode: 1 each for shares; an even split of the entry total for exact; an even
+ * percentage summing to 100 for percent. Any rounding remainder lands on the
+ * first sharer so the seed always satisfies the mode's own sum rule.
+ */
+function seedWeights(mode: SplitMode, ids: string[], total: number): Record<string, string> {
+  const out: Record<string, string> = {}
+  const n = ids.length
+  if (n === 0) return out
+  if (mode === 'shares') {
+    for (const id of ids) out[id] = '1'
+    return out
+  }
+  const target = mode === 'percent' ? 100 : total
+  if (!(target > 0)) {
+    // No total to divide yet (exact needs an amount) — leave blank so the
+    // member fills it in; the residual hint guides them.
+    for (const id of ids) out[id] = ''
+    return out
+  }
+  const each = Math.floor((target / n) * 100) / 100
+  let allocated = 0
+  ids.forEach((id, i) => {
+    const share = i === n - 1 ? Math.round((target - allocated) * 100) / 100 : each
+    allocated += each
+    out[id] = String(share)
+  })
+  return out
+}
+
+/**
+ * Reconstruct the split fields of the form from a saved entry: who shares, the
+ * mode to open in, and the weight inputs. A weighted entry (#203) reopens in
+ * "By shares" with its stored ratios; everything else opens as an equal split
+ * over its participants (or everyone). Members who have since left are dropped
+ * from both the selection and the weights.
+ */
+function savedSplit(
+  entry: BudgetEntry,
+  allMemberIds: string[],
+): { participants: string[]; split_mode: SplitMode; weights: Record<string, string> } {
+  const present = new Set(allMemberIds)
+  const weights: Record<string, string> = {}
+  for (const [id, weight] of Object.entries(entry.shares ?? {})) {
+    if (present.has(id) && typeof weight === 'number' && Number.isFinite(weight) && weight > 0) {
+      weights[id] = String(weight)
+    }
+  }
+  const weighted = allMemberIds.filter((id) => id in weights)
+  if (weighted.length > 0) {
+    return { participants: weighted, split_mode: 'shares', weights }
+  }
+  const named = (entry.participants ?? []).filter((id) => present.has(id))
+  return {
+    participants: named.length > 0 ? named : allMemberIds,
+    split_mode: 'equal',
+    weights: {},
+  }
+}
+
 const budgetSchema = z.object({
   title: z.string().trim().min(1, 'Give it a name').max(120, 'Keep it under 120 characters'),
   category: z.enum(['stay', 'transport', 'food', 'activities', 'shopping', 'other']),
@@ -81,8 +165,60 @@ const budgetSchema = z.object({
     .or(z.literal('')),
   paid_by: z.string().optional().nullable(),
   participants: z.array(z.string()).min(1, 'Pick at least one person who shared this'),
+  split_mode: z.enum(SPLIT_MODES),
+  /** Raw per-member weight inputs, keyed by member id. Only the entries for the
+   *  selected participants matter; validated in the superRefine below. */
+  weights: z.record(z.string(), z.string()),
   entry_date: z.string().optional().nullable(),
   notes: z.string().trim().max(2000, 'Keep it under 2000 characters').optional().nullable(),
+}).superRefine((val, ctx) => {
+  if (val.split_mode === 'equal') return
+  const ids = val.participants ?? []
+  // Every sharer needs a positive weight — a blank or non-positive entry can't
+  // take part in a proportional split.
+  const missing = ids.some((id) => {
+    const n = Number(val.weights?.[id])
+    return !Number.isFinite(n) || n <= 0
+  })
+  if (missing) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['weights'],
+      message:
+        val.split_mode === 'shares'
+          ? 'Give everyone sharing a share of at least 1.'
+          : val.split_mode === 'percent'
+            ? 'Give everyone sharing a percentage above 0.'
+            : 'Give everyone sharing an amount above 0.',
+    })
+    return
+  }
+  const sum = weightsSum(ids, val.weights)
+  if (val.split_mode === 'percent' && Math.abs(sum - 100) > 0.01) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['weights'],
+      message: `Percentages must add up to 100 — they add up to ${Math.round(sum * 100) / 100}.`,
+    })
+  }
+  if (val.split_mode === 'exact') {
+    // Exact amounts are entered in the entry currency, so they must total the
+    // entry's own amount (the actually-paid figure, or the estimate if unpaid).
+    const total = val.actual != null ? val.actual : val.estimated ?? 0
+    if (!(total > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['weights'],
+        message: 'Enter the amount above before splitting it exactly.',
+      })
+    } else if (Math.abs(sum - total) > 0.01) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['weights'],
+        message: `Amounts must add up to ${Math.round(total * 100) / 100} — they add up to ${Math.round(sum * 100) / 100}.`,
+      })
+    }
+  }
 })
 
 type BudgetFormValues = z.input<typeof budgetSchema>
@@ -121,6 +257,8 @@ function EntryDialog({
       rate: '',
       paid_by: SHARED,
       participants: allMemberIds,
+      split_mode: 'equal',
+      weights: {},
       entry_date: '',
       notes: '',
     }),
@@ -150,12 +288,14 @@ function EntryDialog({
               currency: (entry.currency ?? tripCurrency).toUpperCase(),
               rate: entry.exchange_rate ?? '',
               paid_by: entry.paid_by ?? SHARED,
-              // Restrict a saved subset to members still on the trip; a null /
-              // empty set (or one whose members all left) shows as everyone.
-              participants:
-                entry.participants?.filter((id) => allMemberIds.includes(id)).length
-                  ? entry.participants.filter((id) => allMemberIds.includes(id))
-                  : allMemberIds,
+              // A saved weighted split (#203) is authoritative for who shares:
+              // its still-present member keys become both the selection and the
+              // weights (shown in "By shares" mode — every weighted mode stores
+              // the same ratios, so the exact numbers round-trip faithfully).
+              // Otherwise restrict a saved participant subset to current members;
+              // a null / empty set (or one whose members all left) shows as
+              // everyone.
+              ...savedSplit(entry, allMemberIds),
               entry_date: entry.entry_date ?? '',
               notes: entry.notes ?? '',
             }
@@ -239,6 +379,15 @@ function EntryDialog({
     // to current members, then decide everyone-vs-subset on the cleaned set.
     const picked = members.filter((m) => (values.participants ?? []).includes(m.id)).map((m) => m.id)
     const participants = picked.length === members.length ? null : picked
+    // Resolve the weighted split (#203) into a `{ member_id: weight }` map over
+    // the picked current members. All three weighted modes store the same
+    // proportional ratios (settlement renormalises them), so only the numbers
+    // are kept — not the mode. Equal split stores null, leaving the historic
+    // participants-only behaviour untouched.
+    const shares =
+      values.split_mode === 'equal'
+        ? null
+        : Object.fromEntries(picked.map((id) => [id, Number(values.weights?.[id])]))
     const payload: BudgetInput = {
       title: values.title.trim(),
       category: values.category as BudgetCategory,
@@ -250,6 +399,7 @@ function EntryDialog({
       actual_converted: foreign && actual != null ? toCents(actual * rate!) : null,
       paid_by: !values.paid_by || values.paid_by === SHARED ? null : values.paid_by,
       participants,
+      shares,
       entry_date: values.entry_date || null,
       notes: values.notes?.trim() || null,
     }
@@ -434,12 +584,74 @@ function EntryDialog({
               const everyone = value.length === members.length
               const inMemberOrder = (ids: Set<string>) =>
                 members.filter((m) => ids.has(m.id)).map((m) => m.id)
+
+              // The unequal-split state (#203) lives in sibling fields; read it
+              // here so who-shares and how-much stay one coherent section.
+              const mode = (form.watch('split_mode') as SplitMode) ?? 'equal'
+              const weights = form.watch('weights') ?? {}
+              // Exact amounts are entered in the entry currency, so the target
+              // to hit is the entry's own amount (paid, or the estimate if not).
+              const exactTotal =
+                Number(actNum) > 0 ? Number(actNum) : Number(estNum) > 0 ? Number(estNum) : 0
+
+              const setWeights = (next: Record<string, string>) =>
+                form.setValue('weights', next, { shouldValidate: true })
+              const reseed = (m: SplitMode, ids: string[]) => {
+                if (m !== 'equal') setWeights(seedWeights(m, ids, exactTotal))
+              }
+              const setMode = (m: SplitMode) => {
+                form.setValue('split_mode', m, { shouldValidate: true })
+                reseed(m, value)
+              }
+              const selectEveryone = () => {
+                field.onChange(allMemberIds)
+                reseed(mode, allMemberIds)
+              }
               const toggle = (id: string) => {
                 const next = new Set(selected)
-                if (next.has(id)) next.delete(id)
-                else next.add(id)
-                field.onChange(inMemberOrder(next))
+                const adding = !next.has(id)
+                if (adding) next.add(id)
+                else next.delete(id)
+                const nextIds = inMemberOrder(next)
+                field.onChange(nextIds)
+                if (mode !== 'equal') {
+                  const w = { ...weights }
+                  if (adding) w[id] = mode === 'shares' ? '1' : (w[id] ?? '')
+                  else delete w[id]
+                  setWeights(w)
+                }
               }
+
+              const sum = weightsSum(value, weights)
+              // `weights` is a record field, so RHF widens `err.weights` with a
+              // string index signature that muddies `.message`'s type — pull the
+              // refinement message out through a narrow cast.
+              const weightsError = (err.weights as { message?: string } | undefined)?.message
+              const summary = () => {
+                if (mode === 'equal') {
+                  return everyone
+                    ? 'Shared equally by everyone on the trip.'
+                    : value.length === 0
+                      ? 'Pick who shared this expense.'
+                      : `Split equally ${value.length} ${value.length === 1 ? 'way' : 'ways'}.`
+                }
+                if (mode === 'shares') {
+                  return `Split by shares — ${sum || 0} share${sum === 1 ? '' : 's'} in total.`
+                }
+                if (mode === 'percent') {
+                  const left = Math.round((100 - sum) * 100) / 100
+                  return Math.abs(left) <= 0.01
+                    ? 'Percentages add up to 100%.'
+                    : `Percentages add up to ${Math.round(sum * 100) / 100}% — ${left > 0 ? `${left}% left` : `${-left}% over`}.`
+                }
+                // exact
+                if (!(exactTotal > 0)) return 'Enter the amount above, then split it exactly.'
+                const left = Math.round((exactTotal - sum) * 100) / 100
+                return Math.abs(left) <= 0.01
+                  ? `Amounts add up to ${formatMoney(exactTotal, selectedCurrency)}.`
+                  : `Adds up to ${formatMoney(sum, selectedCurrency)} of ${formatMoney(exactTotal, selectedCurrency)} — ${formatMoney(Math.abs(left), selectedCurrency)} ${left > 0 ? 'left' : 'over'}.`
+              }
+
               return (
                 <div className="space-y-2">
                   <Label id="b-split-label">Split between</Label>
@@ -451,7 +663,7 @@ function EntryDialog({
                     <button
                       type="button"
                       aria-pressed={everyone}
-                      onClick={() => field.onChange(allMemberIds)}
+                      onClick={selectEveryone}
                       className={cn(
                         'inline-flex min-h-11 items-center rounded-full border px-3.5 text-sm font-medium transition-colors',
                         everyone
@@ -482,15 +694,83 @@ function EntryDialog({
                       )
                     })}
                   </div>
+
+                  {/* How to split (#203): equal, or weighted by shares / exact
+                      amount / percentage. All weighted modes persist the same
+                      proportional ratios. */}
+                  <div
+                    role="group"
+                    aria-label="How to split the cost"
+                    className="flex flex-wrap gap-1.5 pt-1"
+                  >
+                    {SPLIT_MODES.map((m) => {
+                      const active = mode === m
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setMode(m)}
+                          className={cn(
+                            'inline-flex min-h-11 items-center rounded-lg border px-3 text-sm font-medium transition-colors',
+                            active
+                              ? 'border-primary bg-primary-faint text-primary'
+                              : 'border-line bg-surface text-ink-soft hover:border-line-strong hover:bg-sunken'
+                          )}
+                        >
+                          {SPLIT_MODE_LABELS[m]}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {mode !== 'equal' && value.length > 0 && (
+                    <div className="space-y-1.5 rounded-xl border border-line bg-sunken/40 p-3">
+                      {members
+                        .filter((m) => selected.has(m.id))
+                        .map((m) => (
+                          <div key={m.id} className="flex items-center gap-2.5">
+                            <MemberAvatar name={m.display_name} color={m.color} size="sm" />
+                            <span className="min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
+                            <div className="flex items-center gap-1.5">
+                              {mode === 'exact' && (
+                                <span className="text-xs text-muted">{selectedCurrency}</span>
+                              )}
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min={mode === 'shares' ? '1' : '0'}
+                                step={mode === 'shares' ? '1' : '0.01'}
+                                aria-label={
+                                  mode === 'shares'
+                                    ? `${m.display_name}'s shares`
+                                    : mode === 'percent'
+                                      ? `${m.display_name}'s percentage`
+                                      : `${m.display_name}'s amount`
+                                }
+                                value={weights[m.id] ?? ''}
+                                onChange={(e) =>
+                                  setWeights({ ...weights, [m.id]: e.target.value })
+                                }
+                                className="h-11 w-24 text-right tabular-nums"
+                              />
+                              {mode === 'percent' && (
+                                <span className="text-xs text-muted">%</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+
                   <p aria-live="polite" className="text-xs text-muted">
-                    {everyone
-                      ? 'Shared by everyone on the trip.'
-                      : value.length === 0
-                        ? 'Pick who shared this expense.'
-                        : `Split ${value.length} ${value.length === 1 ? 'way' : 'ways'}.`}
+                    {summary()}
                   </p>
                   {err.participants && (
                     <p className="text-xs text-danger">{err.participants.message}</p>
+                  )}
+                  {weightsError && (
+                    <p className="text-xs text-danger">{weightsError}</p>
                   )}
                 </div>
               )
@@ -560,6 +840,9 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
   // shifts settle-up balances) through an edit they aren't allowed to delete.
   const canModify = isOwner || entry.created_by === me.id
   const foreign = isForeignEntry(entry, trip.currency)
+  // Flag an unequal split (#203) so the row hints that settle-up won't divide
+  // this cost evenly — the detail lives in the edit dialog.
+  const weighted = !!entry.shares && Object.values(entry.shares).some((w) => w > 0)
 
   return (
     <div id={searchAnchorId(entry.id)} className="flex items-center gap-3 px-4 py-3">
@@ -569,6 +852,7 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
           {CATEGORIES.find((c) => c.value === entry.category)?.label}
           {entry.entry_date && ` · ${shortDate(entry.entry_date)}`}
           {payer && ` · paid by ${payer.display_name}`}
+          {weighted && ' · split unevenly'}
         </p>
         <LinkedItineraryChip entryId={entry.id} />
       </div>

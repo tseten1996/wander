@@ -36,7 +36,7 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context)
 }`),
 )
-const { minimalTransfers } = await import('../src/features/budget/settlement.ts')
+const { minimalTransfers, computeBalances } = await import('../src/features/budget/settlement.ts')
 
 // The same half-cent tolerance settlement.ts settles on (EPSILON), plus a hair
 // for the per-transfer cent rounding that can accumulate across a few legs.
@@ -175,6 +175,66 @@ test('rounding edge: uneven thirds reconcile within a cent', () => {
     // refactor that dropped the rounding (emitting a raw 33.333…) would fail.
     assert.equal(t.amount, Math.round(t.amount * 100) / 100)
   }
+  assertReconciles(balances, transfers)
+})
+
+/* ── Weighted splits end-to-end: computeBalances → minimalTransfers (#203) ──── */
+
+// A budget row with only the fields the settlement pool reads. Weighted splits
+// (#203) ride on `shares`; everything else stays at the equal-split defaults.
+function bEntry(o = {}) {
+  return {
+    estimated: null, actual: null, currency: null,
+    estimated_converted: null, actual_converted: null, exchange_rate: null,
+    paid_by: null, participants: null, shares: null, category: 'other', ...o,
+  }
+}
+
+test('weighted split by shares settles into a single proportional transfer (#203)', () => {
+  // A fronts a $120 room split 2:1 (A took the suite). B owes exactly $40, so
+  // the whole trip squares up with one B → A transfer of 40 — the weighting
+  // flows all the way through to the payment the group acts on.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const balances = computeBalances(
+    [bEntry({ actual: 120, paid_by: 'a', shares: { a: 2, b: 1 } })],
+    members,
+  )
+  const transfers = minimalTransfers(balances)
+  assert.equal(transfers.length, 1)
+  assert.equal(transfers[0].from.id, 'b')
+  assert.equal(transfers[0].to.id, 'a')
+  assert.equal(transfers[0].amount, 40)
+  assertReconciles(balances, transfers)
+})
+
+test('exact-amount weights produce the exact settle-up transfers (#203)', () => {
+  // "By exact amount": A pays a $100 bill split $20 / $80 between A and B.
+  // B must be shown owing exactly $80.
+  const members = ['a', 'b'].map((id) => ({ id, name: id }))
+  const balances = computeBalances(
+    [bEntry({ actual: 100, paid_by: 'a', shares: { a: 20, b: 80 } })],
+    members,
+  )
+  const transfers = minimalTransfers(balances)
+  assert.equal(transfers.length, 1)
+  assert.equal(transfers[0].amount, 80)
+  assertWellFormed(transfers)
+  assertReconciles(balances, transfers)
+})
+
+test('percentage weights settle minimally across three members (#203)', () => {
+  // "By percent": A fronts $300 split 50% / 30% / 20% among A, B, C. B owes 90,
+  // C owes 60, both to A — two transfers, which is minimal for one creditor.
+  const members = ['a', 'b', 'c'].map((id) => ({ id, name: id }))
+  const balances = computeBalances(
+    [bEntry({ actual: 300, paid_by: 'a', shares: { a: 50, b: 30, c: 20 } })],
+    members,
+  )
+  const transfers = minimalTransfers(balances)
+  assert.equal(transfers.length, 2)
+  assert.ok(transfers.length <= nonZeroCount(balances) - 1)
+  for (const t of transfers) assert.equal(t.to.id, 'a')
+  assertWellFormed(transfers)
   assertReconciles(balances, transfers)
 })
 
