@@ -4,6 +4,8 @@ import { CloudSun, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import { useTripWeather } from '@/hooks/useWeather'
+import { useTempUnit } from '@/hooks/useTempUnit'
+import { formatTemp } from '@/lib/units'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useAddPackingItem } from './api'
@@ -77,6 +79,7 @@ function NudgeRow({
 export default function WeatherNudges() {
   const { trip, me } = useTripContext()
   const weather = useTripWeather(trip)
+  const { unit } = useTempUnit()
   const addItem = useAddPackingItem(trip.id, me.id)
   const [dismissed, setDismissed] = React.useState<Set<string>>(() => new Set())
 
@@ -86,8 +89,11 @@ export default function WeatherNudges() {
   )
 
   const suggestions = React.useMemo(
-    () => derivePackingSuggestions(days).filter((s) => !dismissed.has(s.id)),
-    [days, dismissed],
+    () =>
+      derivePackingSuggestions(days, (c) => formatTemp(c, unit)).filter(
+        (s) => !dismissed.has(s.id),
+      ),
+    [days, dismissed, unit],
   )
 
   function dismiss(id: string) {

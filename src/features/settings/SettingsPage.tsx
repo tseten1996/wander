@@ -12,6 +12,8 @@ import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { useTripContext } from '@/hooks/useTrip'
 import { useAuth } from '@/hooks/useAuth'
+import { useTempUnit } from '@/hooks/useTempUnit'
+import type { TempUnit } from '@/lib/units'
 import { exportTripJson, importTripJson } from '@/lib/export'
 import { friendlyError } from '@/lib/errors'
 import { useInviteLink } from '@/lib/invite'
@@ -272,6 +274,61 @@ function ProfileCard() {
         <Button onClick={save} disabled={saving}>
           {saving ? 'Saving…' : 'Save profile'}
         </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Device preferences (this device only) ──────────────────────────────── */
+
+function PreferencesCard() {
+  const { unit, setUnit } = useTempUnit()
+  const options: { value: TempUnit; label: string }[] = [
+    { value: 'C', label: '°C' },
+    { value: 'F', label: '°F' },
+  ]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Preferences</CardTitle>
+        <CardDescription>Display settings saved on this device only.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Temperature</p>
+            <p className="text-xs text-muted">
+              Units for the weather shown in the calendar, itinerary and packing tips.
+            </p>
+          </div>
+          <div
+            role="radiogroup"
+            aria-label="Temperature unit"
+            className="flex shrink-0 gap-1 rounded-xl bg-sunken p-1"
+          >
+            {options.map((o) => {
+              const selected = unit === o.value
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setUnit(o.value)}
+                  className={cn(
+                    'flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                    selected
+                      ? 'bg-surface text-ink shadow-soft'
+                      : 'text-muted hover:text-ink'
+                  )}
+                >
+                  {o.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
@@ -782,6 +839,7 @@ export default function SettingsPage() {
         {isOwner && <TripInfoCard />}
         {isOwner && <DestinationsCard />}
         <ProfileCard />
+        <PreferencesCard />
         <InviteCard />
         {isOwner && <PublicShareCard />}
         <MembersCard />
