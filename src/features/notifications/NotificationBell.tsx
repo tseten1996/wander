@@ -1,6 +1,18 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { AtSign, Bell, CheckCheck, Inbox, ListChecks, PiggyBank, Vote } from 'lucide-react'
+import {
+  AtSign,
+  Bell,
+  CalendarClock,
+  CheckCheck,
+  Inbox,
+  ListChecks,
+  Luggage,
+  PiggyBank,
+  Timer,
+  Vote,
+  X,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { Button } from '@/components/ui/button'
@@ -16,6 +28,9 @@ import {
   useMarkNotificationRead,
   useNotifications,
 } from './api'
+import type { Reminder, ReminderKind } from './reminders'
+import { useReminders } from './useReminders'
+import { dismissReminder } from './reminderDismissal'
 
 /** Which tab (and icon) each event type deep-links to. */
 const TYPE_META: Record<NotificationType, { tab: string; icon: LucideIcon; verb: string }> = {
@@ -25,10 +40,10 @@ const TYPE_META: Record<NotificationType, { tab: string; icon: LucideIcon; verb:
   mention: { tab: 'chat', icon: AtSign, verb: 'mentioned you' },
 }
 
-/** Deep link to the relevant tab, flashing the entity when it still exists. */
-function linkFor(tripId: string, n: Notification): string {
-  const base = `/trip/${tripId}/${TYPE_META[n.type].tab}`
-  return n.entity_id ? `${base}#${searchAnchorId(n.entity_id)}` : base
+/** Deep link to a tab, flashing the entity (via the shared search anchor). */
+function tabLink(tripId: string, tab: string, entityId: string | null): string {
+  const base = `/trip/${tripId}/${tab}`
+  return entityId ? `${base}#${searchAnchorId(entityId)}` : base
 }
 
 function NotificationRow({
@@ -48,7 +63,7 @@ function NotificationRow({
   return (
     <li>
       <Link
-        to={linkFor(tripId, n)}
+        to={tabLink(tripId, meta.tab, n.entity_id)}
         onClick={() => onNavigate(n)}
         className={cn(
           'flex gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-sunken',
@@ -90,12 +105,88 @@ function NotificationRow({
   )
 }
 
+/** Icon for each reminder kind (the deadline itself, not a person). */
+const REMINDER_ICON: Record<ReminderKind, LucideIcon> = {
+  task_due: CalendarClock,
+  trip_countdown: Luggage,
+  poll_closing: Timer,
+}
+
+function ReminderRow({
+  r,
+  tripId,
+  onNavigate,
+}: {
+  r: Reminder
+  tripId: string
+  onNavigate: () => void
+}) {
+  const Icon = REMINDER_ICON[r.kind]
+  const urgent = r.tone === 'urgent'
+
+  return (
+    <li className="group relative">
+      <Link
+        to={tabLink(tripId, r.tab, r.entityId)}
+        onClick={onNavigate}
+        className={cn(
+          'flex gap-3 rounded-xl py-2.5 pl-2.5 pr-10 transition-colors hover:bg-sunken',
+          'focus-visible:bg-sunken focus-visible:outline-none'
+        )}
+      >
+        <span
+          className={cn(
+            'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
+            urgent ? 'bg-accent/15 text-accent' : 'bg-sunken text-muted'
+          )}
+        >
+          <Icon className="size-3.5" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium leading-snug text-ink">
+            {r.title}
+          </span>
+          <span
+            className={cn(
+              'mt-0.5 block text-xs font-medium',
+              urgent ? 'text-accent' : 'text-muted'
+            )}
+          >
+            {r.detail}
+          </span>
+        </span>
+      </Link>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted"
+        aria-label={`Dismiss reminder: ${r.title}`}
+        onClick={() => dismissReminder(r.id)}
+      >
+        <X className="size-3.5" />
+      </Button>
+    </li>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-faint">
+      {children}
+    </p>
+  )
+}
+
 /**
- * The personal inbox in the app shell header (#182): a bell with an unread
- * badge that updates live via realtime, and a dropdown listing recent
- * "things that need me" newest-first, each deep-linking to its tab. Mounted in
- * both the desktop sidebar and the mobile top bar; the two instances share one
- * query (same key) and one realtime subscription.
+ * The personal inbox in the app shell header: a bell with a badge and a
+ * dropdown. It surfaces two kinds of "things that need me":
+ *  - **Reminders (#195)** — time-based, derived on the client from cached data
+ *    (a task due soon, the trip counting down, a poll closing) and *never*
+ *    persisted. Shown in their own section, dismissible for the session.
+ *  - **Notifications (#182)** — actor-caused, persisted, cross-device; updated
+ *    live via realtime.
+ * Mounted in both the desktop sidebar and the mobile top bar; the two instances
+ * share the same queries (by key) and the same session-dismissal set.
  */
 export function NotificationBell({ className }: { className?: string }) {
   const { trip, me } = useTripContext()
@@ -103,15 +194,21 @@ export function NotificationBell({ className }: { className?: string }) {
   const notifications = useNotifications(trip.id, me.id)
   const markRead = useMarkNotificationRead(trip.id)
   const markAll = useMarkAllNotificationsRead(trip.id, me.id)
+  const reminders = useReminders()
 
   const items = notifications.data ?? []
   const unread = unreadCount(items)
-  const badge = unread > 9 ? '9+' : String(unread)
+  // The badge counts both unread notifications and live reminders, so a
+  // deadline raises it even though nobody acted — the point of #195.
+  const alerts = unread + reminders.length
+  const badge = alerts > 9 ? '9+' : String(alerts)
 
-  function onNavigate(n: Notification) {
+  function onNavigateNotification(n: Notification) {
     if (!n.read_at) markRead.mutate(n.id)
     setOpen(false)
   }
+
+  const hasReminders = reminders.length > 0
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -120,10 +217,10 @@ export function NotificationBell({ className }: { className?: string }) {
           variant="ghost"
           size="icon"
           className={cn('relative', className)}
-          aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+          aria-label={alerts > 0 ? `Notifications, ${alerts} need attention` : 'Notifications'}
         >
           <Bell />
-          {unread > 0 && (
+          {alerts > 0 && (
             <span
               aria-hidden
               className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-4 text-on-primary ring-2 ring-surface"
@@ -136,7 +233,7 @@ export function NotificationBell({ className }: { className?: string }) {
 
       {/* Announce badge changes for screen-reader users without stealing focus. */}
       <span aria-live="polite" className="sr-only">
-        {unread > 0 ? `${unread} unread notifications` : ''}
+        {alerts > 0 ? `${alerts} items need attention` : ''}
       </span>
 
       <PopoverContent align="end" className="w-80 p-0">
@@ -154,33 +251,61 @@ export function NotificationBell({ className }: { className?: string }) {
           )}
         </div>
 
-        {notifications.isLoading ? (
+        {notifications.isLoading && !hasReminders ? (
           <div className="space-y-2 p-3">
             <Skeleton className="h-12" />
             <Skeleton className="h-12" />
             <Skeleton className="h-12" />
           </div>
-        ) : notifications.isError ? (
+        ) : notifications.isError && !hasReminders ? (
           <div className="p-3">
             <ErrorState
               onRetry={() => notifications.refetch()}
               isRetrying={notifications.isFetching}
             />
           </div>
-        ) : items.length === 0 ? (
+        ) : !hasReminders && items.length === 0 ? (
           <div className="px-3 py-8">
             <EmptyState
               icon={Inbox}
               title="You’re all caught up"
-              description="When someone assigns you a task, opens a poll, logs an expense you owe, or @-mentions you in chat, it shows up here."
+              description="Deadlines you’re close to, plus tasks, polls, expenses, and @-mentions from your group, show up here."
             />
           </div>
         ) : (
-          <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
-            {items.map((n) => (
-              <NotificationRow key={n.id} n={n} tripId={trip.id} onNavigate={onNavigate} />
-            ))}
-          </ul>
+          <div className="max-h-[60vh] overflow-y-auto p-2">
+            {hasReminders && (
+              <section aria-label="Reminders">
+                <SectionLabel>Reminders</SectionLabel>
+                <ul className="space-y-0.5">
+                  {reminders.map((r) => (
+                    <ReminderRow
+                      key={r.id}
+                      r={r}
+                      tripId={trip.id}
+                      onNavigate={() => setOpen(false)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {items.length > 0 && (
+              <section aria-label="Notifications">
+                {hasReminders && <SectionLabel>From your group</SectionLabel>}
+                <ul className="space-y-0.5">
+                  {items.map((n) => (
+                    <NotificationRow
+                      key={n.id}
+                      n={n}
+                      tripId={trip.id}
+                      onNavigate={onNavigateNotification}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+          </div>
         )}
       </PopoverContent>
     </Popover>
