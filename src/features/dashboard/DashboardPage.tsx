@@ -10,6 +10,7 @@ import { useInviteLink } from '@/lib/invite'
 import { useDestinations } from '@/features/destinations/api'
 import { routeText } from '@/features/destinations/route'
 import { useDashboard, planningProgress } from './api'
+import { TripRecap } from './TripRecap'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
 import { celebrateOncePerTrip, resetCelebration } from '@/lib/confetti'
@@ -105,6 +106,11 @@ export default function DashboardPage() {
   const { trip, membersById } = useTripContext()
   const dash = useDashboard(trip.id)
 
+  // Once the end date has passed, the countdown/progress area is meaningless —
+  // swap it for the Trip recap (#206). Same predicate the Hero uses to drop the
+  // (would-be-negative) countdown badge.
+  const ended = trip.end_date ? daysUntil(trip.end_date) < 0 : false
+
   const progress = dash.data ? planningProgress(dash.data) : null
 
   // Confetti the moment the group's planning reaches 100%
@@ -143,7 +149,10 @@ export default function DashboardPage() {
     <div className="space-y-5">
       <Hero />
 
-      {/* Progress + budget */}
+      {/* Progress + budget — or, once the trip is over, the recap (#206) */}
+      {ended ? (
+        <TripRecap />
+      ) : (
       <div className="grid gap-5 md:grid-cols-2">
         <motion.div {...fadeUp} transition={{ duration: 0.3, delay: 0.05 }}>
           <Card className="h-full">
@@ -227,6 +236,7 @@ export default function DashboardPage() {
           </Link>
         </motion.div>
       </div>
+      )}
 
       {/* Quick nav */}
       <motion.div
