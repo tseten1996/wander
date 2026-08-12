@@ -47,6 +47,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => sub.subscription.unsubscribe()
   }, [])
 
+  // Stable across renders: it reads the session freshly from supabase-js and
+  // never closes over React state, so its identity must not change when
+  // `session` updates. The join flow depends on this reference in an effect —
+  // a friend's anonymous sign-in updates `session`, and if this were rebuilt
+  // then, the effect would re-run and fire join_trip + the preview a second
+  // time (#215).
+  const ensureSession = React.useCallback(async () => {
+    const { data } = await supabase.auth.getSession()
+    if (data.session) return data.session
+    const { data: anon, error } = await supabase.auth.signInAnonymously()
+    if (error || !anon.session) {
+      throw error ?? new Error('Could not create a session')
+    }
+    return anon.session
+  }, [])
+
   const value = React.useMemo<AuthContextValue>(
     () => ({
       session,
@@ -64,20 +80,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         if (error) throw error
       },
-      ensureSession: async () => {
-        const { data } = await supabase.auth.getSession()
-        if (data.session) return data.session
-        const { data: anon, error } = await supabase.auth.signInAnonymously()
-        if (error || !anon.session) {
-          throw error ?? new Error('Could not create a session')
-        }
-        return anon.session
-      },
+      ensureSession,
       signOut: async () => {
         await supabase.auth.signOut()
       },
     }),
-    [session, loading]
+    [session, loading, ensureSession]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -57,7 +57,15 @@ export default function JoinPage() {
         await ensureSession()
         if (cancelled) return
 
-        const previewPromise = supabase.rpc('get_invite_preview', { p_invite_code: code })
+        // Fire the preview request exactly once and reuse its resolved value
+        // for both the early context paint and the later form render. A
+        // PostgrestBuilder re-executes its request on every terminal
+        // .then()/await, so consuming the same builder at both call sites fired
+        // the preview twice (#215); mapping it through a single .then() runs the
+        // request once and hands a plain, memoised promise to both consumers.
+        const previewPromise = supabase
+          .rpc('get_invite_preview', { p_invite_code: code })
+          .then(({ data }) => (data?.[0] as InvitePreview) ?? null)
         const joinPromise = supabase.rpc('join_trip', {
           p_invite_code: code,
           p_display_name: '',
@@ -67,9 +75,8 @@ export default function JoinPage() {
         // even while the join probe is still in flight. Only a resolved,
         // non-empty preview sets state — a failed/empty preview leaves the
         // bare loader, so context never appears for a link that isn't real.
-        void previewPromise.then(({ data }) => {
+        void previewPromise.then((p) => {
           if (cancelled) return
-          const p = (data?.[0] as InvitePreview) ?? null
           if (p) setPreview(p)
         })
 
@@ -81,10 +88,11 @@ export default function JoinPage() {
         }
         if (error?.message.includes('NAME_REQUIRED')) {
           // Make sure the context is in place before the form (it may already
-          // be, from the parallel fetch above).
-          const { data } = await previewPromise
+          // be, from the parallel fetch above). Reuses the single resolved
+          // preview — no second network request.
+          const p = await previewPromise
           if (cancelled) return
-          setPreview((prev) => prev ?? (data?.[0] as InvitePreview) ?? null)
+          setPreview((prev) => prev ?? p)
           setPhase('form')
           return
         }
