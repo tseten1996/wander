@@ -3,8 +3,8 @@ import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CalendarDays, Compass, MapPin, PartyPopper, Users } from 'lucide-react'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { getInvitePreview, joinTrip } from './api'
 import { MEMBER_COLORS, randomMemberColor } from '@/lib/colors'
 import { dateRange, cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -58,24 +58,17 @@ export default function JoinPage() {
         if (cancelled) return
 
         // Fire the preview request exactly once and reuse its resolved value.
-        // A PostgrestBuilder re-executes its request on every terminal
-        // .then()/await, so consuming the same builder at both call sites fired
-        // the preview twice (#215). Mapping it through a single .then() runs the
-        // request once: it paints the context card the moment a real trip
-        // resolves (even while the join probe is still in flight — a failed or
-        // empty preview leaves the bare loader, so context never appears for a
-        // link that isn't real) and hands the memoised value to the form render.
-        const previewPromise = supabase
-          .rpc('get_invite_preview', { p_invite_code: code })
-          .then(({ data }) => {
-            const p = (data?.[0] as InvitePreview) ?? null
-            if (p && !cancelled) setPreview(p)
-            return p
-          })
-        const joinPromise = supabase.rpc('join_trip', {
-          p_invite_code: code,
-          p_display_name: '',
+        // Calling getInvitePreview once and memoising its promise runs the
+        // request a single time (#215): it paints the context card the moment a
+        // real trip resolves (even while the join probe is still in flight — a
+        // failed or empty preview leaves the bare loader, so context never
+        // appears for a link that isn't real) and hands the memoised value to
+        // the form render.
+        const previewPromise = getInvitePreview(code).then((p) => {
+          if (p && !cancelled) setPreview(p)
+          return p
         })
+        const joinPromise = joinTrip({ code, displayName: '' })
 
         const { data: tripId, error } = await joinPromise
         if (cancelled) return
@@ -115,10 +108,10 @@ export default function JoinPage() {
     e.preventDefault()
     if (!name.trim() || !code) return
     setPhase('joining')
-    const { data: tripId, error } = await supabase.rpc('join_trip', {
-      p_invite_code: code,
-      p_display_name: name.trim(),
-      p_color: color,
+    const { data: tripId, error } = await joinTrip({
+      code,
+      displayName: name.trim(),
+      color,
     })
     if (error || !tripId) {
       setPhase('form')
