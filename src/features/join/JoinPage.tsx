@@ -57,27 +57,24 @@ export default function JoinPage() {
         await ensureSession()
         if (cancelled) return
 
-        // Fire the preview request exactly once and reuse its resolved value
-        // for both the early context paint and the later form render. A
-        // PostgrestBuilder re-executes its request on every terminal
+        // Fire the preview request exactly once and reuse its resolved value.
+        // A PostgrestBuilder re-executes its request on every terminal
         // .then()/await, so consuming the same builder at both call sites fired
-        // the preview twice (#215); mapping it through a single .then() runs the
-        // request once and hands a plain, memoised promise to both consumers.
+        // the preview twice (#215). Mapping it through a single .then() runs the
+        // request once: it paints the context card the moment a real trip
+        // resolves (even while the join probe is still in flight — a failed or
+        // empty preview leaves the bare loader, so context never appears for a
+        // link that isn't real) and hands the memoised value to the form render.
         const previewPromise = supabase
           .rpc('get_invite_preview', { p_invite_code: code })
-          .then(({ data }) => (data?.[0] as InvitePreview) ?? null)
+          .then(({ data }) => {
+            const p = (data?.[0] as InvitePreview) ?? null
+            if (p && !cancelled) setPreview(p)
+            return p
+          })
         const joinPromise = supabase.rpc('join_trip', {
           p_invite_code: code,
           p_display_name: '',
-        })
-
-        // Paint the context as soon as the preview resolves to a real trip,
-        // even while the join probe is still in flight. Only a resolved,
-        // non-empty preview sets state — a failed/empty preview leaves the
-        // bare loader, so context never appears for a link that isn't real.
-        void previewPromise.then((p) => {
-          if (cancelled) return
-          if (p) setPreview(p)
         })
 
         const { data: tripId, error } = await joinPromise
