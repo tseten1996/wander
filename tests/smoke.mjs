@@ -530,11 +530,44 @@ async function runJoin(browser) {
   console.log('\n▶ join (invite link)')
   const context = await newContext(browser)
   const page = await context.newPage()
+  // Count the first-touch RPCs (#215). A new friend's very first open must
+  // issue exactly one join_trip probe and one get_invite_preview — not the
+  // 2–4× it used to, when the auth-effect re-ran on the anonymous sign-in and
+  // the preview builder was consumed twice. Count only real POSTs (not the
+  // CORS OPTIONS preflight), up to the moment the name form appears; the
+  // deliberate second join_trip (submitting the name) happens after that.
+  let firstJoinProbes = 0
+  let firstPreviewFetches = 0
+  page.on('request', (req) => {
+    if (req.method() !== 'POST') return
+    const u = req.url()
+    if (u.includes('/rest/v1/rpc/join_trip')) firstJoinProbes += 1
+    else if (u.includes('/rest/v1/rpc/get_invite_preview')) firstPreviewFetches += 1
+  })
   try {
     await page.goto(`${BASE_URL}/#/join/lisbon2026`, { waitUntil: 'domcontentloaded' })
     // Anonymous session + NAME_REQUIRED + preview all resolved → the form shows.
     await page.getByText('Lisbon in Spring').waitFor({ state: 'visible', timeout: 10_000 })
     ok('invite preview renders after the anonymous session is created')
+
+    // Wait for the name form itself, not a fixed delay: the "Your name" input
+    // only mounts once the join_trip probe has resolved NAME_REQUIRED (the
+    // 'checking' preview card can paint while that probe is still in flight),
+    // so this deterministically settles past the anonymous sign-in that used to
+    // re-fire the effect. Then assert the first-touch call count is exactly one
+    // each — the acceptance criterion for #215. Checked before the name is
+    // submitted so the legitimate join POST below is never counted.
+    await page.getByPlaceholder('Your name').waitFor({ state: 'visible', timeout: 10_000 })
+    if (firstJoinProbes !== 1) {
+      throw new Error(`first-time join fired join_trip ${firstJoinProbes}× (expected exactly 1)`)
+    }
+    if (firstPreviewFetches !== 1) {
+      throw new Error(
+        `first-time join fired get_invite_preview ${firstPreviewFetches}× (expected exactly 1)`
+      )
+    }
+    ok('a first-time join issues exactly one join_trip probe and one preview request')
+
     await page.getByPlaceholder('Your name').fill('Alex')
     await page.getByRole('button', { name: 'Join the trip' }).click()
     await page.waitForURL((url) => url.hash.includes(`/trip/${TRIP_ID}`), { timeout: 10_000 })
