@@ -1292,6 +1292,72 @@ async function runErrorReporting(browser) {
   } finally {
     await context.close()
   }
+
+  // The client bounds how many reports it fires per tab session, and the bound
+  // survives a reload (persisted in sessionStorage) so a crash-loop that reloads
+  // the page can't reset the budget and keep hammering. This is the client half
+  // of #170's defense-in-depth; the DB trigger is the real boundary.
+  const capContext = await newContext(browser, OWNER_SESSION)
+  const capPage = await capContext.newPage()
+  try {
+    let inserts = 0
+    capPage.on('request', (req) => {
+      if (req.url().includes('/rest/v1/error_reports') && req.method() === 'POST') {
+        inserts += 1
+      }
+    })
+
+    await capPage.goto(`${BASE_URL}/#/`, { waitUntil: 'domcontentloaded' })
+    await capPage.getByRole('button', { name: 'New trip' }).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+
+    // Fire well past the per-session cap with distinct messages (so dedup never
+    // masks the cap). Only the cap should limit how many requests go out.
+    await capPage.evaluate(() => {
+      for (let i = 0; i < 30; i += 1) {
+        window.dispatchEvent(
+          new ErrorEvent('error', {
+            message: `cap-boom-${i}`,
+            error: new Error(`cap-boom-${i}`),
+          })
+        )
+      }
+    })
+    // Let the fire-and-forget inserts flush.
+    await capPage.waitForTimeout(1_000)
+    if (inserts === 0 || inserts > 20) {
+      throw new Error(`expected the session cap to bound inserts to <=20, saw ${inserts}`)
+    }
+    ok('the per-session cap bounds how many reports are sent')
+
+    // Reload: the in-memory counter resets but sessionStorage remembers the cap,
+    // so a reload-loop gets no fresh budget.
+    const before = inserts
+    await capPage.reload({ waitUntil: 'domcontentloaded' })
+    await capPage.getByRole('button', { name: 'New trip' }).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    await capPage.evaluate(() => {
+      for (let i = 0; i < 5; i += 1) {
+        window.dispatchEvent(
+          new ErrorEvent('error', {
+            message: `post-reload-boom-${i}`,
+            error: new Error(`post-reload-boom-${i}`),
+          })
+        )
+      }
+    })
+    await capPage.waitForTimeout(1_000)
+    if (inserts !== before) {
+      throw new Error(`the cap should persist across a reload, but ${inserts - before} more reports fired`)
+    }
+    ok('the per-session cap persists across a reload')
+  } finally {
+    await capContext.close()
+  }
 }
 
 async function runPublicShare(browser) {
