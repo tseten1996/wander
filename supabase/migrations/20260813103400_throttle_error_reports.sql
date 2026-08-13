@@ -42,15 +42,41 @@ declare
   -- abuse.
   max_per_window constant int := 20;
   window_length constant interval := interval '1 hour';
+  -- The caller's real identity from the request JWT. auth.uid() is readable
+  -- inside a SECURITY DEFINER function (it reads the request claim, not the
+  -- function's role) and cannot be forged, unlike new.user_id.
+  caller uuid := auth.uid();
   recent_count int;
 begin
-  -- Count by the row's user_id: the INSERT policy pins user_id = auth.uid(),
-  -- so a forged user_id is rejected by RLS afterward regardless, and a
-  -- legitimate caller is counted against their own footprint.
+  -- Pin created_at server-side. The trailing-window count below keys on it, so
+  -- a hostile caller who supplies a backdated created_at could otherwise place
+  -- every row outside the window (recent_count stays 0) and never be throttled
+  -- — the exact abuse vector this migration exists to close. The honest client
+  -- omits created_at (DEFAULT now()); forcing it here makes now() the only
+  -- possible value for everyone, not just the well-behaved.
+  new.created_at := now();
+
+  -- Serialize this caller's concurrent inserts. Without it a simultaneous burst
+  -- could each read the same pre-insert count and collectively overshoot the
+  -- cap (a count-then-insert TOCTOU). The advisory lock is keyed per caller and
+  -- released at transaction end, so distinct callers never contend. coalesce
+  -- guards the unauthenticated / service_role path (auth.uid() IS NULL), which
+  -- RLS handles on its own.
+  perform pg_advisory_xact_lock(
+    hashtext('error_reports_rate_limit'),
+    hashtext(coalesce(caller::text, ''))
+  );
+
+  -- Count by auth.uid(), not new.user_id. The BEFORE INSERT trigger runs before
+  -- the RLS WITH CHECK that pins user_id = auth.uid(), so counting new.user_id
+  -- would let a forged user_id probe another caller's throttle state (a rate
+  -- oracle) before RLS rejects the row. Counting the real caller closes that.
+  -- SECURITY DEFINER still lets the count see the caller's full footprint,
+  -- including the trip_id IS NULL rows the SELECT policy hides.
   select count(*)
     into recent_count
     from public.error_reports
-   where user_id = new.user_id
+   where user_id = caller
      and created_at > now() - window_length;
 
   if recent_count >= max_per_window then

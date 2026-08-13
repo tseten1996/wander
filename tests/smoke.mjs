@@ -1327,10 +1327,13 @@ async function runErrorReporting(browser) {
     })
     // Let the fire-and-forget inserts flush.
     await capPage.waitForTimeout(1_000)
-    if (inserts === 0 || inserts > 20) {
-      throw new Error(`expected the session cap to bound inserts to <=20, saw ${inserts}`)
+    // Exactly the cap: 30 distinct messages fired, so a correct cap sends 20 and
+    // no more. Asserting the exact value (not just <=20) catches a regression
+    // that clamped reports to 1 — which a <=20 bound would silently pass.
+    if (inserts !== 20) {
+      throw new Error(`expected the per-session cap to send exactly 20 reports, saw ${inserts}`)
     }
-    ok('the per-session cap bounds how many reports are sent')
+    ok('the per-session cap bounds how many reports are sent (exactly 20)')
 
     // Reload: the in-memory counter resets but sessionStorage remembers the cap,
     // so a reload-loop gets no fresh budget.

@@ -29,7 +29,7 @@ const MAX_MESSAGE = 1_000
 const MAX_STACK = 4_000
 const MAX_URL = 500
 const MAX_USER_AGENT = 400
-const SESSION_COUNT_KEY = 'wander:error-reports-sent'
+const SESSION_COUNT_KEY = 'wander:err-count'
 
 let sent = 0
 let installed = false
@@ -49,18 +49,19 @@ function truncate(value: string | null | undefined, max: number): string | null 
  */
 function sessionCount(): number {
   try {
-    const raw = window.sessionStorage.getItem(SESSION_COUNT_KEY)
-    const n = raw ? Number.parseInt(raw, 10) : 0
-    return Number.isFinite(n) && n > sent ? n : sent
+    const n = +window.sessionStorage[SESSION_COUNT_KEY]
+    if (n > sent) sent = n
   } catch {
-    return sent
+    // sessionStorage unavailable (private mode / disabled) — the in-memory
+    // counter still caps this load.
   }
+  return sent
 }
 
 function bumpSessionCount(): void {
   sent = sessionCount() + 1
   try {
-    window.sessionStorage.setItem(SESSION_COUNT_KEY, String(sent))
+    window.sessionStorage[SESSION_COUNT_KEY] = sent
   } catch {
     // sessionStorage unavailable — the in-memory counter still caps this load.
   }
