@@ -103,7 +103,7 @@ export function SearchDialog({
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKeyDown}
               className={cn(
-                'h-11 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-faint',
+                'h-11 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-base md:text-sm text-ink placeholder:text-faint',
                 'transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20'
               )}
             />
