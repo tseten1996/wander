@@ -275,6 +275,36 @@ const CHAT_SEED_MESSAGE = {
 }
 let chatMessages = []
 
+// Itinerary items (#225): a stateful store, like budgetEntries/chatMessages
+// above, so an item the ItemDialog POSTs survives the create mutation's
+// invalidate → refetch and renders in the day timeline. One seed item (dated +
+// located) proves the surface reads from the /rest/v1/itinerary_items route;
+// the scenario then adds a second through the real dialog. useItinerary reads
+// `select('*').eq('trip_id',…).order('day').order('position')`; the create
+// insert() takes no `.select()`, so the POST just stores the payload and 201s
+// (return=minimal) — the store is what makes the refetch show the new row.
+const ITINERARY_SEED_ITEM = {
+  id: 'itin-seed-1',
+  trip_id: TRIP_ID,
+  title: 'Tram 28 through Alfama',
+  category: 'activity',
+  day: '2026-05-01',
+  end_day: null,
+  start_time: '10:00:00',
+  end_time: '11:00:00',
+  location: 'Alfama, Lisbon',
+  latitude: 38.7139,
+  longitude: -9.1224,
+  url: null,
+  notes: null,
+  cost: null,
+  budget_entry_id: null,
+  position: 1,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let itineraryItems = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -445,6 +475,37 @@ async function routeSupabase(route) {
     // Already in created_at-ascending order (seed first, then each send).
     if (method === 'GET') return json([...chatMessages])
     return json([]) // edit/delete/pin PATCH + DELETE unused by this scenario
+  }
+
+  // Itinerary items (#225): a stateful store, like budget_entries/messages
+  // above, so an item the ItemDialog POSTs survives the create mutation's
+  // invalidate → refetch and renders in the day timeline. useItinerary reads
+  // `select('*').eq('trip_id',…).order('day').order('position')`; the create
+  // insert() takes no `.select()`, so a bare 201 (return=minimal) is correct —
+  // the store is what makes the refetch bring the new row back.
+  if (pathname.endsWith('/rest/v1/itinerary_items')) {
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = itineraryItems.length + 1
+      itineraryItems.push({
+        id: `itin-${n}`,
+        end_day: null,
+        start_time: null,
+        end_time: null,
+        location: null,
+        latitude: null,
+        longitude: null,
+        url: null,
+        notes: null,
+        cost: null,
+        budget_entry_id: null,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+      })
+      return route.fulfill({ status: 201, body: '' })
+    }
+    if (method === 'GET') return json([...itineraryItems])
+    return json([]) // reorder/edit PATCH + DELETE unused by this scenario
   }
 
   // Notification inbox (#182): the shell header bell reads the recipient's own
@@ -1236,6 +1297,87 @@ async function runChat(browser) {
   }
 }
 
+/*
+  Itinerary surface (#225).
+
+  The itinerary is Wander's most-used planning surface — add/edit/reorder items,
+  the per-day timeline, map pins — yet it had no smoke coverage and the harness
+  had no /rest/v1/itinerary_items route, so a broken render, a mis-grouped day,
+  or an item that never saves could reach `main` with nothing catching it. It
+  has churned heavily lately (destinations/legs #199, multi-day #192,
+  geocode-on-save #202, day directions #168), which is exactly why it needs a
+  gate. This drives the real ItineraryPage + ItemDialog end-to-end against the
+  stubbed Supabase: a seeded item proves the surface reads from the route, then
+  adding one through the dialog exercises the composer → POST → invalidate →
+  refetch path and asserts the new item renders. It stays on the deterministic,
+  network-stubbed List path the rest of the suite uses — no Leaflet map tiles or
+  realtime socket — and adds a location-free item so the hermetic save never
+  reaches the geocoder (a located save geocodes the address on submit).
+*/
+async function runItinerary(browser) {
+  console.log('\n▶ itinerary (timeline renders + an added item appears)')
+  itineraryItems = [{ ...ITINERARY_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/itinerary`, { waitUntil: 'domcontentloaded' })
+
+    // The page heading plus the seeded item prove the surface renders from the
+    // /rest/v1/itinerary_items route (the populated list, not the empty state).
+    await page
+      .getByRole('heading', { name: 'Itinerary' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Tram 28 through Alfama').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the itinerary surface renders an item from the itinerary_items route')
+
+    // Adding: the header "Add item" opens the shared ItemDialog; the create
+    // POSTs to /rest/v1/itinerary_items and the stateful store lets the
+    // invalidate → refetch bring the new row back so it renders in the timeline.
+    const added = 'Sunset kayak in the marina'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/itinerary_items') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    // Only the header button exists before the dialog opens; scope the submit to
+    // the dialog below, since it shares the "Add item" name with this trigger.
+    await page.getByRole('button', { name: 'Add item' }).first().click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#it-title').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the add-item dialog opens')
+
+    await dialog.locator('#it-title').fill(added)
+    await dialog.getByRole('button', { name: 'Add item' }).click()
+
+    // The POST carries the trip id, the creator's member id, the typed title, and
+    // the default category — the itinerary write's payload shape (#225 floor).
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.created_by !== OWNER_MEMBER.id ||
+      payload?.title !== added ||
+      payload?.category !== 'activity'
+    ) {
+      throw new Error(`itinerary POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('adding posts an itinerary item with trip, creator, title, and category')
+
+    // After the refetch the new item renders in the timeline, and the dialog has
+    // closed — the create round-tripped end to end. The location-free item lands
+    // in the "Not scheduled yet" bucket (no day), which is enough to prove it saved.
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.getByText(added).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an added itinerary item appears in the timeline')
+
+    if (errors.length) throw new Error(`Uncaught page error on the itinerary page: ${errors[0]}`)
+    ok('the itinerary flow raised no uncaught errors')
+  } finally {
+    itineraryItems = []
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -1466,6 +1608,7 @@ async function main() {
     await runAvailabilityPoll(browser)
     await runBudget(browser)
     await runChat(browser)
+    await runItinerary(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
     await runPublicShareRevoked(browser)
