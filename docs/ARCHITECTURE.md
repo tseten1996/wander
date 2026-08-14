@@ -72,7 +72,10 @@ non-members, so the URL is the only capability.
 **Roles** are exactly two: `owner` and `member`, stored on the `members` row.
 Policies grant members write access to their own rows and the owner write
 access to everything in their trip. Only the owner can delete the trip,
-remove members, regenerate/disable invite links, and close polls.
+remove members, and regenerate/disable invite links. Closing or reopening a
+poll is **not** owner-exclusive: a poll's creator (any member) can close or
+reopen their own poll, as can the owner (`polls_update`: `created_by =
+my_member_id(trip_id) OR is_trip_owner(trip_id)`).
 
 ## 3. Database schema
 
@@ -86,11 +89,12 @@ All tables live in `public`, keyed by `uuid`. Every content table carries a
 trips ────────────┬─ members            (person ↔ trip, role, name, color)
   │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
-  │               ├─ messages ─ message_reactions   (threads via reply_to)
+  │               ├─ availability_polls ─ availability_candidates ─ availability_responses  (owner-run date poll; one response per member per candidate)
+  │               ├─ messages ─ message_reactions   (threads via reply_to; inline images via image_path)
   │               ├─ questions           (asked / answered)
   │               ├─ checklist_items     (assignee, due date, done)
   │               ├─ itinerary_items     (day, time, category, position, latitude/longitude)
-  │               ├─ budget_entries      (estimated vs actual, paid_by, currency + *_converted)
+  │               ├─ budget_entries      (estimated vs actual, paid_by, currency + *_converted, weighted/itemized shares)
   │               ├─ repayments          (settle-up transfers: from/to member, amount)
   │               ├─ packing_items       (category, packed)
   │               ├─ notes               (markdown)
@@ -114,6 +118,19 @@ Notable decisions:
   frozen into the trip currency at entry time (the client reads
   `converted ?? raw`), so roll-ups and the settle-up math stay correct even if
   reference rates move afterwards.
+* **Weighted splits.** Beyond *who* shares a cost (`participants`), a
+  `budget_entries` row may carry a `shares` `{ member_id: weight }` JSON map for
+  weighted or itemized splits; `NULL`/empty means an even split. Weights are
+  scale-free and a `CHECK` keeps the map clean, but the split is UX only —
+  writes are still gated by the `budget_update` policy.
+* **Availability polls** find a date everyone can make. The owner opens a poll
+  and proposes candidate date ranges (`availability_polls` +
+  `availability_candidates`, both owner-managed via `is_trip_owner`); every
+  member marks each range yes/maybe/no (`availability_responses`, self-written,
+  one row per member per candidate). The owner-only `apply_availability_dates`
+  RPC writes the chosen range back onto the trip. All three tables are in the
+  `supabase_realtime` publication — the overlap counts update live as members
+  respond.
 * **Destinations** model a multi-city trip as an ordered list of legs (place +
   optional geocoded pin + date range), sharing the same float `position`
   ordering. Members read (`is_trip_member`); **owner-only** writes
@@ -134,6 +151,11 @@ Notable decisions:
   `SELECT` is owner-only for trip-scoped rows, and deploy-level (`trip_id IS
   NULL`) rows are readable only via the dashboard `service_role`. No `UPDATE` /
   `DELETE` policies, so the log is append-only.
+* **Chat images.** A message may carry an optional `image_path` (text-only,
+  image-only, or both). Images live in a **private** Storage bucket
+  (`public = false`) keyed `<trip_id>/<uuid>.<ext>`; Storage RLS scopes read
+  and write to trip members, so no image leaks across trips and nothing is
+  proxied or re-hosted (free-tier friendly).
 * **Public share link** (read-only): an owner mints an unguessable `share_token`
   on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
   read-only itinerary projection through the `get_public_itinerary` (SECURITY
@@ -187,7 +209,8 @@ src/
     ├── dashboard/           # countdown, progress, summaries
     ├── destinations/        # multi-city legs: editor + leg/route derivation (owner-only)
     ├── polls/
-    ├── messages/            # chat: replies, reactions, pins, @-mentions → inbox
+    ├── dates/               # date-range availability poll (owner-run, live overlap)
+    ├── messages/            # chat: replies, reactions, pins, images, @-mentions → inbox
     ├── questions/
     ├── checklist/
     ├── itinerary/           # timeline + list ⇄ Leaflet/OSM map view, per-leg distance, weather
