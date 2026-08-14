@@ -305,6 +305,32 @@ const ITINERARY_SEED_ITEM = {
 }
 let itineraryItems = []
 
+// Checklist items (#233): a stateful store, like budget_entries / messages /
+// itinerary_items above, so a task the ItemDialog POSTs — and the assign/complete
+// writes that follow — survive the mutation's invalidate → refetch and render.
+// It is scoped to `runChecklist` via `checklistScenario`: only while that flag is
+// set does the /rest/v1/checklist_items route become stateful. Every other
+// scenario keeps the single read-only overdue row the reminders (#195) and
+// dashboard read (OVERDUE_TASK_ROW) untouched. useChecklist reads
+// `select('*').eq('trip_id',…).order('position').order('created_at')`; the create
+// insert().select('id').single() wants one row with its id, and both updates
+// (assign via useUpdateChecklistItem, complete via useToggleDone) are
+// update(patch).eq('id',…) with no `.select()`.
+const CHECKLIST_SEED_ITEM = {
+  id: 'chk-seed-1',
+  trip_id: TRIP_ID,
+  title: 'Confirm the rental car',
+  notes: null,
+  assignee_id: null,
+  due_date: null,
+  done: false,
+  position: 1,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let checklistScenario = false
+let checklistItems = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -515,12 +541,45 @@ async function routeSupabase(route) {
     return json([]) // PATCH mark-read / anything else
   }
 
-  // Checklist (#195 reminders): both the bell's reminder derivation and the
-  // dashboard's `select('id, done')` read this endpoint. One overdue task
-  // assigned to the owner is enough to make a reminder appear deterministically.
+  // Checklist items — two modes on one endpoint:
+  //   • Default (every other scenario): the bell's reminder derivation (#195) and
+  //     the dashboard's `select('id, done')` read one overdue task assigned to the
+  //     owner — enough to surface a reminder deterministically. Writes are unused.
+  //   • Checklist scenario (#233, `checklistScenario` set): a stateful store like
+  //     budget_entries / messages / itinerary_items, so a created task and the
+  //     assign/complete PATCHes that follow survive the invalidate → refetch and
+  //     render. Scoped so the reminders/dashboard reads above stay untouched.
   if (pathname.endsWith('/rest/v1/checklist_items')) {
-    if (method === 'GET') return json([OVERDUE_TASK_ROW])
-    return json([]) // insert/update/delete unused by these scenarios
+    if (!checklistScenario) {
+      if (method === 'GET') return json([OVERDUE_TASK_ROW])
+      return json([]) // insert/update/delete unused by those scenarios
+    }
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = checklistItems.length + 1
+      const row = {
+        id: `chk-${n}`,
+        notes: null,
+        assignee_id: null,
+        due_date: null,
+        done: false,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+      }
+      checklistItems.push(row)
+      return json({ id: row.id }, 201) // insert().select('id').single()
+    }
+    if (method === 'PATCH') {
+      // update(patch).eq('id', id): the target id rides in the query string, and
+      // the patch (assignee_id from the edit, or done from the toggle) merges in.
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      const patch = Array.isArray(body) ? body[0] : body
+      const row = checklistItems.find((i) => i.id === id)
+      if (row) Object.assign(row, patch)
+      return json([]) // no `.select()` → return=minimal
+    }
+    if (method === 'GET') return json([...checklistItems])
+    return json([]) // DELETE unused by this scenario
   }
 
   // Availability poll (#176): the Dates page reads the poll with its candidates
@@ -1378,6 +1437,115 @@ async function runItinerary(browser) {
   }
 }
 
+/*
+  Checklist surface (#233).
+
+  The checklist — assign, complete, reorder shared to-dos — is a core
+  collaboration surface, and the source of the derived "due soon / overdue"
+  reminders the notification-bell scenario already asserts, yet it had no smoke
+  coverage and the harness served only a single read-only /rest/v1/checklist_items
+  row. A regression in checklist create/assign/complete could silently break both
+  the checklist and those reminders before `main`. This drives the real
+  ChecklistPage + ItemDialog end-to-end against the stubbed Supabase: a seeded
+  task proves the surface reads from the route, then adding one through the dialog
+  (assigned to the owner) exercises the create POST, and ticking it exercises the
+  complete PATCH — asserting each payload shape and each rendered state. It stays
+  on the deterministic, network-stubbed path the rest of the suite uses.
+*/
+async function runChecklist(browser) {
+  console.log('\n▶ checklist (add a task, assign it, complete it)')
+  checklistScenario = true
+  checklistItems = [{ ...CHECKLIST_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/checklist`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded task prove the surface renders from the
+    // /rest/v1/checklist_items route (the populated list, not the starter offer).
+    await page
+      .getByRole('heading', { name: 'Checklist' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Confirm the rental car').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the checklist surface renders a task from the checklist_items route')
+
+    // Adding: "New task" opens the ItemDialog; the create POSTs to
+    // /rest/v1/checklist_items and the stateful store lets the invalidate →
+    // refetch bring the new row back so it renders in the list.
+    const added = 'Reserve the airport lounge'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/checklist_items') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'New task' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#task-title').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the new-task dialog opens')
+
+    await dialog.locator('#task-title').fill(added)
+    // Assign it to the owner through the "Assign to" select (the dialog's only
+    // combobox), so the create carries an assignee — the collaboration floor.
+    await dialog.getByRole('combobox').click()
+    await page.getByRole('option', { name: 'planner', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Add task' }).click()
+
+    // The POST carries the trip id, the creator's member id, the typed title, and
+    // the chosen assignee — the checklist write's payload shape (#233 floor).
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.created_by !== OWNER_MEMBER.id ||
+      payload?.title !== added ||
+      payload?.assignee_id !== OWNER_MEMBER.id
+    ) {
+      throw new Error(`checklist POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('adding posts a checklist item with trip, creator, title, and assignee')
+
+    // After the refetch the new task renders; the dialog has closed, so the
+    // create round-tripped end to end.
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.getByText(added).waitFor({ state: 'visible', timeout: 10_000 })
+    // Its assignee avatar renders on the task's own row (MemberAvatar sets
+    // title={name}); scope to the row so the roster's avatars elsewhere on the
+    // page don't count toward the assertion.
+    const addedRow = page.getByRole('checkbox', { name: `Mark "${added}" done` }).locator('..')
+    if ((await addedRow.getByTitle('planner').count()) === 0) {
+      throw new Error('the assigned task did not render its assignee avatar')
+    }
+    ok('an added task renders with its assignee')
+
+    // Completing: ticking the checkbox PATCHes done:true (useToggleDone); the
+    // optimistic flip plus the refetch leave it rendered in its done state.
+    const donePatch = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/checklist_items') && req.method() === 'PATCH',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('checkbox', { name: `Mark "${added}" done` }).click()
+    const donePayload = (await donePatch).postDataJSON()
+    if (donePayload?.done !== true) {
+      throw new Error(`checklist complete PATCH payload wrong: ${JSON.stringify(donePayload)}`)
+    }
+    ok('completing a task PATCHes done:true')
+
+    // The row now reads as done — its checkbox aria-label flips to "not done",
+    // which only renders once the toggle has taken effect.
+    await page
+      .getByRole('checkbox', { name: `Mark "${added}" not done` })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a completed task renders in its done state')
+
+    if (errors.length) throw new Error(`Uncaught page error on the checklist page: ${errors[0]}`)
+    ok('the checklist flow raised no uncaught errors')
+  } finally {
+    checklistScenario = false
+    checklistItems = []
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -1609,6 +1777,7 @@ async function main() {
     await runBudget(browser)
     await runChat(browser)
     await runItinerary(browser)
+    await runChecklist(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
     await runPublicShareRevoked(browser)
