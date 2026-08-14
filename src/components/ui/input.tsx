@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 /* Shared by Input and by input-shaped triggers (e.g. the DateInput popover
    button) so they can't drift apart visually. */
 export const inputClasses = cn(
-  'flex h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-base md:text-sm text-ink placeholder:text-faint',
+  'flex h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink placeholder:text-faint',
   'transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
   'aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/10',
   'aria-invalid:focus:border-danger aria-invalid:focus:ring-danger/25',
@@ -40,7 +40,7 @@ export const Textarea = React.forwardRef<
   <textarea
     ref={ref}
     className={cn(
-      'flex min-h-20 w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base md:text-sm text-ink placeholder:text-faint',
+      'flex min-h-20 w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-faint',
       'transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20',
       'aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/10',
       'aria-invalid:focus:border-danger aria-invalid:focus:ring-danger/25',
