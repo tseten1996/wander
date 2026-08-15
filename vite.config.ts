@@ -37,6 +37,9 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },
+  // Strip @license banners from the bundle (lucide-react alone repeats its
+  // ISC banner in every icon chunk); attribution ships in public/licenses.txt.
+  esbuild: { legalComments: 'none' },
   build: {
     target: 'es2020',
     chunkSizeWarningLimit: 900,
