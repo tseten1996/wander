@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/motion'
 import { Share, SquarePlus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useInstallPrompt, isIOS, isStandalone } from '@/hooks/useInstallPrompt'

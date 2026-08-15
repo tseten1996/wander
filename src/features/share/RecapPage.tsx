@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import {
   ArrowRight, CalendarDays, Hourglass, Link2Off, MapPin, Users,
 } from 'lucide-react'

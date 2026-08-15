@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import {
   CornerUpLeft, ImagePlus, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff,
   SendHorizonal, SmilePlus, Trash2, X,

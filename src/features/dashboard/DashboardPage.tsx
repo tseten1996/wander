@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import {
   CalendarDays, Check, ListChecks, Luggage, MapPin, MessageCircle, PartyPopper,
   PiggyBank, Sparkles, UserPlus, Vote, ArrowRight,
