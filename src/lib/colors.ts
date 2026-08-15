@@ -43,21 +43,16 @@ export function onColor(background: string): string {
   return onInk > onWhite ? ON_LIGHT_COLOR : ON_MEMBER_COLOR
 }
 
-export function randomMemberColor(): string {
-  return MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)]
-}
-
 /**
- * Prefer a swatch no existing member has yet, so a joining friend stays visually
- * distinct — the accountless-identity wedge (#234). Picks at random among the
- * still-free palette colours (so two people joining at once don't
- * deterministically collide on the same "first free" one), and falls back to a
- * fully random colour once every palette entry is taken: joining must never
- * dead-end on colour choice.
+ * A member colour for a joining friend: random among the palette swatches no
+ * existing member has taken yet, so they stay visually distinct — the
+ * accountless-identity wedge (#234). Random (not deterministic "first free") so
+ * two people joining at once don't collide on the same swatch, falls back to a
+ * fully random palette colour once every swatch is taken so joining never
+ * dead-ends on colour, and with no argument is just a random palette colour.
  */
-export function firstFreeMemberColor(taken: readonly string[]): string {
-  const used = new Set(taken)
-  const free = MEMBER_COLORS.filter((c) => !used.has(c))
-  const pool = free.length > 0 ? free : MEMBER_COLORS
+export function firstFreeMemberColor(taken: readonly string[] = []): string {
+  const free = MEMBER_COLORS.filter((c) => !taken.includes(c))
+  const pool = free.length ? free : MEMBER_COLORS
   return pool[Math.floor(Math.random() * pool.length)]
 }

@@ -5,7 +5,7 @@ import { CalendarDays, Compass, MapPin, PartyPopper, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { getInvitePreview, joinTrip } from './api'
-import { MEMBER_COLORS, randomMemberColor, firstFreeMemberColor } from '@/lib/colors'
+import { MEMBER_COLORS, firstFreeMemberColor } from '@/lib/colors'
 import { dateRange, cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -34,27 +34,11 @@ export default function JoinPage() {
   const [phase, setPhase] = React.useState<Phase>('checking')
   const [preview, setPreview] = React.useState<InvitePreview | null>(null)
   const [name, setName] = React.useState('')
-  const [color, setColor] = React.useState(() => randomMemberColor())
-  // Once the friend taps a swatch, their choice is sticky — the "default to a
-  // free colour" effect below must never overwrite a deliberate pick.
-  const colorPickedByUser = React.useRef(false)
+  const [color, setColor] = React.useState(() => firstFreeMemberColor())
   // Bumped by "Try again" to re-run the initial check() without a full reload.
   const [retryNonce, setRetryNonce] = React.useState(0)
 
-  // When the invite preview resolves, default the swatch to a colour no member
-  // has taken yet (#234) — unless the friend already picked one. The taken list
-  // rides the preview fetch that already runs, so this adds no round-trip to the
-  // 15-second critical path. Random among the free colours, so two people
-  // joining at the same moment don't both land on the same "first free" swatch.
-  React.useEffect(() => {
-    if (!preview || colorPickedByUser.current) return
-    setColor(firstFreeMemberColor(preview.taken_colors))
-  }, [preview])
-
-  const takenColors = React.useMemo(
-    () => new Set(preview?.taken_colors ?? []),
-    [preview]
-  )
+  const takenColors = preview?.taken_colors ?? []
 
   // 1) Silently create/reuse a session. 2) If this device is already a member,
   // join_trip is idempotent and we go straight in. 3) Otherwise show the
@@ -83,7 +67,15 @@ export default function JoinPage() {
         // appears for a link that isn't real) and hands the memoised value to
         // the form render.
         const previewPromise = getInvitePreview(code).then((p) => {
-          if (p && !cancelled) setPreview(p)
+          if (p && !cancelled) {
+            setPreview(p)
+            // Default to a colour no member has taken yet (#234). This rides the
+            // preview fetch already on the critical path — no extra round-trip —
+            // and resolves before the form (and its picker) is ever shown, so a
+            // later manual pick is never overwritten. Random among the free
+            // colours, so two friends joining at once don't land on the same one.
+            setColor(firstFreeMemberColor(p.taken_colors))
+          }
           return p
         })
         const joinPromise = joinTrip({ code, displayName: '' })
@@ -224,18 +216,15 @@ export default function JoinPage() {
               // A colour another member already uses. We dim it as a hint but
               // never block the pick — a large group may have to reuse, and a
               // hard block would be a dead-end (#234).
-              const taken = takenColors.has(c)
+              const taken = takenColors.includes(c)
               const selected = color === c
               return (
                 <button
                   key={c}
                   type="button"
-                  aria-label={taken ? `Choose color ${c} (already taken)` : `Choose color ${c}`}
+                  aria-label={`Choose color ${c}${taken ? ' (already taken)' : ''}`}
                   aria-pressed={selected}
-                  onClick={() => {
-                    colorPickedByUser.current = true
-                    setColor(c)
-                  }}
+                  onClick={() => setColor(c)}
                   // 44px tap target (mobile floor) around a smaller visible
                   // dot; the selection ring and focus ring live on the inner
                   // dot so the hit area stays invisible but reachable.
@@ -246,7 +235,7 @@ export default function JoinPage() {
                       'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
                       // Dim a taken swatch unless it's the current pick, so the
                       // selected dot always reads at full strength.
-                      taken && !selected && 'opacity-40',
+                      taken && !selected && 'opacity-50',
                       selected && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
                     )}
                     style={{ backgroundColor: c }}
@@ -255,9 +244,9 @@ export default function JoinPage() {
               )
             })}
           </div>
-          {takenColors.size > 0 && (
+          {takenColors.length > 0 && (
             <p className="text-xs text-muted" aria-live="polite">
-              Dimmed colors are already taken by someone on the trip.
+              Dimmed colors are already taken.
             </p>
           )}
         </div>
