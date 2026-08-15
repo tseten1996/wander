@@ -61,8 +61,10 @@ function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
   const canDelete = isOwner || item.created_by === me.id
 
   return (
+    // No `layout` prop: the app ships framer-motion's lightweight
+    // `domAnimation` bundle (see src/lib/motion.ts), which excludes layout
+    // animations to hold the bundle budget. The enter fade-up below still plays.
     <motion.div
-      layout
       id={searchAnchorId(item.id)}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
