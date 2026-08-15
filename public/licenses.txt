@@ -1,0 +1,31 @@
+Third-party license notices for the Wander bundle
+==================================================
+
+License banners are stripped from the built JavaScript (vite.config.ts
+`esbuild.legalComments: 'none'`) to keep the bundle inside its gzip budget.
+The notices they carried are reproduced here. Full license texts ship with
+each package in the source repository (node_modules/<pkg>/LICENSE).
+
+----------------------------------------
+
+@license lucide-react - ISC
+
+This source code is licensed under the ISC license.
+See the LICENSE file in the root directory of this source tree.
+
+----------------------------------------
+
+@license React (react, react-dom, react-jsx-runtime, scheduler)
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+This source code is licensed under the MIT license found in the
+LICENSE file in the root directory of this source tree.
+
+----------------------------------------
+
+All other bundled dependencies (@supabase/supabase-js, @tanstack/react-query,
+framer-motion, react-router-dom, react-hook-form, zod, date-fns, radix-ui,
+leaflet, react-markdown, sonner, canvas-confetti, and their transitive
+dependencies) are distributed under MIT, ISC, or BSD licenses; see each
+package's LICENSE file in the repository's node_modules for the full text.
