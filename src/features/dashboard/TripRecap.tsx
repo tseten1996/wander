@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import { CalendarDays, CheckCircle2, MapPin, Sparkles, Users, Wallet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'

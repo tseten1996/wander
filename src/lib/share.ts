@@ -17,3 +17,18 @@ export function publicShareUrl(token: string): string {
 export function tripShareUrl(trip: Pick<Trip, 'share_token'>): string | null {
   return trip.share_token ? publicShareUrl(trip.share_token) : null
 }
+
+/**
+ * The read-only public recap URL for a trip (#238). Built the same way as
+ * {@link publicShareUrl} — from the live location, HashRouter `#/r/:token`, no
+ * absolute-URL assumptions — and reuses the SAME `share_token` capability as the
+ * itinerary share (#127); the recap is an additional opt-in surface, not a
+ * second token. So the link exists only while public sharing is on. */
+export function publicRecapUrl(token: string): string {
+  return `${window.location.origin}${window.location.pathname}#/r/${token}`
+}
+
+/** Convenience: the recap URL for a trip, or null when it has no share token. */
+export function tripRecapUrl(trip: Pick<Trip, 'share_token'>): string | null {
+  return trip.share_token ? publicRecapUrl(trip.share_token) : null
+}

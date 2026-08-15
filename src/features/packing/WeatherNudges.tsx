@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence } from '@/lib/motion'
 import { CloudSun, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -33,9 +33,13 @@ function NudgeRow({
     }
   }
 
+  // No `layout` prop on the row below: the app ships framer-motion's
+  // lightweight `domAnimation` bundle (see src/lib/motion.ts), which excludes
+  // layout animations to hold the bundle budget. The explicit height enter/exit
+  // still animates, and a dismissed row collapsing its own height already
+  // shifts the siblings below it.
   return (
     <motion.li
-      layout
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}

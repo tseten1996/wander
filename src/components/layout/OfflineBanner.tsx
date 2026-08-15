@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from '@/lib/motion'
 import { CloudOff } from 'lucide-react'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 

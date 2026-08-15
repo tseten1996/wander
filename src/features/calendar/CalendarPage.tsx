@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import {
   addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay,
   isSameMonth, isToday, parseISO, startOfMonth, startOfWeek,

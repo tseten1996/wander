@@ -23,6 +23,7 @@ const Inspiration = React.lazy(() => import('@/features/inspiration/InspirationP
 const Settings = React.lazy(() => import('@/features/settings/SettingsPage'))
 const PrintSummary = React.lazy(() => import('@/features/settings/PrintSummaryPage'))
 const PublicItinerary = React.lazy(() => import('@/features/share/PublicItineraryPage'))
+const PublicRecap = React.lazy(() => import('@/features/share/RecapPage'))
 
 export default function App() {
   return (
@@ -35,6 +36,10 @@ export default function App() {
               TripLayout and the auth-gated flow: an outsider with no session and
               no membership reaches it through a share token alone. */}
           <Route path="/p/:token" element={<PublicItinerary />} />
+          {/* Public read-only post-trip recap share (#238, epic #205). Like the
+              itinerary share above: OUTSIDE TripLayout and the auth-gated flow —
+              an outsider with no session reaches it through a share token alone. */}
+          <Route path="/r/:token" element={<PublicRecap />} />
           <Route path="/trip/:tripId" element={<TripLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="me" element={<MyTrip />} />

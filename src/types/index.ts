@@ -34,6 +34,12 @@ export interface Trip {
    *  trip is not publicly shared. Owner-writable through the set_trip_share RPC
    *  only; never exposed to non-members, and never in the public projection. */
   share_token: string | null
+  /** Whether this trip's post-trip recap is opted in to public sharing (#238,
+   *  epic #205). A separate switch from #127's `share_token`: the token is the
+   *  capability, this flag is the deliberate "also share a recap" opt-in.
+   *  Owner-writable through the set_trip_recap_share RPC only. The public recap
+   *  link works while this is on AND `share_token` is set AND the trip has ended. */
+  recap_shared: boolean
   archived: boolean
   checklist_starter_dismissed: boolean
   created_at: string
@@ -361,3 +367,36 @@ export interface PublicItinerary {
   }
   items: PublicItineraryItem[]
 }
+
+/** Whitelisted trip meta shared by every public projection (#127, #238). */
+export interface PublicTripMeta {
+  name: string
+  destination: string | null
+  start_date: string | null
+  end_date: string | null
+}
+
+/** A single located stop in the public recap (#238): a strict, whitelisted
+ *  subset of ItineraryItem — no times, notes, cost, coordinates, or authorship,
+ *  just the place name and its category icon for the "where we went" list. */
+export interface PublicRecapPlace {
+  id: string
+  title: string
+  category: ItineraryCategory
+  location: string | null
+}
+
+/** The public post-trip recap payload (#238, epic #205), returned by the
+ *  get_public_recap RPC. Three shapes, distinct on purpose:
+ *   - SQL null (→ null here): invalid / revoked / not-shared token → "link unavailable"
+ *   - `pending`: a valid, shared link whose trip has not ended yet → "recap not ready yet"
+ *   - `ready`: the whitelisted recap — aggregate counts + located stops, no
+ *     costs and no member identity (mirrors #127's exclusions). */
+export type PublicRecap =
+  | { status: 'pending'; trip: PublicTripMeta }
+  | {
+      status: 'ready'
+      trip: PublicTripMeta
+      stats: { stops: number; travelers: number }
+      places: PublicRecapPlace[]
+    }

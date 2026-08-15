@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion } from '@/lib/motion'
 import {
   ArrowRight, CalendarClock, HelpCircle, ListChecks, Luggage, PartyPopper,
   PiggyBank, Vote,

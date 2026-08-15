@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
-import { MotionConfig } from 'framer-motion'
+import { LazyMotion, domAnimation, MotionConfig } from 'framer-motion'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/hooks/useAuth'
@@ -39,22 +39,28 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             trip cards) for motion-sensitive users. "user" keeps opacity/colour
             transitions, which carry no motion. */}
         <MotionConfig reducedMotion="user">
-          <HashRouter>
-            <App />
-          </HashRouter>
-          <OfflineBanner />
-          <InstallNudge />
-          <Toaster
-            position="top-center"
-            toastOptions={{
-              style: {
-                background: 'var(--elevated)',
-                color: 'var(--ink)',
-                border: '1px solid var(--line)',
-                borderRadius: '12px',
-              },
-            }}
-          />
+          {/* Load only framer-motion's `domAnimation` feature bundle (enter/exit
+              + transforms — the only animations Wander uses) so the lightweight
+              `m` components behind @/lib/motion animate without pulling the full
+              `motion` proxy. See src/lib/motion.ts. */}
+          <LazyMotion features={domAnimation}>
+            <HashRouter>
+              <App />
+            </HashRouter>
+            <OfflineBanner />
+            <InstallNudge />
+            <Toaster
+              position="top-center"
+              toastOptions={{
+                style: {
+                  background: 'var(--elevated)',
+                  color: 'var(--ink)',
+                  border: '1px solid var(--line)',
+                  borderRadius: '12px',
+                },
+              }}
+            />
+          </LazyMotion>
         </MotionConfig>
       </AuthProvider>
     </PersistQueryClientProvider>

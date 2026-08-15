@@ -238,6 +238,36 @@ const PUBLIC_ITINERARY = {
   ],
 }
 
+// Public read-only post-trip recap share (#238, epic #205). The SAME share token
+// dereferences to a whitelisted recap projection through get_public_recap once
+// the trip has ended; a valid-but-not-ended link returns {status:'pending'}, and
+// an invalid/revoked/not-shared token returns SQL null. The recap carries only
+// aggregate counts + located stops — no costs, no member identity (mirrors #127).
+const RECAP_PENDING_TOKEN = 'c'.repeat(64)
+const PUBLIC_RECAP_READY = {
+  status: 'ready',
+  trip: {
+    name: 'Lisbon in Spring',
+    destination: 'Lisbon, Portugal',
+    start_date: '2026-05-01',
+    end_date: '2026-05-05',
+  },
+  stats: { stops: 4, travelers: 3 },
+  places: [
+    { id: 'it-1', title: 'Time out Market', category: 'restaurant', location: 'Cais do Sodré' },
+    { id: 'it-2', title: 'Belém Tower', category: 'activity', location: 'Belém' },
+  ],
+}
+const PUBLIC_RECAP_PENDING = {
+  status: 'pending',
+  trip: {
+    name: 'Lisbon in Spring',
+    destination: 'Lisbon, Portugal',
+    start_date: '2099-05-01',
+    end_date: '2099-05-05',
+  },
+}
+
 // The `flaky` invite drops every join_trip call (a real network failure) until
 // the retry test flips this to true right before clicking "Try again" — proving
 // the retryable state recovers in place. The test controls the flip so the
@@ -407,6 +437,18 @@ async function routeSupabase(route) {
   if (pathname.endsWith('/rest/v1/rpc/set_trip_share')) {
     return json(body.p_enabled ? JSON.stringify(SHARE_TOKEN) : null)
   }
+  // get_public_recap (#238) returns a ready recap for the ended-trip token, a
+  // {status:'pending'} object for a valid-but-not-ended token, or SQL null for
+  // an invalid/revoked/not-shared one — the three distinct page states.
+  if (pathname.endsWith('/rest/v1/rpc/get_public_recap')) {
+    if (body.p_token === SHARE_TOKEN) return json(PUBLIC_RECAP_READY)
+    if (body.p_token === RECAP_PENDING_TOKEN) return json(PUBLIC_RECAP_PENDING)
+    return json(null)
+  }
+  // set_trip_recap_share (#238) flips the owner-side recap opt-in and returns
+  // void → an empty 204, exactly like a no-return RPC.
+  if (pathname.endsWith('/rest/v1/rpc/set_trip_recap_share'))
+    return route.fulfill({ status: 204, body: '' })
   // duplicate_trip (#80) copies a trip server-side and returns the new trip id
   // as a scalar text → a bare JSON string, exactly like join_trip.
   if (pathname.endsWith('/rest/v1/rpc/duplicate_trip')) return json(JSON.stringify(NEW_TRIP_ID))
@@ -1781,6 +1823,119 @@ async function runPublicShareToggle(browser) {
   }
 }
 
+async function runPublicRecap(browser) {
+  console.log('\n▶ public recap (read-only post-trip recap for someone with no account)')
+  // No initSession: an outsider with no Wander session must reach the page
+  // through the token alone — the whole point of the public-read surface.
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/r/${SHARE_TOKEN}`, { waitUntil: 'domcontentloaded' })
+
+    await page.getByRole('heading', { name: 'Lisbon in Spring' }).waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    ok('a valid recap link renders the recap with no session')
+
+    // Aggregate stats render (5 inclusive days from May 1–5; 4 stops; 3 travelers)
+    // and a located stop appears in the "where they went" list.
+    await page.getByText('travelers').first().waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Belém Tower').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the recap shows aggregate stats and located stops')
+
+    // The epic's growth CTA links a first-time visitor into the create-trip flow.
+    await page.getByRole('link', { name: /Plan your own trip/ }).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    ok('the "plan your own trip" CTA is present')
+
+    // Read-only: no join / chat / edit affordances, and NO cost/settle-up figure
+    // leaks onto the page (the recap deliberately carries no financials, like #127).
+    for (const forbidden of ['Join the trip', 'Add item', 'Chat', 'Edit']) {
+      if ((await page.getByRole('button', { name: forbidden }).count()) > 0) {
+        throw new Error(`public recap exposed a "${forbidden}" control`)
+      }
+    }
+    if (await page.getByText(/settle up/i).isVisible().catch(() => false)) {
+      throw new Error('the public recap leaked a settle-up figure')
+    }
+    ok('no join / chat / edit / settle-up affordances appear on the recap')
+
+    if (errors.length) throw new Error(`Uncaught page error on the recap page: ${errors[0]}`)
+    ok('the recap page raised no uncaught errors')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runPublicRecapPending(browser) {
+  console.log('\n▶ public recap: a valid link before the trip ends reads "not ready"')
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/r/${RECAP_PENDING_TOKEN}`, { waitUntil: 'domcontentloaded' })
+    // A shared, valid link whose trip hasn't ended → the friendly not-ready state,
+    // distinct from both a dead link and an empty page.
+    await page.getByText('This recap isn’t ready yet').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a not-yet-ended trip shows the "recap isn’t ready yet" state')
+    if (await page.getByText('Belém Tower').isVisible().catch(() => false)) {
+      throw new Error('a pending recap leaked ready content')
+    }
+    ok('no recap content leaks before the trip ends')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runPublicRecapRevoked(browser) {
+  console.log('\n▶ public recap: a revoked / invalid token is a clean not-found')
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/r/${'d'.repeat(64)}`, { waitUntil: 'domcontentloaded' })
+    // The RPC returned null → the honest "link isn’t available" state.
+    await page.getByText('This link isn’t available').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an invalid token yields the "link isn’t available" state')
+    if (await page.getByText('Belém Tower').isVisible().catch(() => false)) {
+      throw new Error('a revoked token still leaked recap content')
+    }
+    ok('no recap content leaks for an invalid token')
+  } finally {
+    await context.close()
+  }
+}
+
+async function runRecapShareToggle(browser) {
+  console.log('\n▶ public recap: owner enables the recap link from Settings')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/settings`, { waitUntil: 'domcontentloaded' })
+    // The owner-only "Public recap link" card renders with its toggle.
+    await page
+      .getByRole('heading', { name: 'Public recap link' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the owner sees the Public recap link card')
+
+    const recapRpc = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/rpc/set_trip_recap_share') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('switch', { name: 'Public recap link active' }).click()
+    const req = await recapRpc
+    if (req.postDataJSON()?.p_enabled !== true) {
+      throw new Error('enabling the recap did not call set_trip_recap_share with p_enabled=true')
+    }
+    ok('toggling on calls set_trip_recap_share to opt the recap in')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -1807,6 +1962,10 @@ async function main() {
     await runPublicShare(browser)
     await runPublicShareRevoked(browser)
     await runPublicShareToggle(browser)
+    await runPublicRecap(browser)
+    await runPublicRecapPending(browser)
+    await runPublicRecapRevoked(browser)
+    await runRecapShareToggle(browser)
     console.log(`\n✓ smoke: ${passed} assertions passed`)
   } finally {
     await browser.close()

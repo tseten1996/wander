@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, GitMerge,
-  Globe, Link2, RefreshCw, Trash2, Upload, UserMinus, LogOut,
+  Globe, Link2, RefreshCw, Sparkles, Trash2, Upload, UserMinus, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -17,7 +17,7 @@ import type { TempUnit } from '@/lib/units'
 import { exportTripJson, importTripJson } from '@/lib/export'
 import { friendlyError } from '@/lib/errors'
 import { useInviteLink } from '@/lib/invite'
-import { tripShareUrl } from '@/lib/share'
+import { tripShareUrl, tripRecapUrl } from '@/lib/share'
 import { MEMBER_COLORS } from '@/lib/colors'
 import { cn, randomCode } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -471,6 +471,89 @@ function PublicShareCard() {
   )
 }
 
+/* ── Public recap link (owner only) ─────────────────────────────────────── */
+
+function RecapShareCard() {
+  const { trip } = useTripContext()
+  const queryClient = useQueryClient()
+  const [busy, setBusy] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const copyTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  React.useEffect(() => () => clearTimeout(copyTimer.current), [])
+
+  const recapUrl = tripRecapUrl(trip)
+  const enabled = trip.recap_shared
+
+  async function setShare(next: boolean) {
+    setBusy(true)
+    const { error } = await supabase.rpc('set_trip_recap_share', {
+      p_trip_id: trip.id,
+      p_enabled: next,
+    })
+    setBusy(false)
+    if (error) {
+      toast.error(friendlyError(error, 'Could not update the recap link'))
+      return
+    }
+    toast.success(next ? 'Public recap link is on' : 'Public recap link turned off')
+    void queryClient.invalidateQueries({ queryKey: ['trip', trip.id] })
+  }
+
+  async function copy() {
+    if (!recapUrl) return
+    try {
+      await navigator.clipboard.writeText(recapUrl)
+      setCopied(true)
+      clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 1500)
+      toast.success('Recap link copied')
+    } catch {
+      toast.error('Could not copy the link — try again')
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="size-4 text-primary" /> Public recap link
+        </CardTitle>
+        <CardDescription>
+          Share a read-only recap of your finished trip — the days, stops and
+          places you went — with anyone, even friends who weren’t there. No
+          budget figures, no chat, no member details. It goes live once the trip
+          has ended.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <Switch
+            checked={enabled}
+            disabled={busy}
+            onCheckedChange={setShare}
+            aria-label="Public recap link active"
+          />
+          Public recap link active
+        </label>
+        {enabled && recapUrl && (
+          <div className="flex gap-2">
+            <Input readOnly value={recapUrl} className="font-mono text-xs" aria-label="Public recap link" />
+            <Button variant="secondary" size="icon" onClick={copy} aria-label="Copy recap link">
+              {copied ? <Check className="text-success" /> : <Copy />}
+            </Button>
+          </div>
+        )}
+        {enabled && !recapUrl && (
+          <p className="text-xs text-muted">
+            Turn on the <span className="font-medium">public share link</span> above
+            to activate the recap link — it reuses the same share token.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ── Members ────────────────────────────────────────────────────────────── */
 
 function MembersCard() {
@@ -842,6 +925,7 @@ export default function SettingsPage() {
         <PreferencesCard />
         <InviteCard />
         {isOwner && <PublicShareCard />}
+        {isOwner && <RecapShareCard />}
         <MembersCard />
         <ExportCard />
         {/* Duplicating creates a NEW trip owned by the caller; only real
