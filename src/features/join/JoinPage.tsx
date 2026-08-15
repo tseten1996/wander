@@ -5,7 +5,7 @@ import { CalendarDays, Compass, MapPin, PartyPopper, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { getInvitePreview, joinTrip } from './api'
-import { MEMBER_COLORS, randomMemberColor } from '@/lib/colors'
+import { MEMBER_COLORS, randomMemberColor, firstFreeMemberColor } from '@/lib/colors'
 import { dateRange, cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -35,8 +35,26 @@ export default function JoinPage() {
   const [preview, setPreview] = React.useState<InvitePreview | null>(null)
   const [name, setName] = React.useState('')
   const [color, setColor] = React.useState(() => randomMemberColor())
+  // Once the friend taps a swatch, their choice is sticky — the "default to a
+  // free colour" effect below must never overwrite a deliberate pick.
+  const colorPickedByUser = React.useRef(false)
   // Bumped by "Try again" to re-run the initial check() without a full reload.
   const [retryNonce, setRetryNonce] = React.useState(0)
+
+  // When the invite preview resolves, default the swatch to a colour no member
+  // has taken yet (#234) — unless the friend already picked one. The taken list
+  // rides the preview fetch that already runs, so this adds no round-trip to the
+  // 15-second critical path. Random among the free colours, so two people
+  // joining at the same moment don't both land on the same "first free" swatch.
+  React.useEffect(() => {
+    if (!preview || colorPickedByUser.current) return
+    setColor(firstFreeMemberColor(preview.taken_colors))
+  }, [preview])
+
+  const takenColors = React.useMemo(
+    () => new Set(preview?.taken_colors ?? []),
+    [preview]
+  )
 
   // 1) Silently create/reuse a session. 2) If this device is already a member,
   // join_trip is idempotent and we go straight in. 3) Otherwise show the
@@ -202,28 +220,46 @@ export default function JoinPage() {
         <div className="space-y-1.5">
           <Label>Pick your color</Label>
           <div className="flex flex-wrap gap-1">
-            {MEMBER_COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={`Choose color ${c}`}
-                aria-pressed={color === c}
-                onClick={() => setColor(c)}
-                // 44px tap target (mobile floor) around a smaller visible
-                // dot; the selection ring and focus ring live on the inner
-                // dot so the hit area stays invisible but reachable.
-                className="group flex size-11 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none"
-              >
-                <span
-                  className={cn(
-                    'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
-                    color === c && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
-                  )}
-                  style={{ backgroundColor: c }}
-                />
-              </button>
-            ))}
+            {MEMBER_COLORS.map((c) => {
+              // A colour another member already uses. We dim it as a hint but
+              // never block the pick — a large group may have to reuse, and a
+              // hard block would be a dead-end (#234).
+              const taken = takenColors.has(c)
+              const selected = color === c
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={taken ? `Choose color ${c} (already taken)` : `Choose color ${c}`}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    colorPickedByUser.current = true
+                    setColor(c)
+                  }}
+                  // 44px tap target (mobile floor) around a smaller visible
+                  // dot; the selection ring and focus ring live on the inner
+                  // dot so the hit area stays invisible but reachable.
+                  className="group flex size-11 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none"
+                >
+                  <span
+                    className={cn(
+                      'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
+                      // Dim a taken swatch unless it's the current pick, so the
+                      // selected dot always reads at full strength.
+                      taken && !selected && 'opacity-40',
+                      selected && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
+                    )}
+                    style={{ backgroundColor: c }}
+                  />
+                </button>
+              )
+            })}
           </div>
+          {takenColors.size > 0 && (
+            <p className="text-xs text-muted" aria-live="polite">
+              Dimmed colors are already taken by someone on the trip.
+            </p>
+          )}
         </div>
 
         <Button

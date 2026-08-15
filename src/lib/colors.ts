@@ -46,3 +46,18 @@ export function onColor(background: string): string {
 export function randomMemberColor(): string {
   return MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)]
 }
+
+/**
+ * Prefer a swatch no existing member has yet, so a joining friend stays visually
+ * distinct — the accountless-identity wedge (#234). Picks at random among the
+ * still-free palette colours (so two people joining at once don't
+ * deterministically collide on the same "first free" one), and falls back to a
+ * fully random colour once every palette entry is taken: joining must never
+ * dead-end on colour choice.
+ */
+export function firstFreeMemberColor(taken: readonly string[]): string {
+  const used = new Set(taken)
+  const free = MEMBER_COLORS.filter((c) => !used.has(c))
+  const pool = free.length > 0 ? free : MEMBER_COLORS
+  return pool[Math.floor(Math.random() * pool.length)]
+}
