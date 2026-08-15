@@ -328,10 +328,6 @@ export interface InvitePreview {
   member_count: number
   start_date: string | null
   end_date: string | null
-  /** Hex colours already taken by existing members, so the join form can
-   *  default to an unused swatch and dim the taken ones (#234). No member
-   *  names or other PII — just the palette hexes. Empty when none are set. */
-  taken_colors: string[]
 }
 
 /** A single read-only itinerary item as returned by the get_public_itinerary

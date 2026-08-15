@@ -196,9 +196,6 @@ const INVITE_PREVIEW = {
   member_count: 3,
   start_date: null,
   end_date: null,
-  // Three of the eight palette colours already in use (#234) — the join form
-  // must default to one of the five that are free and dim these three.
-  taken_colors: ['#0f766e', '#d97706', '#0e7490'],
 }
 
 // Public read-only itinerary share (#127). A valid token dereferences to this
@@ -690,28 +687,6 @@ async function runJoin(browser) {
       )
     }
     ok('a first-time join issues exactly one join_trip probe and one preview request')
-
-    // #234: the form defaults to a colour no member has taken, and flags the
-    // taken swatches so a manual pick is informed. INVITE_PREVIEW reports three
-    // taken colours, so the pre-selected swatch must be one of the five free
-    // ones (never a taken one), and exactly those three must be flagged. Poll
-    // for the default, since the "pick a free colour" effect lands just after
-    // the form mounts.
-    await page.waitForFunction(
-      () => {
-        const btn = document.querySelector(
-          'button[aria-pressed="true"][aria-label^="Choose color"]'
-        )
-        return !!btn && !btn.getAttribute('aria-label').includes('already taken')
-      },
-      { timeout: 10_000 }
-    )
-    ok('the join form defaults to a colour no member has taken (#234)')
-    const takenSwatches = await page.locator('button[aria-label*="already taken"]').count()
-    if (takenSwatches !== 3) {
-      throw new Error(`expected 3 taken swatches flagged, saw ${takenSwatches}`)
-    }
-    ok('taken swatches are flagged in the colour picker (#234)')
 
     await page.getByPlaceholder('Your name').fill('Alex')
     await page.getByRole('button', { name: 'Join the trip' }).click()
