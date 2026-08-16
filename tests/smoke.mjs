@@ -364,6 +364,50 @@ const CHECKLIST_SEED_ITEM = {
 let checklistScenario = false
 let checklistItems = []
 
+// Regular polls (#239): a stateful vote store, like budget_entries / messages /
+// itinerary_items / checklist_items above, so a vote PollsPage casts survives the
+// mutation's invalidate → refetch and re-renders in the tally. Scoped to
+// `runPolls` via `pollsScenario`: only while that flag is set does /rest/v1/polls
+// return the seeded poll and /rest/v1/votes become a stateful store; every other
+// scenario keeps the empty catch-all it reads today. Distinct from availability
+// polls (#176), which runAvailabilityPoll covers via /rest/v1/availability_polls.
+// usePolls reads `.from('polls').select('*, poll_options(*), votes(*)')
+// .eq('trip_id',…).order('created_at',{ascending:false})`, so the poll embeds its
+// options and votes; useVote upserts `{trip_id, poll_id, option_id, member_id}`
+// to /rest/v1/votes (onConflict poll_id,member_id, no `.select()` → return=minimal)
+// and deletes by id to unvote.
+const POLL_OPTION_A = {
+  id: 'popt-a',
+  trip_id: TRIP_ID,
+  poll_id: 'poll-seed-1',
+  label: 'Alfama guesthouse',
+  position: 0,
+  image_url: null,
+  link_url: null,
+}
+const POLL_OPTION_B = {
+  id: 'popt-b',
+  trip_id: TRIP_ID,
+  poll_id: 'poll-seed-1',
+  label: 'Baixa hotel',
+  position: 1,
+  image_url: null,
+  link_url: null,
+}
+const POLL_SEED = {
+  id: 'poll-seed-1',
+  trip_id: TRIP_ID,
+  created_by: OWNER_MEMBER.id,
+  question: 'Where should we stay?',
+  category: 'stay',
+  closes_at: null,
+  closed: false,
+  created_at: '2026-03-01T00:00:00Z',
+  poll_options: [POLL_OPTION_A, POLL_OPTION_B],
+}
+let pollsScenario = false
+let pollVotes = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -638,6 +682,43 @@ async function routeSupabase(route) {
     return route.fulfill({ status: 201, body: '' }) // upsert (return=minimal)
   }
   if (pathname.endsWith('/rest/v1/availability_candidates')) return json([])
+
+  // Regular polls (#239): two modes on the /rest/v1/polls + /rest/v1/votes routes.
+  //   • Default (every other scenario): no poll exists — the empty list, matching
+  //     today's catch-all behavior (no scenario reads polls).
+  //   • Polls scenario (`pollsScenario` set): /rest/v1/polls returns the seeded
+  //     poll with its options and the live votes embedded, and /rest/v1/votes is a
+  //     stateful store so a cast vote survives invalidate → refetch and re-renders
+  //     the tally. (`/rest/v1/availability_polls` is matched earlier, so its path
+  //     never falls through to here.)
+  if (pathname.endsWith('/rest/v1/polls')) {
+    if (pollsScenario && method === 'GET') return json([{ ...POLL_SEED, votes: [...pollVotes] }])
+    return json([]) // no polls outside the scenario; writes go through /rest/v1/votes
+  }
+  if (pathname.endsWith('/rest/v1/votes')) {
+    if (!pollsScenario) return json([])
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      // Upsert on (poll_id, member_id): a member's prior vote is replaced, never
+      // duplicated — the unique constraint the real votes table carries, so
+      // switching options re-tallies rather than double-counting.
+      pollVotes = pollVotes.filter(
+        (v) => !(v.poll_id === payload.poll_id && v.member_id === payload.member_id)
+      )
+      const n = pollVotes.length + 1
+      pollVotes.push({ id: `vote-${n}`, created_at: `2026-03-01T00:20:0${n}Z`, ...payload })
+      return route.fulfill({ status: 201, body: '' }) // upsert without .select() → return=minimal
+    }
+    if (method === 'DELETE') {
+      // tap-again-to-unvote: delete().eq('id', existing.id) — the id rides in the
+      // query string, and the refetch returns the tally to its prior state.
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      pollVotes = pollVotes.filter((v) => v.id !== id)
+      return route.fulfill({ status: 204, body: '' })
+    }
+    if (method === 'GET') return json([...pollVotes])
+    return json([])
+  }
 
   // Client error telemetry (#57): the global handlers fire-and-forget an insert
   // here. The insert asks for no representation back, so a bare 201 is correct.
@@ -1613,6 +1694,101 @@ async function runChecklist(browser) {
   }
 }
 
+/*
+  Polls surface (#239).
+
+  Regular polls — the group-decision primitive where friends actually agree on
+  what to do — are backed by the `polls`/`poll_options`/`votes` tables and
+  rendered by PollsPage, yet had no smoke coverage and the harness had no writable
+  /rest/v1/votes route. A regression in the vote write, the one-vote-per-member /
+  tap-again-to-unvote toggle, or the live tally render could reach `main` with no
+  gate catching it. (Distinct from availability polls, which runAvailabilityPoll
+  already covers.) This drives the real PollsPage end to end against the stubbed
+  Supabase: a seeded two-option poll proves the surface reads from /rest/v1/polls,
+  casting a vote exercises the upsert POST (asserting its payload shape) and the
+  refetch proves the tally re-renders, and tapping the same option again exercises
+  the unvote DELETE. It stays on the deterministic, network-stubbed path the rest
+  of the suite uses — no realtime socket.
+*/
+async function runPolls(browser) {
+  console.log('\n▶ polls (cast a vote, see the tally, tap again to unvote)')
+  pollsScenario = true
+  pollVotes = []
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/polls`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded question prove the surface renders from the
+    // /rest/v1/polls route (the populated list, not the empty state).
+    await page.getByRole('heading', { name: 'Polls' }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Where should we stay?').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the polls surface renders a poll from the polls route')
+
+    // No vote yet: the chosen option shows a 0 tally (scoped to its own button so
+    // the card's "0 votes" subtitle doesn't count) and the card prompts to vote.
+    const optionA = page.locator('button', { hasText: 'Alfama guesthouse' })
+    await optionA.getByText('0', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Tap an option to vote.').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the poll renders with an empty tally before voting')
+
+    // Casting: tapping an option upserts a vote to /rest/v1/votes; the stateful
+    // store lets the invalidate → refetch bring it back so the tally re-renders.
+    const votePost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/votes') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await optionA.click()
+
+    // The POST carries the trip id, the poll id, the chosen option, and the
+    // voter's member id — the vote write's payload shape (the #239 floor). The
+    // column is `option_id` (the issue's prose says poll_option_id, but both the
+    // schema in src/types and useVote use option_id).
+    const raw = (await votePost).postDataJSON()
+    const vote = Array.isArray(raw) ? raw[0] : raw
+    if (
+      vote?.trip_id !== TRIP_ID ||
+      vote?.poll_id !== POLL_SEED.id ||
+      vote?.option_id !== POLL_OPTION_A.id ||
+      vote?.member_id !== OWNER_MEMBER.id
+    ) {
+      throw new Error(`vote POST payload wrong: ${JSON.stringify(raw)}`)
+    }
+    ok('casting a vote posts trip, poll, option, and voter member id')
+
+    // After the refetch the tally re-renders: the chosen option counts 1 and the
+    // card flips to the "tap again to remove" prompt (myVote is now set).
+    await optionA.getByText('1', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page
+      .getByText('Tap your choice again to remove your vote.')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a cast vote appears in the tally and marks the poll as voted')
+
+    // Tapping the same option again removes the vote: delete().eq('id', …) → a
+    // DELETE to /rest/v1/votes, and the refetch returns the tally to empty.
+    const voteDelete = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/votes') && req.method() === 'DELETE',
+      { timeout: 10_000 }
+    )
+    await optionA.click()
+    await voteDelete
+    ok('tapping the voted option again issues the unvote DELETE')
+
+    await optionA.getByText('0', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Tap an option to vote.').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('unvoting returns the tally to empty')
+
+    if (errors.length) throw new Error(`Uncaught page error on the polls page: ${errors[0]}`)
+    ok('the polls flow raised no uncaught errors')
+  } finally {
+    pollsScenario = false
+    pollVotes = []
+    await context.close()
+  }
+}
+
 async function runErrorReporting(browser) {
   console.log('\n▶ error reporting (uncaught errors reach the error_reports table)')
   const context = await newContext(browser, OWNER_SESSION)
@@ -1958,6 +2134,7 @@ async function main() {
     await runChat(browser)
     await runItinerary(browser)
     await runChecklist(browser)
+    await runPolls(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
     await runPublicShareRevoked(browser)
