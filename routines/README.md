@@ -279,9 +279,13 @@ issues stay in the backlog as records; the human can stage them by hand.
    or lose their remembered device session.
 4. **Owner-only powers stay owner-only** — delete/archive trip, remove
    members, manage the invite link, edit trip details.
-5. **No backend, no paid anything.** Static SPA on GitHub Pages + Supabase
-   free tier. No server code, no API keys, no paid APIs. Free no-key
-   services (Open-Meteo, Nominatim-style) are the established pattern.
+5. **No backend, no paid anything.** Static SPA on a free static host —
+   GitHub Pages, and Cloudflare Pages alongside it (#246) — + Supabase free
+   tier. No server code, no API keys, no paid APIs. Free no-key services
+   (Open-Meteo, Nominatim-style) are the established pattern.
+   *The host is deliberately the only part broadened here. Whether a true
+   secret may exist at all, and where it would live, is #191's decision and
+   needs its own `meta` PR — do not read this change as settling it.*
 6. **Design tokens only** from `src/index.css`; both themes; mobile floors
    (44px tap targets, 16px inputs, no hover-only actions);
    `prefers-reduced-motion` respected.
