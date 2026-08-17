@@ -279,13 +279,23 @@ issues stay in the backlog as records; the human can stage them by hand.
    or lose their remembered device session.
 4. **Owner-only powers stay owner-only** — delete/archive trip, remove
    members, manage the invite link, edit trip details.
-5. **No backend, no paid anything.** Static SPA on a free static host —
-   GitHub Pages, and Cloudflare Pages alongside it (#246) — + Supabase free
-   tier. No server code, no API keys, no paid APIs. Free no-key services
-   (Open-Meteo, Nominatim-style) are the established pattern.
-   *The host is deliberately the only part broadened here. Whether a true
-   secret may exist at all, and where it would live, is #191's decision and
-   needs its own `meta` PR — do not read this change as settling it.*
+5. **No paid anything; server code only as a credential boundary.** Static
+   SPA on a free static host — GitHub Pages, and Cloudflare Pages alongside
+   it (#246) — + Supabase free tier. Free no-key services (Open-Meteo,
+   Nominatim-style) remain the default and the first thing to reach for.
+   * Server-side code is permitted **only** as a thin function holding a
+     secret the browser must not see (#191, #211). It is never a place to
+     move business logic or authorization: those stay in Postgres RLS, and
+     a server function that *enforces* something has overstepped.
+   * A credential shipped to the browser must be **public by design and
+     scope-restricted**, with a hard quota cap — a referrer allowlist is
+     spoofable, the cap is what bounds the damage (#189, #191).
+   * A **true secret** lives only in that function's secret store. Never in
+     the bundle, never a `VITE_*` variable, never in the database beside the
+     trip data it would be compromised alongside.
+   * **Paid APIs still require an explicit decision each time.** This does
+     not authorize spend — #211 deliberately ships with no model call and no
+     billable credential.
 6. **Design tokens only** from `src/index.css`; both themes; mobile floors
    (44px tap targets, 16px inputs, no hover-only actions);
    `prefers-reduced-motion` respected.
