@@ -266,5 +266,22 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
 * `.github/workflows/deploy.yml` builds and publishes to GitHub Pages on
   every push to `main`. Supabase URL/key are public values baked at build
   time (RLS is the security boundary, not the key).
+* `.github/workflows/deploy-cloudflare.yml` publishes the same `dist` to
+  **Cloudflare Pages** (#246), running *alongside* GitHub Pages rather than
+  replacing it. Two origins serve the app while Cloudflare proves itself;
+  GitHub Pages stays canonical, so every URL already in circulation keeps
+  working and abandoning either direction costs one deleted file. The job
+  no-ops until `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` exist, so
+  it cannot break `main` before it is configured.
+* **Why a second host at all:** GitHub Pages cannot set response headers or
+  build a pull request. `public/_headers` gives content-hashed `/assets/*`
+  an immutable year and forces `index.html` / `sw.js` to revalidate — the
+  cause behind the post-deploy blank screen that `src/lib/chunkReload.ts`
+  recovers from — and Cloudflare builds a preview URL per PR, which is the
+  review surface an agent-driven PR workflow has been missing.
+* **HashRouter is unchanged by that move.** Cloudflare supports rewrites, so
+  the constraint in §1 could be lifted, but doing so breaks every invite
+  link, share link, bookmark and installed PWA already out there. That is
+  tracked separately (#247) and must not be folded into a hosting change.
 * See `README.md` for the one-time Supabase setup checklist (enable
   anonymous sign-ins, set the site URL for magic links).

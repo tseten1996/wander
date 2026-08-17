@@ -1,0 +1,80 @@
+name: Deploy to Cloudflare Pages
+
+# Second origin, running alongside GitHub Pages (#246) rather than replacing it.
+# `deploy.yml` is deliberately untouched: while both run, GitHub Pages stays the
+# canonical origin, every URL already in the wild keeps working, and abandoning
+# either direction costs one deleted file.
+#
+# The build is duplicated from deploy.yml on purpose rather than shared. These
+# two jobs must be able to diverge (different env, different publish step)
+# without one silently changing the other's artifact, and a shared reusable
+# workflow would couple the rollback path to the thing being rolled back.
+#
+# Requires two repo secrets, neither of which can be set from the repo:
+#   CLOUDFLARE_API_TOKEN   — scoped to Pages:Edit on this project only
+#   CLOUDFLARE_ACCOUNT_ID
+# Until both exist every run no-ops (see the guard on the deploy step), so
+# merging this cannot break main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cloudflare-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Same public values as deploy.yml — RLS is the security boundary, not the
+      # key, so these are safe to bake into the bundle.
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+
+      # A PR from a fork cannot read secrets, and the secrets may not be set yet.
+      # Skip rather than fail: a red X on every PR would train everyone to ignore
+      # this workflow, which is worse than it being quietly absent.
+      - name: Check credentials
+        id: creds
+        # Secrets reach the shell through env, never interpolated into the
+        # script body: `${{ secrets.X }}` inline would place the value in the
+        # command line itself, where a shell trace or an error echo can surface
+        # it past GitHub's masking.
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Cloudflare secrets not configured — skipping deploy. See issue #246."
+          fi
+
+      # Direct upload of the artifact CI already built, rather than Cloudflare's
+      # own Git build. Keeps one build definition: what deploys is byte-for-byte
+      # what `npm run build` produced here, under the same Node version the
+      # invariant and bundle-budget checks ran against.
+      - name: Publish
+        if: steps.creds.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=wander --branch=${{ github.head_ref || github.ref_name }}

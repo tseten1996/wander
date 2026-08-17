@@ -1,0 +1,37 @@
+# Cache-control for the Cloudflare Pages origin (#246). GitHub Pages has no way
+# to set these, which is why they live here rather than in the build: on that
+# host every file gets the same middling policy, and the fallout is the bug
+# `src/lib/chunkReload.ts` exists to recover from — right after a deploy the old
+# hashed chunk files are gone, a lazy import() 404s, and the route can't render.
+#
+# The split below is the whole point. Vite content-hashes everything under
+# /assets, so those filenames are immutable by construction and can be cached
+# forever. The entry points are NOT hashed — their names are stable across
+# deploys, so if a browser holds a stale copy it never learns a new build
+# exists. Those must revalidate every time.
+#
+# Cloudflare Pages copies this file out of the published directory; Vite copies
+# it from public/ into dist/ verbatim. It is inert on GitHub Pages, so it is
+# safe while both origins run in parallel.
+
+# Content-hashed by the build — a changed file is a changed URL, so this can
+# never serve stale content.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Stable filenames. `no-cache` does not mean "don't store" — it means
+# revalidate before use, so a deploy is picked up on the next visit while an
+# unchanged file still costs only a 304.
+/index.html
+  Cache-Control: no-cache
+/sw.js
+  Cache-Control: no-cache
+/registerSW.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# Workbox's runtime is content-hashed like the app chunks, but sits at the root
+# rather than under /assets, so it needs its own rule.
+/workbox-*.js
+  Cache-Control: public, max-age=31536000, immutable
