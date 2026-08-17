@@ -11,7 +11,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/misc'
 import { dateRange, formatMoney } from '@/lib/utils'
 import { useDashboard, planningProgress } from './api'
-import { recapSettlement, stopCount, totalSpend, tripDayCount, type RecapSettlement } from './recap'
+import {
+  locatedStops,
+  recapSettlement,
+  stopCount,
+  totalSpend,
+  tripDayCount,
+  type RecapSettlement,
+} from './recap'
+
+// Read-only places-visited map (#248, epic #205 slice 3), lazy-loaded so Leaflet
+// + its CSS stay in their own async chunk and never enter the initial bundle.
+const RecapMap = React.lazy(() => import('@/features/itinerary/RecapMap'))
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -65,6 +76,12 @@ export function TripRecap() {
 
   const days = tripDayCount(trip.start_date, trip.end_date)
   const stops = itinerary.data ? stopCount(itinerary.data) : null
+  // The located stops that plot the route. Fewer than 2 renders no map (below),
+  // so the stats-only recap never shows an empty map frame.
+  const mapStops = React.useMemo(
+    () => (itinerary.data ? locatedStops(itinerary.data) : []),
+    [itinerary.data],
+  )
   const spend = budget.data ? totalSpend(budget.data) : null
   const settlement = budget.data
     ? recapSettlement(budget.data, members, repayments.data ?? [])
@@ -92,25 +109,38 @@ export function TripRecap() {
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
-              <Stat icon={CalendarDays} value={days ?? '—'} label={days === 1 ? 'day' : 'days'} />
-              <Stat icon={MapPin} value={stops ?? '—'} label={stops === 1 ? 'stop' : 'stops'} />
-              <Stat
-                icon={Wallet}
-                value={spend != null ? formatMoney(spend, trip.currency) : '—'}
-                label={settlement ? settlementLabel(settlement) : 'total spent'}
-              />
-              <Stat
-                icon={CheckCircle2}
-                value={planning ? `${planning.pct}%` : '—'}
-                label="planned"
-              />
-              <Stat
-                icon={Users}
-                value={members.length}
-                label={members.length === 1 ? 'traveler' : 'travelers'}
-              />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+                <Stat icon={CalendarDays} value={days ?? '—'} label={days === 1 ? 'day' : 'days'} />
+                <Stat icon={MapPin} value={stops ?? '—'} label={stops === 1 ? 'stop' : 'stops'} />
+                <Stat
+                  icon={Wallet}
+                  value={spend != null ? formatMoney(spend, trip.currency) : '—'}
+                  label={settlement ? settlementLabel(settlement) : 'total spent'}
+                />
+                <Stat
+                  icon={CheckCircle2}
+                  value={planning ? `${planning.pct}%` : '—'}
+                  label="planned"
+                />
+                <Stat
+                  icon={Users}
+                  value={members.length}
+                  label={members.length === 1 ? 'traveler' : 'travelers'}
+                />
+              </div>
+
+              {mapStops.length >= 2 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-sm font-medium text-muted">Where you went</p>
+                  <React.Suspense
+                    fallback={<Skeleton className="h-[20rem] rounded-2xl sm:h-[26rem]" />}
+                  >
+                    <RecapMap stops={mapStops} />
+                  </React.Suspense>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

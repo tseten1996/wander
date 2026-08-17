@@ -253,9 +253,26 @@ const PUBLIC_RECAP_READY = {
     end_date: '2026-05-05',
   },
   stats: { stops: 4, travelers: 3 },
+  // Two located stops (coords added in #248, slice 3) so the read-only recap map
+  // renders its route; the whitelisted projection now carries latitude/longitude
+  // for each already-named stop.
   places: [
-    { id: 'it-1', title: 'Time out Market', category: 'restaurant', location: 'Cais do Sodré' },
-    { id: 'it-2', title: 'Belém Tower', category: 'activity', location: 'Belém' },
+    {
+      id: 'it-1',
+      title: 'Time out Market',
+      category: 'restaurant',
+      location: 'Cais do Sodré',
+      latitude: 38.7067,
+      longitude: -9.1459,
+    },
+    {
+      id: 'it-2',
+      title: 'Belém Tower',
+      category: 'activity',
+      location: 'Belém',
+      latitude: 38.6916,
+      longitude: -9.216,
+    },
   ],
 }
 const PUBLIC_RECAP_PENDING = {
@@ -2021,6 +2038,13 @@ async function runPublicRecap(browser) {
     await page.getByText('travelers').first().waitFor({ state: 'visible', timeout: 10_000 })
     await page.getByText('Belém Tower').waitFor({ state: 'visible', timeout: 10_000 })
     ok('the recap shows aggregate stats and located stops')
+
+    // The read-only places-visited map (#248) renders from the projection's
+    // coordinates — two located stops, so the route map appears (lazy Leaflet).
+    await page
+      .getByRole('region', { name: 'Map of places visited' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the places-visited map renders from the located stops')
 
     // The epic's growth CTA links a first-time visitor into the create-trip flow.
     await page.getByRole('link', { name: /Plan your own trip/ }).first().waitFor({

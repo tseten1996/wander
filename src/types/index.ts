@@ -376,14 +376,19 @@ export interface PublicTripMeta {
   end_date: string | null
 }
 
-/** A single located stop in the public recap (#238): a strict, whitelisted
- *  subset of ItineraryItem — no times, notes, cost, coordinates, or authorship,
- *  just the place name and its category icon for the "where we went" list. */
+/** A single located stop in the public recap (#238, #248): a strict, whitelisted
+ *  subset of ItineraryItem — no times, notes, cost, or authorship. The place
+ *  name + category icon feed the "where we went" list; the coordinates (added in
+ *  #248, slice 3) plot the same stop on the read-only recap map. `latitude` /
+ *  `longitude` are null for a stop that has a location string but was never
+ *  pinned — it stays in the list but not on the map. */
 export interface PublicRecapPlace {
   id: string
   title: string
   category: ItineraryCategory
   location: string | null
+  latitude: number | null
+  longitude: number | null
 }
 
 /** The public post-trip recap payload (#238, epic #205), returned by the

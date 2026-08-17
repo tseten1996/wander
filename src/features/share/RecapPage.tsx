@@ -7,13 +7,20 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { cn, dateRange } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { PageLoader, EmptyState, ErrorState } from '@/components/ui/misc'
+import { PageLoader, EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { ITINERARY_META } from '@/features/itinerary/meta'
 // The recap's day count reuses the same pure derivation the private #206 card
 // uses (tripDayCount), rather than re-deriving trip length here — the aggregate
 // counts (stops, travelers) are computed server-side in the whitelisted
-// projection, since an outsider can't see the rows they roll up.
-import { tripDayCount } from '@/features/dashboard/recap'
+// projection, since an outsider can't see the rows they roll up. `locatedStops`
+// picks the pinned stops the map draws, from the same projection.
+import { locatedStops, tripDayCount } from '@/features/dashboard/recap'
+
+// Read-only places-visited map (#248, epic #205 slice 3), lazy-loaded so Leaflet
+// + its CSS stay in their own async chunk and never enter the public page's
+// initial bundle. Fed from the share-token projection's coordinates — no new
+// public read, no member PII.
+const RecapMap = React.lazy(() => import('@/features/itinerary/RecapMap'))
 import { usePublicRecap } from './api'
 import type { PublicRecap, PublicRecapPlace, PublicTripMeta } from '@/types'
 
@@ -92,6 +99,9 @@ function PublicShell({ children }: { children: React.ReactNode }) {
 function Recap({ data }: { data: Extract<PublicRecap, { status: 'ready' }> }) {
   const { trip, stats, places } = data
   const days = tripDayCount(trip.start_date, trip.end_date)
+  // The pinned stops that draw the route. Fewer than 2 renders no map, so the
+  // recap degrades to stats + the "Where they went" list with no empty frame.
+  const mapStops = React.useMemo(() => locatedStops(places), [places])
 
   return (
     <PublicShell>
@@ -115,6 +125,15 @@ function Recap({ data }: { data: Extract<PublicRecap, { status: 'ready' }> }) {
       {places.length > 0 && (
         <section className="mt-10">
           <h2 className="font-display text-lg font-semibold text-ink">Where they went</h2>
+          {mapStops.length >= 2 && (
+            <div className="mt-3">
+              <React.Suspense
+                fallback={<Skeleton className="h-[20rem] rounded-2xl sm:h-[26rem]" />}
+              >
+                <RecapMap stops={mapStops} />
+              </React.Suspense>
+            </div>
+          )}
           <ul className="mt-3 space-y-2">
             {places.map((place, i) => (
               <PlaceRow key={place.id} place={place} index={i} />

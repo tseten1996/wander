@@ -16,6 +16,50 @@ import {
  * `spans.ts` / `settlement.ts`.
  */
 
+/**
+ * One located stop for the recap map (#248, epic #205 slice 3): the minimal
+ * whitelisted shape both recap surfaces plot — the private dashboard card (from
+ * cached `ItineraryItem`s) and the public page (from the `get_public_recap`
+ * projection). Just an id, a name and finite coordinates; no times, cost or
+ * authorship reach the map.
+ */
+export interface RecapStop {
+  id: string
+  title: string
+  latitude: number
+  longitude: number
+}
+
+/**
+ * The located stops among `items`, in the order given (both sources already
+ * arrive in `(day, position)` visit order), keeping only those with two real,
+ * finite coordinates — the exact set the recap map can pin and connect. Generic
+ * over any coordinate-bearing row (`ItineraryItem` or the public projection's
+ * `PublicRecapPlace`) so one filter feeds both surfaces. Fewer than 2 results is
+ * the signal to degrade to the stats-only recap with no empty map frame.
+ */
+export function locatedStops(
+  items: Array<{
+    id: string
+    title: string
+    latitude: number | null
+    longitude: number | null
+  }>,
+): RecapStop[] {
+  const out: RecapStop[] = []
+  for (const it of items) {
+    if (
+      typeof it.latitude === 'number' &&
+      Number.isFinite(it.latitude) &&
+      typeof it.longitude === 'number' &&
+      Number.isFinite(it.longitude)
+    ) {
+      out.push({ id: it.id, title: it.title, latitude: it.latitude, longitude: it.longitude })
+    }
+  }
+  return out
+}
+
 /** The settle-up state of the trip, as the recap summarises it in one line. */
 export interface RecapSettlement {
   /** At least one real, member-attributed expense exists to settle. */
