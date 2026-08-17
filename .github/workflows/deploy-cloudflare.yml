@@ -26,6 +26,11 @@ permissions:
   contents: read
   deployments: write
 
+env:
+  # Defined once — the create step and the deploy step must agree, and a
+  # mismatch fails as "Project not found" with no hint that the two differ.
+  PROJECT_NAME: wander
+
 concurrency:
   group: cloudflare-pages-${{ github.ref }}
   cancel-in-progress: true
@@ -71,10 +76,42 @@ jobs:
       # own Git build. Keeps one build definition: what deploys is byte-for-byte
       # what `npm run build` produced here, under the same Node version the
       # invariant and bundle-budget checks ran against.
+      # `pages deploy` does not create a missing project — it fails with
+      # "Project not found [code: 8000007]", which reads like a credentials
+      # problem and isn't. Creating it here rather than in the dashboard keeps
+      # the whole origin reproducible from the repo: someone forking or
+      # rebuilding this gets a working deploy from secrets alone.
+      #
+      # Idempotent by listing first rather than by swallowing the create's
+      # error, so a genuine failure (bad token scope, account over its project
+      # limit) still fails the run instead of being mistaken for "already there".
+      - name: Ensure the Pages project exists
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if npx --yes wrangler@3 pages project list | grep -qw "$PROJECT_NAME"; then
+            echo "::notice::Pages project '$PROJECT_NAME' already exists."
+          else
+            echo "::notice::Creating Pages project '$PROJECT_NAME'."
+            npx --yes wrangler@3 pages project create "$PROJECT_NAME" \
+              --production-branch=main
+          fi
+
       - name: Publish
         if: steps.creds.outputs.ready == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=wander --branch=${{ github.head_ref || github.ref_name }}
+          # --commit-dirty: the checkout is clean, but the build writes dist/,
+          # which wrangler sees as an uncommitted change and warns about on
+          # every run. The warning is noise here — CI always deploys a
+          # freshly-built tree.
+          command: >-
+            pages deploy dist
+            --project-name=${{ env.PROJECT_NAME }}
+            --branch=${{ github.head_ref || github.ref_name }}
+            --commit-dirty=true
