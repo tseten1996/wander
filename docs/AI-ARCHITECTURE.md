@@ -150,21 +150,30 @@ a secret, which is why it depends on #191 rather than merely relating to it.
 
 ### 4.2 Where the key lives
 
+The runtime is a **Cloudflare Pages Function** (see the decision record in §5.1),
+so the key is a Pages secret, bound **per environment**:
+
 ```bash
-# From a developer machine, once. Never from CI.
-supabase secrets set OPENROUTER_API_KEY=sk-or-… --project-ref qqmfxbcroxunvtgxxray
+# Production only, deliberately. See below.
+npx wrangler pages secret put OPENROUTER_API_KEY --project-name wander
 ```
 
-Read it in the function as `Deno.env.get('OPENROUTER_API_KEY')`. That is the
-whole mechanism. Rotation is the same command plus a function redeploy.
+Read it from the request's `env` binding. Rotation is the same command plus a
+redeploy.
+
+**Bind it to production only.** Preview deployments get their own environment,
+and a preview with a working AI endpoint is a live endpoint spending real money
+on every pull request. Previews should get the endpoint and a clean "AI is
+disabled in previews" refusal — the §10 kill switch applied per-environment.
+Costs nothing to do at the start; expensive to discover after a busy PR day.
 
 Three places it must never go:
 
 | Never | Why |
 |---|---|
 | `VITE_*` at build time | Ships inside the JS bundle, readable in devtools. #191 calls this *laundering a secret into a public artifact* — it looks legitimate because CI is involved and is exactly as exposed as hardcoding it. |
-| GitHub Secrets | Unnecessary: `supabase secrets set` writes straight to the project, so the key never enters a workflow environment and can never be caught by a `set -x` or a debug print. The repo already holds `SUPABASE_ACCESS_TOKEN` and the DB password; a third credential in a system that does not need it is pure downside. Fewer copies, fewer leaks. |
-| Supabase Vault | Trust-domain separation (#191). A Vault secret decrypts inside Postgres, which already holds trip data, member identities and invite codes — one Postgres compromise would take both the data and the credential. |
+| GitHub Secrets | Unnecessary: `wrangler pages secret put` writes straight to the Pages project, so the key never enters a workflow environment and can never be caught by a `set -x` or a debug print. The repo already holds `SUPABASE_ACCESS_TOKEN`, the DB password and the Cloudflare token; another credential in a system that does not need it is pure downside. Fewer copies, fewer leaks. |
+| Supabase Vault | Trust-domain separation (#191). A Vault secret decrypts inside Postgres, which already holds trip data, member identities and invite codes — one Postgres compromise would take both the data and the credential. Cloudflare puts the key one domain further out still. |
 
 ### 4.3 Choosing a provider — the criteria that actually matter here
 
@@ -195,7 +204,7 @@ it is still unknown which model does "Improve this day" well.
 Three conditions:
 
 - **Turn prompt logging and training off explicitly** (§4.5).
-- **Keep it behind the `ModelProvider` interface** (§5.3) so switching to a direct
+- **Keep it behind the `ModelProvider` interface** (§5.4) so switching to a direct
   provider is a one-file change, not a refactor.
 - **Verify structured-output behaviour on the specific model chosen**, not in
   general — support varies by underlying provider through a proxy, and that is
@@ -232,20 +241,85 @@ Two things follow that are worth stating plainly:
 
 ## 5. The service boundary
 
-The API key cannot live in the bundle, so AI requests go through a Supabase Edge
-Function. **This is the first server-side code in Wander** — it brings a second
-deploy pipeline, a secret store, a runtime with different module resolution from
-Vite, and a new failure mode (function down / cold / rate-limited) that the PWA
-has never had to render. Plan it as "Wander gets a backend", not "we add an
-endpoint".
+The API key cannot live in the bundle, so AI requests go through a server-side
+function. **This is the first server-side code in Wander** — it brings a secret
+store, a second runtime, and a new failure mode (function down / cold /
+rate-limited) that the PWA has never had to render. Plan it as "Wander gets a
+backend", not "we add an endpoint".
 
-### 5.1 Which client reads the data
+### 5.1 Decision record: the runtime is a Cloudflare Pages Function
+
+*Decided 2026-08-17, after #246 put the app on Cloudflare Pages. Recorded because
+the reasoning is not obvious from the outcome, and because an earlier draft of
+this document specified Supabase Edge Functions.*
+
+**Context.** Wander's server-side logic today is entirely `SECURITY DEFINER` RPCs
+in Supabase. #246 added Cloudflare Pages as a second static origin, which made
+Pages Functions available at no additional infrastructure cost and reopened a
+question that had already been answered the other way.
+
+| Dimension | Cloudflare Pages Functions | Supabase Edge Functions | Edge |
+|---|---|---|---|
+| Deploy pipeline | Ships with the `wrangler pages deploy` already running | New workflow + `supabase functions deploy` | **CF** |
+| CORS | Same origin as the app — none needed | Cross-origin: preflight, headers, a browser-only bug class | **CF** |
+| PR previews | Each PR gets its own function build | One shared function across all previews | **CF** |
+| Local dev | `wrangler pages dev` | `supabase functions serve` — wants Docker | **CF** |
+| Secret scoping | Per environment (preview vs production) | Project-wide | **CF** |
+| Trust domain (#191) | Key sits in a third provider, furthest from trip data | Key sits with the same vendor as the data | **CF** |
+| Free tier | 100,000 requests/day, shared with Workers | Not stated in public docs; #191 recorded 500K/month | **CF** |
+| JWT verification | Manual — but unnecessary, see below | `verify_jwt` at the platform level | *Supabase* |
+| Latency to Postgres | Edge → the project's region | Same provider, likely closer | *Supabase* |
+| Invocable from the DB | Awkward | Natural (`pg_cron`, triggers) | *Supabase* |
+| Fits repo conventions | First server logic outside Supabase | Matches "server-side = Supabase" | *Supabase* |
+| RLS read pattern | supabase-js runs on Workers | Native | Tie |
+
+**Decision: Cloudflare Pages Functions.**
+
+The tally (6–4) is not the argument; the *character* of each side is. Every
+Supabase advantage is marginal or hypothetical — latency is tens of milliseconds
+against an LLM call measured in seconds, and DB-invocation matters only if the
+design changes to something nothing here proposes. Every Cloudflare advantage is
+felt weekly: no CORS layer, one pipeline, a working endpoint on every preview.
+
+**Two things that look decisive and are not:**
+
+- *`verify_jwt`.* The RLS read **is** the verification. A forged or expired token
+  is rejected by PostgREST and returns zero rows, and the membership check that
+  decides which trip to bill is itself RLS-enforced — so identity is established
+  by Postgres as a side effect of a read we were doing anyway. No separate
+  verification step and no second secret.
+- *"Fits repo conventions".* The real objection, and the one a good reviewer
+  raises. It loses because this function **enforces nothing**: Postgres keeps
+  doing all authorization. It is a credential holder, not business logic, so the
+  authorization model does not fragment.
+
+**On the free tier** — Cloudflare's 100K/day is a *daily* cap that resets at
+midnight UTC, where a monthly quota, once drained, stays drained for the rest of
+the month. Given the abuse vector in §3.2 is a leaked invite link, a cap that
+resets daily fails better than one that does not. Static Pages requests do not
+count toward it; only Function invocations do.
+
+**What would flip this:**
+
+1. AI needs invoking from inside the database (`pg_cron`, a trigger, an RPC
+   calling out) → Supabase becomes obviously right.
+2. More than one server-side function appears and the split starts costing real
+   cognitive overhead → consolidate on Supabase.
+3. Cloudflare's limits tighten materially below Supabase's.
+
+**Make being wrong cheap.** The runtime-specific part is the request handler —
+roughly 30 lines. The context builder, schema validation, quota logic and
+`ModelProvider` are plain TypeScript that runs on either platform. Hold that
+boundary and reversing this decision is an afternoon, not a rewrite. That
+insurance is worth more than getting the choice right first time.
+
+### 5.2 Which client reads the data
 
 The critical decision. Get it wrong and the security boundary quietly moves from
 Postgres into TypeScript.
 
 ```ts
-// supabase/functions/wander-ai/index.ts
+// functions/api/ai.ts — a Cloudflare Pages Function
 const authHeader = req.headers.get('Authorization') ?? ''
 
 // READS: the caller's own JWT. RLS applies exactly as it does in the browser.
@@ -269,7 +343,7 @@ Two rules, and they are the whole model:
   membership check anyway, so the caller gets a clean `403` rather than a
   confusing empty result.
 
-### 5.2 Contract
+### 5.3 Contract
 
 `zod` is already a dependency, so the contract costs no bundle weight. The
 function runs on Deno and the app on Vite, so rather than fight cross-runtime
@@ -297,7 +371,7 @@ Use the provider's native structured-output mode rather than parsing free text.
 It removes an entire failure class; the one it doesn't remove (a well-formed
 object that is semantically wrong) is caught by zod plus the approval UI.
 
-### 5.3 Model abstraction
+### 5.4 Model abstraction
 
 One interface, one implementation. Do not build a provider registry for a single
 provider — the point of the interface is that §4.4's "aggregator now, direct
@@ -652,7 +726,7 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 
 | Phase | Database | Server | Frontend | Complexity |
 |---|---|---|---|---|
-| **0 · Foundation** | `ai_usage` + RLS | `wander-ai`: auth, per-trip quota, usage log, kill switch, no model call | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
+| **0 · Foundation** | `ai_usage` + RLS | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
 | **1 · Paste anything** | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
 | **2 · Improve this day** | `get_ai_day_context` | Context builder, reasoning model, action authorization | Preview cards, approve/reject, apply via existing mutations | High |
 | **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
@@ -685,19 +759,31 @@ Four server files, not nine directories. Split when a file becomes
 uncomfortable — that is a real signal; anticipating the split is not.
 
 ```
-supabase/functions/wander-ai/
-  index.ts          # HTTP entry: auth, quota, dispatch, usage logging
-  context.ts        # context builder + token budgeting
-  prompts.ts        # system prompts, one per intent
-  provider.ts       # model call + structured output
-  schemas.ts        # zod request/response/action contracts
+functions/                 # Cloudflare Pages Functions — file-routed
+  api/
+    ai.ts                  # the ONLY runtime-specific file: request in,
+                           # Response out. Keep it ~30 lines so §5.1's
+                           # "reversing this is an afternoon" stays true.
+
+src/server/ai/             # plain TypeScript — runs on Workers or Deno
+  handler.ts               # auth, quota, kill switch, dispatch, usage logging
+  context.ts               # context builder + token budgeting
+  prompts.ts               # system prompts, one per intent
+  provider.ts              # model call + structured output
+  schemas.ts               # zod request/response/action contracts
 
 src/features/ai/
-  api.ts            # useImproveDay() etc. — matches the existing convention
-  schemas.ts        # mirrors the function's schemas; a test asserts parity
+  api.ts                   # useImproveDay() etc. — the existing convention
+  schemas.ts               # mirrors the server schemas; a test asserts parity
   SuggestionPreview.tsx
   index.ts
 ```
+
+The split between `functions/api/ai.ts` and `src/server/ai/` is the insurance
+from §5.1 made structural: everything that would have to be rewritten to move
+platforms lives in one small file, and everything worth testing lives in modules
+the Node test runner can import directly — the same convention `tests/*.test.mjs`
+already uses for `.ts` sources.
 
 Lazy-load `SuggestionPreview`. The bundle gate enforces 500 kB gzipped total and
 220 kB per chunk. **No model SDK belongs in the frontend at all** — the edge
