@@ -22,5 +22,5 @@
     },
     "types": ["vite/client", "vite-plugin-pwa/client"]
   },
-  "include": ["src"]
+  "include": ["src", "functions"]
 }
