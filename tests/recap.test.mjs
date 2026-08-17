@@ -26,7 +26,7 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context)
 }`),
 )
-const { tripDayCount, stopCount, totalSpend, recapSettlement } = await import(
+const { tripDayCount, stopCount, totalSpend, recapSettlement, locatedStops } = await import(
   '../src/features/dashboard/recap.ts'
 )
 
@@ -77,6 +77,40 @@ test('recapSettlement reports "nothing to settle" when no real expenses exist', 
     [],
   )
   assert.deepEqual(s, { hasData: false, settled: true, transfersLeft: 0 })
+})
+
+test('locatedStops keeps only finitely-coordinated stops, preserving order', () => {
+  const stops = locatedStops([
+    { id: 'a', title: 'Café', latitude: 48.85, longitude: 2.35 },
+    { id: 'b', title: 'Idea', latitude: null, longitude: null }, // never pinned → dropped
+    { id: 'c', title: 'Museum', latitude: 48.86, longitude: 2.34 },
+    { id: 'd', title: 'Half', latitude: 48.9, longitude: null }, // one coord missing → dropped
+  ])
+  // Order preserved, unpinned/half-pinned rows removed, coords narrowed to numbers.
+  assert.deepEqual(stops, [
+    { id: 'a', title: 'Café', latitude: 48.85, longitude: 2.35 },
+    { id: 'c', title: 'Museum', latitude: 48.86, longitude: 2.34 },
+  ])
+})
+
+test('locatedStops rejects non-finite coordinates', () => {
+  // A 0/0 is a real point and must survive; NaN/Infinity are not locations.
+  assert.deepEqual(
+    locatedStops([
+      { id: 'z', title: 'Null Island', latitude: 0, longitude: 0 },
+      { id: 'n', title: 'Bad', latitude: Number.NaN, longitude: 2 },
+      { id: 'i', title: 'Inf', latitude: Infinity, longitude: 2 },
+    ]),
+    [{ id: 'z', title: 'Null Island', latitude: 0, longitude: 0 }],
+  )
+})
+
+test('locatedStops on an empty or all-unpinned list yields fewer than 2 (stats-only recap)', () => {
+  assert.equal(locatedStops([]).length, 0)
+  assert.equal(
+    locatedStops([{ id: 'a', title: 'x', latitude: null, longitude: null }]).length,
+    0,
+  )
 })
 
 test('recapSettlement counts outstanding transfers, and nets repayments to settled', () => {

@@ -1,0 +1,29 @@
+{
+  "auth": { "as": "anon" },
+  "tables": {},
+  "rpcs": {
+    "get_public_recap": {
+      "status": "ready",
+      "trip": {
+        "name": "Lisbon in Spring",
+        "destination": "Lisbon, Portugal",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-05"
+      },
+      "stats": { "stops": 5, "travelers": 3 },
+      "places": [
+        { "id": "it-1", "title": "Time Out Market", "category": "restaurant", "location": "Cais do Sodré", "latitude": 38.7067, "longitude": -9.1459 },
+        { "id": "it-2", "title": "Praça do Comércio", "category": "activity", "location": "Baixa", "latitude": 38.7077, "longitude": -9.1366 },
+        { "id": "it-3", "title": "Miradouro da Graça", "category": "activity", "location": "Graça", "latitude": 38.7188, "longitude": -9.1305 },
+        { "id": "it-4", "title": "Belém Tower", "category": "activity", "location": "Belém", "latitude": 38.6916, "longitude": -9.216 },
+        { "id": "it-5", "title": "LX Factory", "category": "activity", "location": "Alcântara", "latitude": 38.7028, "longitude": -9.1786 }
+      ]
+    }
+  },
+  "routes": ["/r/demotokendemotokendemotokendemotoken0001"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
