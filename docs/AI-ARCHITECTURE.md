@@ -160,16 +160,18 @@ to need a secret to go with it.
 ### 4.2 Where the key lives — there isn't one
 
 The runtime is a Cloudflare Pages Function using **Workers AI** (§4.4), which is
-a platform-authenticated *binding* rather than an API credential. Declared once
-in `wrangler.toml`:
+a platform-authenticated *binding* rather than an API credential. The function
+calls `env.AI` and Cloudflare handles authentication. **There is no key to
+store, scope, rotate or leak.**
 
-```toml
-[ai]
-binding = "AI"
-```
-
-The function calls `env.AI` and Cloudflare handles authentication. **There is no
-key to store, scope, rotate or leak.**
+The binding is configured in the Pages dashboard (Settings → Bindings → Workers
+AI, variable name `AI`) rather than in a committed `wrangler.toml`. That is a
+reversal worth recording: the binding briefly lived in `wrangler.toml`, which is
+where repo-as-source-of-truth would put it, but the file's mere presence made
+Cloudflare's Git integration switch its deploy command to `wrangler deploy` —
+the *Workers* command — which fails on a Pages project. Config living in a
+dashboard is worse than config living in a repo; a second deploy pipeline
+breaking itself on every push is worse still.
 
 Three other credentials that might have been needed, and why none of them are:
 
@@ -827,8 +829,9 @@ src/features/ai/
   api.ts                   # callAi() + useAiRequest() — POSTs to /api/ai
   SuggestionPreview.tsx    # (arrives with phase 2)
 
-wrangler.toml              # Pages config; the [ai] binding lives here. NEVER
-                           # a secret — this file is committed.
+# No wrangler.toml: its presence makes Cloudflare's Git integration deploy with
+# `wrangler deploy` (Workers) instead of `wrangler pages deploy`. The Workers AI
+# binding is set in the Pages dashboard instead — see §4.2.
 ```
 
 The split between `functions/api/ai.ts` and `src/server/ai/` is the insurance

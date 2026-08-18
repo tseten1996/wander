@@ -31,9 +31,13 @@ interface Env {
   /** Kill switch. Anything other than the exact string 'true' disables AI. */
   AI_ENABLED?: string
   /**
-   * Workers AI binding — declared in wrangler.toml, authenticated by the
-   * platform. Unused until the first model call lands (#212); typed now so
-   * that slice is a handler change rather than a plumbing change.
+   * Workers AI binding — configured in the Pages dashboard (Settings →
+   * Bindings), authenticated by the platform rather than by a key we hold.
+   * Deliberately NOT declared in a wrangler.toml: that file's presence makes
+   * Cloudflare's Git integration deploy with `wrangler deploy` (the Workers
+   * command), which fails on a Pages project. Unused until the first model
+   * call lands (#212); typed now so that slice is a handler change rather
+   * than a plumbing change.
    */
   AI?: unknown
 }
