@@ -367,6 +367,65 @@ select pg_temp.expect_dml('invite: invalid code is rejected',          'aaaa0000
 select pg_temp.expect_dml('invite: valid code admits a fresh user',    'aaaa0000-0000-0000-0000-000000000006', false, $$select join_trip('invitecodeAAAA','Joiner')$$, 1);
 select pg_temp.expect_count('invite: joined user now sees the trip',   'aaaa0000-0000-0000-0000-000000000006', false, $$select count(*) from trips where id='bbbb0000-0000-0000-0000-000000000001'$$, 1);
 
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- ai_usage — the AI quota ledger (#211)
+--
+-- This table is what makes the per-trip AI quota trustworthy, so the property
+-- under test is narrow and specific: a member may READ their trip's usage and
+-- APPEND to it only through record_ai_usage, and may never edit or erase a row.
+--
+-- Editing matters more than it looks. The quota is computed by COUNTING rows in
+-- a trailing window, so a member who could delete rows could reset their own
+-- allowance at will and the quota would bound nothing.
+--
+-- Note what is deliberately NOT asserted: that clients cannot insert at all.
+-- That was true when the endpoint held a service-role key, and stopped being
+-- true when that key was replaced by the record_ai_usage SECURITY DEFINER RPC
+-- (see 20260818030000_record_ai_usage.sql). A member can now append rows for
+-- their own trip — which only lets them spend their own allowance faster, the
+-- same thing using the feature does. Exhaustible, never evadable.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Seed one row per trip as superuser: there is no insert policy, so the direct
+-- INSERT below is exactly what a client is forbidden from doing.
+insert into public.ai_usage (id, trip_id, member_id, feature, outcome) values
+  ('fada0000-0000-0000-0000-000000000001', 'bbbb0000-0000-0000-0000-000000000001',
+   (select id from public.members where trip_id = 'bbbb0000-0000-0000-0000-000000000001' and role = 'owner'),
+   'improve_day', 'ok'),
+  ('fada0000-0000-0000-0000-000000000002', 'bbbb0000-0000-0000-0000-000000000002',
+   (select id from public.members where trip_id = 'bbbb0000-0000-0000-0000-000000000002'),
+   'improve_day', 'ok');
+
+-- Read: members see their own trip; nobody else sees anything.
+select pg_temp.expect_count('ai_usage: member reads own trip usage',        'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from ai_usage where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 1);
+select pg_temp.expect_count('ai_usage: A-member cannot read B usage',       'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from ai_usage where trip_id='bbbb0000-0000-0000-0000-000000000002'$$, 0);
+select pg_temp.expect_count('ai_usage: non-member sees no usage at all',    'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from ai_usage$$, 0);
+
+-- Write: the ledger is append-only, and only through the RPC.
+select pg_temp.expect_dml('ai_usage: member cannot INSERT directly',        'aaaa0000-0000-0000-0000-000000000002', false, $$insert into ai_usage(trip_id, feature) values('bbbb0000-0000-0000-0000-000000000001','forged')$$, -1);
+-- UPDATE/DELETE carry no policy at all, so RLS makes the row invisible to the
+-- statement rather than raising: 0 rows affected, per this file's header note.
+select pg_temp.expect_dml('ai_usage: member cannot UPDATE a row',           'aaaa0000-0000-0000-0000-000000000002', false, $$update ai_usage set feature='tampered' where id='fada0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('ai_usage: member cannot DELETE to reset quota',  'aaaa0000-0000-0000-0000-000000000002', false, $$delete from ai_usage where id='fada0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('ai_usage: owner cannot DELETE either',           'aaaa0000-0000-0000-0000-000000000001', false, $$delete from ai_usage where id='fada0000-0000-0000-0000-000000000001'$$, 0);
+
+-- record_ai_usage: the only write path, gated on membership.
+select pg_temp.expect_dml('record_ai_usage: member may append to own trip', 'aaaa0000-0000-0000-0000-000000000002', false, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000001','parse_booking')$$, 1);
+select pg_temp.expect_dml('record_ai_usage: non-member is rejected',        'aaaa0000-0000-0000-0000-000000000005', false, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000001','parse_booking')$$, -1);
+select pg_temp.expect_dml('record_ai_usage: cross-trip write is rejected',  'aaaa0000-0000-0000-0000-000000000002', false, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000002','parse_booking')$$, -1);
+select pg_temp.expect_dml('record_ai_usage: a bad outcome is rejected',     'aaaa0000-0000-0000-0000-000000000002', false, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000001','parse_booking','not-an-outcome')$$, -1);
+
+-- Attribution is derived inside the function, never accepted from the caller,
+-- so a member cannot log spend against somebody else.
+select pg_temp.expect_count('record_ai_usage: row is attributed to the caller', 'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from ai_usage where feature='parse_booking' and member_id='cccc0000-0000-0000-0000-000000000002'$$, 1);
+
+-- An invite-link friend holds an ANONYMOUS session and is an ordinary member,
+-- so the grant to `authenticated` must cover them. If this ever regresses,
+-- every friend loses AI while the owner keeps it — the exact asymmetry
+-- guardrail #3 exists to prevent. Member F, impersonated with an anonymous JWT.
+select pg_temp.expect_dml('record_ai_usage: anonymous member may append',   'aaaa0000-0000-0000-0000-000000000002', true, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000001','parse_booking')$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
