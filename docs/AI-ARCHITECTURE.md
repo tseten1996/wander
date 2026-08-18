@@ -354,6 +354,57 @@ roughly 30 lines. The context builder, schema validation, quota logic and
 boundary and reversing this decision is an afternoon, not a rewrite. That
 insurance is worth more than getting the choice right first time.
 
+#### 5.1.1 There are two Cloudflare pipelines, and only one of them deploys
+
+*Recorded 2026-08-18, after this cost a debugging session twice.*
+
+The app is deployed by **GitHub Actions** (`.github/workflows/deploy-cloudflare.yml`),
+which builds and runs `wrangler pages deploy dist`. That is the pipeline that
+ships, and its log is the one to read — a successful run says:
+
+```
+✨ Uploading _headers
+✨ Uploading Functions bundle          ← this line is /api/ai being deployed
+✨ Deployment complete! https://<hash>.wander-4hv.pages.dev
+```
+
+Cloudflare *also* offers to build from Git itself, and that second pipeline has
+now failed twice for the same underlying reason: **it is configured as a Workers
+build, and this repository is a Pages project.** Its symptoms differ, which is
+why it was not recognised the second time:
+
+| Symptom | Cause |
+|---|---|
+| `wrangler deploy` → "Missing entry-point" | a `wrangler.toml` existed, so the Git integration took the Workers path |
+| `wrangler versions upload` → "Missing entry-point" | a Worker with Workers Builds is connected to the repo directly |
+
+Both are the same shape: a Workers command asking for a `main` entry point,
+against a codebase whose server side is a *file-routed Pages Function*
+(`functions/api/ai.ts`) and therefore has none. Deleting `wrangler.toml` fixed
+the first; only disconnecting the Worker fixes the second. **Neither failure
+affects the deployed site** — they are a separate pipeline failing in parallel
+with a working one, which is exactly why they are confusing.
+
+**The consequence that actually bites: configuration must go on the Pages
+project, not on the Worker.** `AI_ENABLED` and the `AI` binding live under
+Pages → Settings; the same names set on a Worker of the same name are invisible
+to `/api/ai`, and the endpoint answers "switched off" with nothing to explain
+why. §4.2's "there is no key" makes this cheap to get wrong — there is no
+credential error to notice, only a feature that quietly declines.
+
+Note also that the public hostname is `wander-4hv.pages.dev`: Cloudflare
+suffixes the subdomain when the plain name is taken, and the project name
+(`wander`, set by `PROJECT_NAME` in the workflow) does not change with it.
+
+**When to revisit.** Pages is in maintenance mode, so migrating to Workers
+static assets — a `wrangler.jsonc` with `assets.directory`, and this handler
+rewritten as a `fetch` entry point — is the eventual destination, and it would
+make Cloudflare's own Git build the one that works. It is deliberately not done
+yet: it changes the runtime under the AI path for no capability the features
+need, and §5.1's whole argument is that the runtime-specific surface is small
+enough to move later. Do it when Pages actually forces the issue, not in the
+same week a feature starts depending on it.
+
 ### 5.2 Which client reads the data
 
 The critical decision. Get it wrong and the security boundary quietly moves from
@@ -858,7 +909,7 @@ src/features/itinerary/
 
 # No wrangler.toml: its presence makes Cloudflare's Git integration deploy with
 # `wrangler deploy` (Workers) instead of `wrangler pages deploy`. The Workers AI
-# binding is set in the Pages dashboard instead — see §4.2.
+# binding is set in the Pages dashboard instead — see §4.2 and §5.1.1.
 ```
 
 The split between `functions/api/ai.ts` and `src/server/ai/` is the insurance
