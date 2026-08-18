@@ -425,6 +425,29 @@ const POLL_SEED = {
 let pollsScenario = false
 let pollVotes = []
 
+// Packing items (#240): a stateful store, like budget_entries / messages /
+// itinerary_items / checklist_items above, so an item the quick-add POSTs — and
+// the packed-toggle PATCH that follows — survive the mutation's invalidate →
+// refetch and render. Scoped to `runPacking` via `packingScenario`: only while
+// that flag is set does /rest/v1/packing_items become a stateful store; every
+// other scenario keeps the empty read the packing page's mount does today (the
+// catch-all served [] before this route existed). usePacking reads
+// `select('*').eq('trip_id',…).order('position').order('created_at')`; the create
+// insert() takes no `.select()` (return=minimal → bare 201) and the packed toggle
+// is `update({ packed }).eq('id',…)` with no `.select()` either.
+const PACKING_SEED_ITEM = {
+  id: 'pack-seed-1',
+  trip_id: TRIP_ID,
+  name: 'Passport',
+  category: 'documents',
+  packed: false,
+  added_by: OWNER_MEMBER.id,
+  position: 1,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let packingScenario = false
+let packingItems = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -685,6 +708,47 @@ async function routeSupabase(route) {
       return json([]) // no `.select()` → return=minimal
     }
     if (method === 'GET') return json([...checklistItems])
+    return json([]) // DELETE unused by this scenario
+  }
+
+  // Packing items — two modes on one endpoint:
+  //   • Default (every other scenario): an empty read, exactly the catch-all
+  //     behavior the packing route relied on before (so a lazily-mounted packing
+  //     surface never errors). Writes are unused.
+  //   • Packing scenario (#240, `packingScenario` set): a stateful store like
+  //     budget_entries / messages / itinerary_items / checklist_items, so a
+  //     quick-added item and the packed-toggle PATCH survive the invalidate →
+  //     refetch and render. useAddPackingItem's insert() has no `.select()`
+  //     (return=minimal → bare 201); useTogglePacked's update({ packed }).eq('id',…)
+  //     has none either (return=minimal). Scoped so other scenarios stay empty.
+  if (pathname.endsWith('/rest/v1/packing_items')) {
+    if (!packingScenario) {
+      if (method === 'GET') return json([])
+      return json([]) // insert/update/delete unused by those scenarios
+    }
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = packingItems.length + 1
+      packingItems.push({
+        id: `pack-${n}`,
+        packed: false,
+        added_by: null,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+      })
+      return route.fulfill({ status: 201, body: '' })
+    }
+    if (method === 'PATCH') {
+      // update({ packed }).eq('id', id): the target id rides in the query string,
+      // and the patch (packed from the toggle) merges into the stored row so the
+      // refetch keeps it in its new state.
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      const patch = Array.isArray(body) ? body[0] : body
+      const row = packingItems.find((i) => i.id === id)
+      if (row) Object.assign(row, patch)
+      return json([]) // no `.select()` → return=minimal
+    }
+    if (method === 'GET') return json([...packingItems])
     return json([]) // DELETE unused by this scenario
   }
 
@@ -1712,6 +1776,102 @@ async function runChecklist(browser) {
 }
 
 /*
+  Packing surface (#240).
+
+  The packing list — the shared "so nobody forgets the adapter" surface every
+  traveler builds before a trip — is backed by `packing_items` and rendered by
+  PackingPage, yet had no smoke coverage: the harness served only an empty
+  read-only /rest/v1/packing_items. A regression in the add write or the
+  packed-toggle (or the per-category progress they feed) could reach `main`
+  unnoticed. This drives the real PackingPage end to end against the stubbed
+  Supabase: a seeded item proves the surface reads from the route, quick-adding
+  one exercises the create POST (asserting its payload shape), and ticking it
+  exercises the packed PATCH — asserting the toggle payload and the rendered
+  state flip. It stays on the deterministic, network-stubbed path the rest of the
+  suite uses; the weather-nudge render (which reads the shared forecast) is out
+  of the floor and degrades to nothing without a forecast, so it never blocks.
+*/
+async function runPacking(browser) {
+  console.log('\n▶ packing (add an item, toggle it packed)')
+  packingScenario = true
+  packingItems = [{ ...PACKING_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/packing`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded item prove the surface renders from the
+    // /rest/v1/packing_items route (not an empty list).
+    await page
+      .getByRole('heading', { name: 'Packing' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Passport').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the packing surface renders an item from the packing_items route')
+
+    // Adding: the Clothes category's quick-add input takes a name; submitting the
+    // form POSTs to /rest/v1/packing_items and the stateful store lets the
+    // invalidate → refetch bring the new row back so it renders in that section.
+    const added = 'Rain jacket'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/packing_items') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    const clothesInput = page.getByPlaceholder(/Add to clothes/i)
+    await clothesInput.waitFor({ state: 'visible', timeout: 10_000 })
+    await clothesInput.fill(added)
+    await clothesInput.press('Enter')
+
+    // The POST carries the trip id, the adder's member id, the typed name, and the
+    // chosen category — the packing write's payload shape (#240 floor).
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.added_by !== OWNER_MEMBER.id ||
+      payload?.name !== added ||
+      payload?.category !== 'clothes'
+    ) {
+      throw new Error(`packing POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('adding posts a packing item with trip, adder, name, and category')
+
+    // After the refetch the new item renders in an unpacked state — its checkbox
+    // offers to mark it packed.
+    const packBox = page.getByRole('checkbox', { name: `Mark ${added} packed` })
+    await packBox.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an added item renders in its unpacked state')
+
+    // Toggling: ticking the checkbox PATCHes packed:true (useTogglePacked); the
+    // optimistic flip plus the refetch leave it rendered in its packed state.
+    const packedPatch = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/packing_items') && req.method() === 'PATCH',
+      { timeout: 10_000 }
+    )
+    await packBox.click()
+    const patchPayload = (await packedPatch).postDataJSON()
+    if (patchPayload?.packed !== true) {
+      throw new Error(`packing toggle PATCH payload wrong: ${JSON.stringify(patchPayload)}`)
+    }
+    ok('toggling an item PATCHes packed:true')
+
+    // The row now reads as packed — its checkbox aria-label flips to "unpacked",
+    // which only renders once the toggle has taken effect.
+    await page
+      .getByRole('checkbox', { name: `Mark ${added} unpacked` })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a packed item renders in its packed state')
+
+    if (errors.length) throw new Error(`Uncaught page error on the packing page: ${errors[0]}`)
+    ok('the packing flow raised no uncaught errors')
+  } finally {
+    packingScenario = false
+    packingItems = []
+    await context.close()
+  }
+}
+
+/*
   Polls surface (#239).
 
   Regular polls — the group-decision primitive where friends actually agree on
@@ -2158,6 +2318,7 @@ async function main() {
     await runChat(browser)
     await runItinerary(browser)
     await runChecklist(browser)
+    await runPacking(browser)
     await runPolls(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
