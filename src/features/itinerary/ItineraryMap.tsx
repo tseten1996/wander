@@ -11,7 +11,7 @@ import { formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { haversineKm } from '@/lib/geo'
 import {
-  fetchNearbyPlaces, snapCenter, POI_CATEGORY_LABEL,
+  fetchNearbyPlaces, mergeNearbyPlaces, snapCenter, POI_CATEGORY_LABEL,
   type NearbyPlace, type PoiCategory,
 } from '@/lib/places'
 import { PERSIST_MAX_AGE } from '@/lib/queryClient'
@@ -167,6 +167,12 @@ function popupContent(item: ItineraryItem, info: DayInfo, onOpen: () => void): H
 /** Search radius for Nearby, in metres — a walkable neighbourhood. Named
  *  because it is part of the cache key (#219), not just a call argument. */
 const NEARBY_RADIUS_M = 1500
+
+/** The small ring fetched alongside the full one (#251): a ~500 m query is
+ *  cheap enough for a busy Overpass mirror to answer almost immediately, so
+ *  the first pins appear while the full-radius search is still running. Part
+ *  of the cache key for the same reason as `NEARBY_RADIUS_M`. */
+const NEARBY_INNER_RADIUS_M = 500
 
 // Nearby suggestion pins are deliberately unlike the solid, numbered day pins:
 // a hollow ring on a surface fill, tinted per category. Colour is backed up by
@@ -357,6 +363,10 @@ export default function ItineraryMap({
   const [nearbyOn, setNearbyOn] = React.useState(false)
   const [searchCenter, setSearchCenter] = React.useState<{ lat: number; lon: number } | null>(null)
   const nearbyLayerRef = React.useRef<L.LayerGroup | null>(null)
+  // Suggestion markers by place id, plus the centre they were drawn for, so
+  // the reconcile effect below can diff instead of clear-and-redraw (#251).
+  const nearbyMarkersRef = React.useRef<Map<string, L.Marker>>(new Map())
+  const nearbyCenterKeyRef = React.useRef<string | null>(null)
   const nearbyOnRef = React.useRef(nearbyOn)
   React.useLayoutEffect(() => {
     nearbyOnRef.current = nearbyOn
@@ -373,23 +383,41 @@ export default function ItineraryMap({
     [searchCenter],
   )
 
-  const nearby = useQuery({
-    // `radiusMeters` belongs in the key even though it is constant today: the
-    // moment it becomes a control, an omitted radius would serve 1500 m results
-    // for a tighter search with nothing to notice it.
-    queryKey: ['nearby_places', snapped?.lat, snapped?.lon, NEARBY_RADIUS_M],
-    queryFn: ({ signal }) =>
-      fetchNearbyPlaces(snapped!, { radiusMeters: NEARBY_RADIUS_M }, signal),
+  // Two independently-completing rings instead of one blocking query (#251):
+  // the inner ring is small enough for a busy mirror to answer fast, so its
+  // pins render while the full ring is still executing server-side (the wait
+  // is Overpass query execution, not payload — the response is a few KB).
+  // `radiusMeters` belongs in each key even though it is constant today: the
+  // moment it becomes a control, an omitted radius would serve stale-radius
+  // results with nothing to notice it. OSM POIs change on a timescale of
+  // months, so both rings cache hard: `gcTime` matching the persister's
+  // maxAge is the load-bearing part — anything shorter is collected before
+  // the snapshot can restore it, so suggestions never survived a reload.
+  const nearbyRingOpts = {
     enabled: nearbyOn && !!snapped,
-    // OSM POIs change on a timescale of months, so the old 30 min / 1 h pair was
-    // far tighter than the data warrants. `gcTime` matching the persister's
-    // maxAge is the load-bearing part: anything shorter is collected before the
-    // snapshot can restore it, so suggestions never survived a reload.
     staleTime: PERSIST_MAX_AGE,
     gcTime: PERSIST_MAX_AGE,
     retry: false,
     refetchOnWindowFocus: false,
+  } as const
+  const nearbyInner = useQuery({
+    queryKey: ['nearby_places', snapped?.lat, snapped?.lon, NEARBY_INNER_RADIUS_M],
+    queryFn: ({ signal }) =>
+      fetchNearbyPlaces(snapped!, { radiusMeters: NEARBY_INNER_RADIUS_M }, signal),
+    ...nearbyRingOpts,
   })
+  const nearbyOuter = useQuery({
+    queryKey: ['nearby_places', snapped?.lat, snapped?.lon, NEARBY_RADIUS_M],
+    queryFn: ({ signal }) =>
+      fetchNearbyPlaces(snapped!, { radiusMeters: NEARBY_RADIUS_M }, signal),
+    ...nearbyRingOpts,
+  })
+  // Inner first: pins already on screen keep their identity when the wider
+  // ring lands, and the closest places win the 24-place cap.
+  const nearbyPlaces = React.useMemo(
+    () => mergeNearbyPlaces(nearbyInner.data ?? [], nearbyOuter.data ?? []),
+    [nearbyInner.data, nearbyOuter.data],
+  )
 
   const toggleNearby = React.useCallback(() => {
     setNearbyOn((on) => {
@@ -438,6 +466,8 @@ export default function ItineraryMap({
       layerRef.current = null
       nearbyLayerRef.current = null
       markersRef.current = new Map()
+      nearbyMarkersRef.current = new Map()
+      nearbyCenterKeyRef.current = null
     }
   }, [hasPins])
 
@@ -524,18 +554,32 @@ export default function ItineraryMap({
     }
   }, [selectedId, located])
 
-  // (Re)draw suggestion markers when the results, the toggle, or the searched
-  // point changes. Cleared entirely when Nearby is off so turning it off leaves
-  // a clean itinerary map.
-  const nearbyPlaces = nearby.data
+  // Reconcile suggestion markers against the merged results instead of
+  // clear-and-redraw (#251): the outer ring landing must *add* pins around the
+  // inner ring's, not rebuild them (an open popup would close, and every pin
+  // would flicker). A new tap or toggling off still clears everything — popup
+  // distances are measured from the tapped point, so a moved centre
+  // invalidates every existing popup anyway.
   React.useEffect(() => {
     const map = mapRef.current
     const layer = nearbyLayerRef.current
     if (!map || !layer) return
-    layer.clearLayers()
-    if (!nearbyOn) return
     const center = searchCenter
-    for (const place of nearbyPlaces ?? []) {
+    const centerKey = nearbyOn && center ? `${center.lat},${center.lon}` : null
+    if (centerKey !== nearbyCenterKeyRef.current) {
+      layer.clearLayers()
+      nearbyMarkersRef.current = new Map()
+      nearbyCenterKeyRef.current = centerKey
+    }
+    if (!nearbyOn) return
+    const keep = new Set(nearbyPlaces.map((p) => p.id))
+    for (const [id, marker] of nearbyMarkersRef.current) {
+      if (keep.has(id)) continue
+      layer.removeLayer(marker)
+      nearbyMarkersRef.current.delete(id)
+    }
+    for (const place of nearbyPlaces) {
+      if (nearbyMarkersRef.current.has(place.id)) continue
       const marker = L.marker([place.lat, place.lon], {
         icon: nearbyPinIcon(place.category),
         title: `${place.name} — ${POI_CATEGORY_LABEL[place.category]}`,
@@ -554,6 +598,7 @@ export default function ItineraryMap({
         }),
       )
       marker.addTo(layer)
+      nearbyMarkersRef.current.set(place.id, marker)
     }
   }, [nearbyPlaces, nearbyOn, searchCenter])
 
@@ -579,31 +624,52 @@ export default function ItineraryMap({
               className="rounded-xl border border-line bg-sunken/40 px-3 py-2.5 text-xs"
               aria-live="polite"
             >
-              {nearby.isLoading ? (
-                <span className="flex items-center gap-2 text-muted">
-                  <Spinner className="size-4" /> Finding places nearby…
-                </span>
-              ) : nearby.isError ? (
+              {nearbyInner.isError && nearbyOuter.isError ? (
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
                   Couldn’t load suggestions right now — the map still works.
                   <button
                     type="button"
-                    onClick={() => nearby.refetch()}
+                    onClick={() => {
+                      nearbyInner.refetch()
+                      nearbyOuter.refetch()
+                    }}
                     className="font-medium text-primary underline-offset-2 hover:underline"
                   >
                     Try again
                   </button>
                 </span>
-              ) : (nearby.data?.length ?? 0) === 0 ? (
+              ) : nearbyPlaces.length === 0 &&
+                (nearbyInner.isLoading || nearbyOuter.isLoading) ? (
+                <span className="flex items-center gap-2 text-muted">
+                  <Spinner className="size-4" /> Finding places nearby…
+                </span>
+              ) : nearbyPlaces.length === 0 ? (
                 <span className="text-muted">
-                  No suggestions here — tap the map to search a different spot.
+                  {nearbyOuter.isError
+                    ? 'Couldn’t search the full area — '
+                    : 'No suggestions here — '}
+                  tap the map to search a different spot.
                 </span>
               ) : (
                 <div className="space-y-2">
                   <p className="text-muted">
-                    {nearby.data!.length} {nearby.data!.length === 1 ? 'place' : 'places'} nearby ·
-                    tap a pin to add it · tap the map to search elsewhere
+                    {nearbyPlaces.length} {nearbyPlaces.length === 1 ? 'place' : 'places'}{' '}
+                    {nearbyOuter.isLoading
+                      ? 'so far · still searching the wider area…'
+                      : 'nearby · tap a pin to add it · tap the map to search elsewhere'}
                   </p>
+                  {nearbyOuter.isError && (
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
+                      These are just the closest spots — the wider search didn’t load.
+                      <button
+                        type="button"
+                        onClick={() => nearbyOuter.refetch()}
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                      >
+                        Try again
+                      </button>
+                    </p>
+                  )}
                   <NearbyLegend />
                 </div>
               )}

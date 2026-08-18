@@ -97,16 +97,53 @@ export function parseOverpassElements(elements: unknown, limit = 24): NearbyPlac
       !Number.isFinite(lat) || !Number.isFinite(lon)
     ) continue
 
-    const id = `${el.type ?? 'node'}/${el.id ?? `${lat},${lon}`}`
-    const dedupeKey = `${category}:${name.toLowerCase()}@${lat.toFixed(4)},${lon.toFixed(4)}`
-    if (seen.has(id) || seen.has(dedupeKey)) continue
-    seen.add(id)
-    seen.add(dedupeKey)
+    const place: NearbyPlace = {
+      id: `${el.type ?? 'node'}/${el.id ?? `${lat},${lon}`}`,
+      name, category, lat, lon,
+    }
+    const [idKey, spotKey] = placeDedupeKeys(place)
+    if (seen.has(idKey) || seen.has(spotKey)) continue
+    seen.add(idKey)
+    seen.add(spotKey)
 
-    places.push({ id, name, category, lat, lon })
+    places.push(place)
     if (places.length >= limit) break
   }
   return places
+}
+
+/**
+ * The two identities a place de-duplicates on: its OSM id, and its
+ * name+coarse-coords (a way and its node sharing a spot, or a chain
+ * duplicate). Shared between a single response's parse and the cross-response
+ * merge so the two can never disagree about what "the same place" means.
+ */
+function placeDedupeKeys(p: NearbyPlace): [string, string] {
+  return [p.id, `${p.category}:${p.name.toLowerCase()}@${p.lat.toFixed(4)},${p.lon.toFixed(4)}`]
+}
+
+/**
+ * Union two result sets into one de-duplicated list, `first` before `second`,
+ * capped at `limit`. Order is the contract: the caller passes the inner-ring
+ * results first so pins already on screen keep their identity and position
+ * when the wider ring lands, and the closest places win the cap.
+ */
+export function mergeNearbyPlaces(
+  first: NearbyPlace[],
+  second: NearbyPlace[],
+  limit = 24,
+): NearbyPlace[] {
+  const seen = new Set<string>()
+  const merged: NearbyPlace[] = []
+  for (const place of [...first, ...second]) {
+    const [idKey, spotKey] = placeDedupeKeys(place)
+    if (seen.has(idKey) || seen.has(spotKey)) continue
+    seen.add(idKey)
+    seen.add(spotKey)
+    merged.push(place)
+    if (merged.length >= limit) break
+  }
+  return merged
 }
 
 /** Build the bounded-radius Overpass QL for eat/see/drink POIs around a point. */
@@ -199,11 +236,100 @@ export interface NearbyOptions {
 }
 
 /**
+ * How long a mirror gets to itself before a competitor is started (#251).
+ * The old serial fallback waited out each mirror's full [timeout:15] before
+ * trying the next — up to ~45 s of spinner across three mirrors. Hedging
+ * bounds that tail: a mirror that hasn't answered in this window is probably
+ * queued or overloaded, so the next one starts *alongside* it and whichever
+ * answers first wins. The extra request only ever exists when a mirror is
+ * actually slow, which keeps the added load on these volunteer-run instances
+ * marginal.
+ */
+export const MIRROR_HEDGE_MS = 4000
+
+/**
+ * Race `attempts` with staggered starts: the first begins immediately, each
+ * subsequent one after `hedgeDelayMs` — or right away when a running attempt
+ * fails, since a definite failure shouldn't leave the user waiting out the
+ * hedge timer. First fulfillment wins and aborts the rest (via the
+ * per-attempt signal); rejects with the last error only when every attempt
+ * has failed. `signal` is the caller's abort — it cancels everything.
+ */
+export function hedgedRace<T>(
+  attempts: Array<(signal: AbortSignal) => Promise<T>>,
+  hedgeDelayMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const controllers: AbortController[] = []
+    let started = 0
+    let running = 0
+    let done = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let lastError: unknown = new Error('Nearby suggestions unavailable')
+
+    const finish = (settle: () => void) => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      for (const c of controllers) c.abort()
+      settle()
+    }
+    const onAbort = () =>
+      finish(() =>
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new DOMException('Aborted', 'AbortError'),
+        ),
+      )
+
+    const armHedge = () => {
+      if (done || started >= attempts.length) return
+      timer = setTimeout(() => {
+        startNext()
+        armHedge()
+      }, hedgeDelayMs)
+    }
+    const startNext = () => {
+      if (done || started >= attempts.length) return
+      const controller = new AbortController()
+      controllers.push(controller)
+      running++
+      attempts[started++](controller.signal).then(
+        (value) => finish(() => resolve(value)),
+        (err) => {
+          running--
+          if (done) return
+          lastError = err
+          if (started < attempts.length) {
+            if (timer) clearTimeout(timer)
+            startNext()
+            armHedge()
+          } else if (running === 0) {
+            finish(() => reject(lastError))
+          }
+        },
+      )
+    }
+
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    startNext()
+    armHedge()
+  })
+}
+
+/**
  * Fetch categorized POIs around `center` from OpenStreetMap via Overpass,
- * trying each public mirror until one answers. Resolves to the parsed places
- * (possibly empty — a real "nothing here"); throws only when every mirror
- * fails or the request is aborted, so the calling TanStack Query degrades to a
- * quiet "suggestions unavailable" rather than breaking the map.
+ * hedging across the public mirrors (see `hedgedRace`). Resolves to the
+ * parsed places (possibly empty — a real "nothing here"); throws only when
+ * every mirror fails or the request is aborted, so the calling TanStack Query
+ * degrades to a quiet "suggestions unavailable" rather than breaking the map.
  */
 export async function fetchNearbyPlaces(
   center: { lat: number; lon: number },
@@ -211,32 +337,23 @@ export async function fetchNearbyPlaces(
   signal?: AbortSignal,
 ): Promise<NearbyPlace[]> {
   const body = `data=${encodeURIComponent(buildOverpassQuery(center, radiusMeters))}`
-  let lastError: unknown = new Error('Nearby suggestions unavailable')
-
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
+  return hedgedRace(
+    OVERPASS_ENDPOINTS.map((endpoint) => async (attemptSignal: AbortSignal) => {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
-        signal,
+        signal: attemptSignal,
       })
-      // 429 (rate-limited) / 504 (busy) are Overpass's "try again elsewhere"
-      // signals — fall through to the next mirror instead of failing outright.
-      if (!res.ok) {
-        lastError = new Error(`Overpass returned ${res.status}`)
-        continue
-      }
+      // 429 (rate-limited) / 504 (busy) are Overpass's "try elsewhere" signals
+      // — throwing hands this mirror's loss to the race, which starts the next.
+      if (!res.ok) throw new Error(`Overpass returned ${res.status}`)
       const data: unknown = await res.json()
       const elements =
         data && typeof data === 'object' ? (data as { elements?: unknown }).elements : undefined
       return parseOverpassElements(elements, limit)
-    } catch (err) {
-      // A caller-driven abort (navigated away / searched elsewhere) must
-      // propagate immediately, not be masked as a mirror failure.
-      if (signal?.aborted) throw err
-      lastError = err
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('Nearby suggestions unavailable')
+    }),
+    MIRROR_HEDGE_MS,
+    signal,
+  )
 }

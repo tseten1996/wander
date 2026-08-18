@@ -10,13 +10,15 @@
  *
  *   node --test tests/places.test.mjs      # or: npm run test:unit
  */
-import { test } from 'node:test'
+import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   categorizePoi,
   parseOverpassElements,
   buildOverpassQuery,
   snapCenter,
+  mergeNearbyPlaces,
+  hedgedRace,
   NEARBY_SNAP_DP,
   POI_CATEGORY_LABEL,
 } from '../src/lib/places.ts'
@@ -157,6 +159,121 @@ test('snapCenter wraps a map panned past the edge of the world', () => {
 test('snapCenter clamps an impossible latitude rather than passing it to Overpass', () => {
   assert.equal(snapCenter({ lat: 95, lon: 0 }).lat, 90)
   assert.equal(snapCenter({ lat: -95, lon: 0 }).lat, -90)
+})
+
+/* ── mergeNearbyPlaces: the two-ring union (#251) ─────────────────────────── */
+
+const place = (id, name, lat, lon, category = 'eat') => ({ id, name, category, lat, lon })
+
+test('mergeNearbyPlaces keeps first-ring order, then appends new places', () => {
+  const inner = [place('node/1', 'Café A', 40.0, 2.0), place('node/2', 'Bar B', 40.001, 2.0, 'drink')]
+  const outer = [place('node/3', 'Museum C', 40.01, 2.01, 'see'), place('node/1', 'Café A', 40.0, 2.0)]
+  const merged = mergeNearbyPlaces(inner, outer)
+  assert.deepEqual(
+    merged.map((p) => p.id),
+    ['node/1', 'node/2', 'node/3'],
+    'inner pins keep their position; outer adds only what is new',
+  )
+})
+
+test('mergeNearbyPlaces de-dupes across rings by id and by name+coarse-coords', () => {
+  // The same café can come back as a node in one response and a way (with a
+  // nearly identical centre) in the other — that is one place, not two pins.
+  const inner = [place('node/7', 'Bar Central', 40.0, 2.0, 'drink')]
+  const outer = [place('way/8', 'Bar Central', 40.00001, 2.00001, 'drink')]
+  assert.equal(mergeNearbyPlaces(inner, outer).length, 1)
+})
+
+test('mergeNearbyPlaces honours the cap, closest (first) ring winning', () => {
+  const inner = Array.from({ length: 20 }, (_, i) => place(`node/i${i}`, `Inner ${i}`, 10 + i, 20))
+  const outer = Array.from({ length: 20 }, (_, i) => place(`node/o${i}`, `Outer ${i}`, 50 + i, 20))
+  const merged = mergeNearbyPlaces(inner, outer, 24)
+  assert.equal(merged.length, 24)
+  assert.equal(merged.filter((p) => p.id.startsWith('node/i')).length, 20, 'every inner place kept')
+})
+
+test('mergeNearbyPlaces tolerates empty rings', () => {
+  assert.deepEqual(mergeNearbyPlaces([], []), [])
+  const only = [place('node/1', 'Solo', 1, 1)]
+  assert.deepEqual(mergeNearbyPlaces(only, []), only)
+  assert.deepEqual(mergeNearbyPlaces([], only), only)
+})
+
+/* ── hedgedRace: staggered mirror fan-out (#251) ──────────────────────────── */
+
+test('hedgedRace resolves with the first attempt when it answers', async () => {
+  let secondStarted = false
+  const value = await hedgedRace(
+    [async () => 'first', async () => { secondStarted = true; return 'second' }],
+    60_000,
+  )
+  assert.equal(value, 'first')
+  assert.equal(secondStarted, false, 'no hedge fired for a fast mirror')
+})
+
+test('hedgedRace starts a competitor after the hedge delay and takes its answer', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    let secondStarted = false
+    const stall = () => new Promise(() => {})
+    const p = hedgedRace([stall, async () => { secondStarted = true; return 'second' }], 4000)
+    assert.equal(secondStarted, false, 'competitor waits out the hedge delay')
+    mock.timers.tick(4000)
+    assert.equal(await p, 'second')
+    assert.ok(secondStarted)
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('hedgedRace recruits the next mirror immediately on failure — no hedge wait', async () => {
+  // A 429/504 is a definite "try elsewhere"; the user must not sit out the
+  // hedge timer on top of it. The huge delay proves the timer wasn't needed.
+  const value = await hedgedRace(
+    [async () => { throw new Error('Overpass returned 429') }, async () => 'ok'],
+    60_000,
+  )
+  assert.equal(value, 'ok')
+})
+
+test('hedgedRace rejects with the last error only after every attempt fails', async () => {
+  await assert.rejects(
+    hedgedRace(
+      [async () => { throw new Error('mirror a down') }, async () => { throw new Error('mirror b down') }],
+      60_000,
+    ),
+    /mirror b down/,
+  )
+})
+
+test('hedgedRace aborts the losers once a winner resolves', async () => {
+  let loserAborted = false
+  const loser = (signal) =>
+    new Promise((_, rejectAttempt) => {
+      signal.addEventListener('abort', () => {
+        loserAborted = true
+        rejectAttempt(new DOMException('Aborted', 'AbortError'))
+      })
+    })
+  const value = await hedgedRace([loser, async () => 'winner'], 0)
+  assert.equal(value, 'winner')
+  assert.ok(loserAborted, 'the stalled mirror was cancelled, not left running')
+})
+
+test('hedgedRace propagates a caller abort to every attempt', async () => {
+  let attemptAborted = false
+  const controller = new AbortController()
+  const stall = (signal) =>
+    new Promise((_, rejectAttempt) => {
+      signal.addEventListener('abort', () => {
+        attemptAborted = true
+        rejectAttempt(new DOMException('Aborted', 'AbortError'))
+      })
+    })
+  const p = assert.rejects(hedgedRace([stall], 60_000, controller.signal))
+  controller.abort()
+  await p
+  assert.ok(attemptAborted)
 })
 
 test('snapCenter cell stays small against the 1500 m search radius', () => {
