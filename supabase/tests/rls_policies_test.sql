@@ -426,6 +426,42 @@ select pg_temp.expect_count('record_ai_usage: row is attributed to the caller', 
 -- guardrail #3 exists to prevent. Member F, impersonated with an anonymous JWT.
 select pg_temp.expect_dml('record_ai_usage: anonymous member may append',   'aaaa0000-0000-0000-0000-000000000002', true, $$select record_ai_usage('bbbb0000-0000-0000-0000-000000000001','parse_booking')$$, 1);
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- get_ai_day_context — the AI read path (#213)
+--
+-- The contrast with record_ai_usage above is the whole point. That one is
+-- SECURITY DEFINER because appending an audit row genuinely needs privilege;
+-- this one is SECURITY INVOKER because reading your own trip does not. The
+-- consequence is what these checks assert: the Pages Function can be handed any
+-- trip id at all and still cannot read a day it has no business seeing, because
+-- the caller's own policies decide, not the function's.
+-- ─────────────────────────────────────────────────────────────────────────────
+insert into public.itinerary_items (id, trip_id, title, category, day, start_time, end_time, created_by) values
+  ('dddd0000-0000-0000-0000-0000000000a1', 'bbbb0000-0000-0000-0000-000000000001', 'Louvre',   'activity', '2026-09-04', '09:00', '11:00', 'cccc0000-0000-0000-0000-000000000002'),
+  ('dddd0000-0000-0000-0000-0000000000a2', 'bbbb0000-0000-0000-0000-000000000001', 'Orsay',    'activity', '2026-09-04', '14:00', '16:00', 'cccc0000-0000-0000-0000-000000000002'),
+  -- A stay spanning the day, to prove the span branch is reached (#166).
+  ('dddd0000-0000-0000-0000-0000000000a3', 'bbbb0000-0000-0000-0000-000000000001', 'Hotel',    'hotel',    '2026-09-02', '15:00', null, 'cccc0000-0000-0000-0000-000000000002'),
+  ('dddd0000-0000-0000-0000-0000000000a4', 'bbbb0000-0000-0000-0000-000000000001', 'Other day','activity', '2026-09-05', '09:00', '10:00', 'cccc0000-0000-0000-0000-000000000002');
+update public.itinerary_items set end_day = '2026-09-06' where id = 'dddd0000-0000-0000-0000-0000000000a3';
+
+-- A member gets the day: two dated items plus the stay that covers it, and
+-- nothing from the day after.
+select pg_temp.expect_count('get_ai_day_context: member sees the day',        'aaaa0000-0000-0000-0000-000000000002', false, $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'items')$$, 3);
+
+-- The isolation check. A non-member calling with a real trip id gets an empty
+-- day rather than someone else's — RLS, not an argument check, is what stops it.
+select pg_temp.expect_count('get_ai_day_context: non-member gets an empty day','aaaa0000-0000-0000-0000-000000000005', false, $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'items')$$, 0);
+select pg_temp.expect_count('get_ai_day_context: A-member cannot read B',      'aaaa0000-0000-0000-0000-000000000002', false, $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000002','2026-09-04')->'items')$$, 0);
+
+-- An invite-link friend holds an anonymous session and must be able to use the
+-- feature, exactly as with record_ai_usage.
+select pg_temp.expect_count('get_ai_day_context: anonymous member may read',   'aaaa0000-0000-0000-0000-000000000002', true,  $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'items')$$, 3);
+
+-- Never put a person in the context (docs/AI-ARCHITECTURE.md §6). This is the
+-- enforcement point: a field that is never selected cannot be forgotten later,
+-- so assert the shape carries no attribution and no free text.
+select pg_temp.expect_count('get_ai_day_context: carries no person or notes',  'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from jsonb_array_elements(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'items') e where e ?| array['created_by','notes','createdBy','paidBy']$$, 0);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.

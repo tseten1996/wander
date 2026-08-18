@@ -25,14 +25,17 @@
 */
 import {
   AiRequest,
+  DayPickResult,
   ParsedBookingResult,
   QUOTA_PER_TRIP,
   QUOTA_WINDOW_HOURS,
 } from './schemas'
-import type { AiResponse, Intent, RefusalReason } from './schemas'
-import { bookingParsePrompt } from './prompts'
+import type { AiResponse, Intent, ReasonSource, RefusalReason } from './schemas'
+import { bookingParsePrompt, improveDayPrompt } from './prompts'
 import { MODELS } from './provider'
 import type { ModelProvider } from './provider'
+import { planDay } from './day'
+import type { Candidate, DayItem, DayPlans } from './day'
 
 /** The slice of a Supabase client this module needs — so tests can pass a fake. */
 export interface Db {
@@ -47,7 +50,7 @@ export interface Db {
       }
     }
   }
-  rpc(fn: string, args: Record<string, unknown>): Promise<{ error: unknown }>
+  rpc(fn: string, args: Record<string, unknown>): Promise<{ data?: unknown; error: unknown }>
 }
 
 export interface HandlerDeps {
@@ -220,20 +223,7 @@ export async function handleAiRequest(
     return parseBooking(deps, request.tripId, request.text)
   }
 
-  // improve_day still has no model behind it — that is #213. Kept as an
-  // explicit stub rather than removed from the enum so the endpoint's shape
-  // does not change when it lands.
-  await record(deps, { tripId, feature: intent, outcome: 'ok' })
-
-  return {
-    status: 200,
-    body: {
-      ok: true,
-      intent,
-      result: { stub: true, note: 'No model is wired up yet.' },
-      usage: { inputTokens: 0, outputTokens: 0 },
-    },
-  }
+  return improveDay(deps, request.tripId, request.day)
 }
 
 /**
@@ -303,5 +293,209 @@ async function parseBooking(
   return {
     status: 200,
     body: { ok: true, intent: 'parse_booking', result: { booking: parsed.data }, usage },
+  }
+}
+
+/* ── improve_day (#213) ──────────────────────────────────────────────────── */
+
+/** A deterministic explanation, used when no model is called or its pick fails. */
+function computedReason(plan: Candidate, plans: DayPlans): string {
+  const parts: string[] = []
+  const saved = plans.baseline.travelKm - plan.travelKm
+  if (saved >= 0.1) parts.push(`saves about ${saved.toFixed(1)} km of travel`)
+  if (plans.baseline.conflicts > 0) {
+    parts.push(
+      `clears ${plans.baseline.conflicts} overlapping ${plans.baseline.conflicts === 1 ? 'item' : 'items'}`,
+    )
+  }
+  if (!parts.length) parts.push('groups nearby stops together')
+  const moved = `${plan.moved} ${plan.moved === 1 ? 'item moves' : 'items move'}`
+  return `This order ${parts.join(' and ')}. ${moved}, finishing at ${plan.endsAt}.`
+}
+
+const nothingToDo = (message: string, plans: DayPlans): HandlerResult => ({
+  status: 200,
+  body: {
+    ok: true,
+    intent: 'improve_day',
+    result: {
+      status: 'nothing',
+      message,
+      baseline: plans.baseline,
+      notes: plans.notes,
+      excluded: plans.excluded,
+    },
+    usage: { inputTokens: 0, outputTokens: 0 },
+  },
+})
+
+/**
+ * improve_day (#213): choose between plans this server generated.
+ *
+ * The expensive work happens before any model is considered. `get_ai_day_context`
+ * reads the day as the caller, `planDay` enumerates and scores every valid
+ * ordering, and only then — if there is genuinely more than one good answer —
+ * is a model asked which one and why.
+ *
+ * That gate is the cost control and it is not a policy someone has to
+ * remember. A day with nothing to fix, a day with one obvious fix, a day too
+ * short to reorder: each returns without a call. The model earns its tokens
+ * only when the output is a judgement, which is §7's rule made mechanical.
+ *
+ * AUTHORIZATION is a property of where the plan came from, not of a later
+ * check. Every action names an item that `get_ai_day_context` returned, and
+ * that function is SECURITY INVOKER — so the caller's own RLS policies decided
+ * what it could see. `itinerary_update` requires only trip membership, which
+ * this request already proved. There is therefore no action in a plan that the
+ * caller could not have performed by hand, which is exactly the bar a
+ * suggestion has to clear.
+ */
+async function improveDay(
+  deps: HandlerDeps,
+  tripId: string,
+  day: string,
+): Promise<HandlerResult> {
+  const feature = 'improve_day'
+
+  let context: {
+    items?: DayItem[]
+    leg?: { name?: string | null } | null
+  } | null
+  try {
+    const { data, error } = await deps.db.rpc('get_ai_day_context', {
+      p_trip_id: tripId,
+      p_day: day,
+    })
+    if (error || !data) {
+      return refuse('unavailable', 'Could not read that day just now. Please try again.', 503)
+    }
+    context = data as typeof context
+  } catch {
+    return refuse('unavailable', 'Could not read that day just now. Please try again.', 503)
+  }
+
+  const items = Array.isArray(context?.items) ? context.items : []
+  const plans = planDay(items, day)
+
+  // No candidates is the common, free answer: the day is already sensible, or
+  // there is nothing in it to reorder. Deliberately not a refusal — "there is
+  // nothing to improve here" is a useful result, and no row is written because
+  // no call was made.
+  // Every path from here writes a usage row, including the ones that call no
+  // model. The row costs a little quota for a free answer, which is the point:
+  // reading a day is still an authenticated round trip to Postgres, and the
+  // per-trip quota is the only bound on what a leaked invite link can drive.
+  // A ledger that only counted model calls would leave that traffic invisible.
+  const free = { model: '', inputTokens: 0, outputTokens: 0 }
+
+  if (plans.candidates.length === 0) {
+    await record(deps, { tripId, feature, outcome: 'ok', ...free })
+    return nothingToDo(
+      plans.baseline.total < 2
+        ? 'There is not enough in this day to rearrange yet.'
+        : 'This day already looks well ordered — nothing worth moving.',
+      plans,
+    )
+  }
+
+  const top = plans.candidates[0]
+
+  // Exactly one viable plan is not a judgement, it is an answer — and a model
+  // is only worth paying for judgement (§7). No plans is free; one plan is
+  // free; the call happens when there is genuinely something to choose.
+  //
+  // The same fallback covers a runtime with no binding: the plans are ours and
+  // cost nothing, so AI being off degrades the explanation, not the feature.
+  if (plans.candidates.length === 1 || !deps.provider) {
+    await record(deps, { tripId, feature, outcome: 'ok', ...free })
+    return suggestion(plans, top, computedReason(top, plans), 'computed', {
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+  }
+
+  const args = improveDayPrompt({
+    day,
+    placeName: context?.leg?.name ?? null,
+    baseline: plans.baseline,
+    candidates: plans.candidates.map((c) => ({
+      id: c.id,
+      order: c.order,
+      travelKm: c.travelKm,
+      moved: c.moved,
+      endsAt: c.endsAt,
+    })),
+    notes: plans.notes,
+  })
+  const model = MODELS[args.tier]
+
+  let completion
+  try {
+    completion = await deps.provider.complete(args)
+  } catch {
+    await record(deps, { tripId, feature, outcome: 'failed', model })
+    // Still a useful answer: the plans were never the model's to produce.
+    return suggestion(plans, top, computedReason(top, plans), 'computed', {
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+  }
+
+  const usage = { inputTokens: completion.inputTokens, outputTokens: completion.outputTokens }
+  const usageRow = { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
+
+  const picked = DayPickResult.safeParse(completion.json)
+  // An id outside the set we offered is as invalid as unparseable output — this
+  // is the line that makes "the model cannot author a plan" true rather than
+  // merely intended.
+  const chosen = picked.success
+    ? plans.candidates.find((c) => c.id === picked.data.planId)
+    : undefined
+
+  if (!picked.success || !chosen) {
+    await record(deps, { tripId, feature, outcome: 'failed', ...usageRow })
+    return suggestion(plans, top, computedReason(top, plans), 'computed', usage)
+  }
+
+  await record(deps, { tripId, feature, outcome: 'ok', ...usageRow })
+  return suggestion(plans, chosen, picked.data.reason, 'model', usage)
+}
+
+/** Shape one chosen plan for the preview card. */
+function suggestion(
+  plans: DayPlans,
+  plan: Candidate,
+  reason: string,
+  reasonSource: ReasonSource,
+  usage: { inputTokens: number; outputTokens: number },
+): HandlerResult {
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      intent: 'improve_day',
+      result: {
+        status: 'suggested',
+        reason,
+        reasonSource,
+        plan: {
+          id: plan.id,
+          actions: plan.actions,
+          sequence: plan.sequence,
+          order: plan.order,
+          travelKm: plan.travelKm,
+          moved: plan.moved,
+          endsAt: plan.endsAt,
+        },
+        // The alternatives travel with the suggestion so the card can say "2
+        // other orders were considered" — a suggestion that hides its rivals
+        // reads as an oracle rather than a choice.
+        alternatives: plans.candidates.filter((c) => c.id !== plan.id).length,
+        baseline: plans.baseline,
+        notes: plans.notes,
+        excluded: plans.excluded,
+      },
+      usage,
+    },
   }
 }

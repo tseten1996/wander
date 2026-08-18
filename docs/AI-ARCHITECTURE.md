@@ -769,7 +769,7 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 |---|---|---|---|---|
 | **0 · Foundation** | `ai_usage` + `record_ai_usage` RPC | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call, **no credentials** | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
 | **1 · Paste anything** ✅ | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
-| **2 · Improve this day** | `get_ai_day_context` | **Deterministic candidate generation** + model *selects and explains* (see below) | Preview cards, approve/reject, apply via existing mutations | High |
+| **2 · Improve this day** ✅ | `get_ai_day_context` | **Deterministic candidate generation** + model *selects and explains* (see below) | Preview cards, approve/reject, apply via existing mutations | High |
 | **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
 | **4 · Ask Wander** | Query RPCs per intent | Intent classification, deterministic answers first | Cmd-K row, single-turn, no history | High |
 | **5 · pgvector** | `vector` extension, embeddings | Semantic retrieval | — | Medium |
@@ -804,6 +804,26 @@ budget edits to the entry's creator or the trip owner. A suggestion that edits a
 budget entry must be authorized against *who is asking* before it is shown, or
 the preview will offer an action that then fails at the database.
 
+**How phase 2 landed, and where it differs from the plan.** Three things are
+worth recording because they were decided while building rather than before:
+
+1. **The gate is "is there a choice to make", not "did anything go wrong".**
+   #213's criteria said a day whose only issues are conflicts and travel should
+   never reach the model, which read as forbidding the feature's own purpose.
+   The coherent version is §7's rule made mechanical: no viable plan is free,
+   *one* viable plan is free (its explanation is arithmetic), and the call
+   happens only when several plans are genuinely competitive. `improve_day`
+   therefore works with AI switched off — it just explains itself by score.
+
+2. **An over-committed day is allowed to run later, and says so.** A day whose
+   items overlap needs more hours than it occupies; no reordering fixes that
+   inside the original span. The generator extends to 22:00 at the latest,
+   never earlier than the group's own first stop, and reports the change.
+
+3. **Travel time is left in the schedule.** Packing stops back to back would let
+   a plan win on paper by assuming the group teleports — the arithmetic version
+   of the mistake both measured models made.
+
 ---
 
 ## 13. Folder structure
@@ -821,7 +841,7 @@ functions/                 # Cloudflare Pages Functions — file-routed
 src/server/ai/             # plain TypeScript — runs on Workers, Deno or Node
   handler.ts               # auth, quota, kill switch, dispatch, usage logging
   schemas.ts               # zod request/response/action contracts
-  context.ts               # context builder + token budgeting  (phase 2)
+  day.ts                   # candidate day plans, generated + scored (phase 2)
   prompts.ts               # system prompts, one per intent      (phase 1)
   provider.ts              # model call + structured output       (phase 1)
 
@@ -834,6 +854,7 @@ src/features/itinerary/
                            # into a ParsedBooking, or into nothing. Lives with
                            # the feature, not in features/ai/, because it knows
                            # the itinerary's shapes and features/ai/ must not.
+  ImproveDay.tsx           # phase 2's preview card + apply path
 
 # No wrangler.toml: its presence makes Cloudflare's Git integration deploy with
 # `wrangler deploy` (Workers) instead of `wrangler pages deploy`. The Workers AI

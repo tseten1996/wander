@@ -32,6 +32,7 @@ import { overlapsByItem } from './overlap'
 import { coveredDays, isSpanning, spanPosition } from './spans'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
 import { aiParseDisabled, useAiParseBooking } from './aiParse'
+import { ImproveDayAction } from './ImproveDay'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { ItemBudgetLink } from './BudgetLink'
 import { searchAnchorId } from '@/features/search/anchor'
@@ -473,6 +474,10 @@ function DaySection({
       {/* Route action for real days only — the "Not scheduled yet" bucket shares
           no actual day to navigate, exactly as the leg hints below are skipped. */}
       {day && <DayDirectionsAction items={items} dayLabel={longDate(day)} />}
+      {/* The AI-assisted reorder (#213). Below the free deterministic layers on
+          purpose: the overlap badges and leg hints above already say what is
+          wrong with a day at no cost, and this only offers what to do about it. */}
+      {day && <ImproveDayAction day={day} dayLabel={longDate(day)} items={items} />}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">

@@ -163,3 +163,28 @@ export const ParsedBookingResult = z
     message: 'nothing structured was extracted',
   })
 export type ParsedBookingResult = z.infer<typeof ParsedBookingResult>
+
+/* ── the improve_day result contract ─────────────────────────────────────── */
+
+/**
+ * What the model is allowed to hand back for `improve_day`.
+ *
+ * Two fields, and the small one is the important one. `planId` selects from a
+ * closed set of plans this server generated and validated (src/server/ai/day.ts)
+ * — the model never authors a schedule, so it cannot author a broken one. The
+ * measured failure mode (resolve one conflict, create another) is not caught
+ * here; it is impossible here.
+ *
+ * `reason` is the part worth paying a model for: a scored diff reads as
+ * robotic. It is capped because output tokens are the expensive side, and
+ * because a paragraph is not a reason.
+ */
+export const DayPickResult = z.object({
+  planId: z.string().min(1).max(32),
+  reason: z.string().trim().min(1).max(400),
+})
+export type DayPickResult = z.infer<typeof DayPickResult>
+
+/** How the explanation was produced — shown to the member, not just logged. */
+export const REASON_SOURCES = ['model', 'computed'] as const
+export type ReasonSource = (typeof REASON_SOURCES)[number]
