@@ -23,6 +23,8 @@ import {
 } from '../../src/lib/supabase-public'
 import { handleAiRequest } from '../../src/server/ai/handler'
 import type { Db } from '../../src/server/ai/handler'
+import { workersAiProvider } from '../../src/server/ai/provider'
+import type { AiBinding } from '../../src/server/ai/provider'
 
 interface Env {
   /** Optional overrides; the public defaults are used when unset. */
@@ -35,9 +37,10 @@ interface Env {
    * Bindings), authenticated by the platform rather than by a key we hold.
    * Deliberately NOT declared in a wrangler.toml: that file's presence makes
    * Cloudflare's Git integration deploy with `wrangler deploy` (the Workers
-   * command), which fails on a Pages project. Unused until the first model
-   * call lands (#212); typed now so that slice is a handler change rather
-   * than a plumbing change.
+   * command), which fails on a Pages project.
+   *
+   * Typed as `unknown` rather than `AiBinding` so a missing binding is a value
+   * this file has to check, not a type it can assume.
    */
   AI?: unknown
 }
@@ -55,6 +58,10 @@ interface PagesContext {
   request: Request
   env: Env
 }
+
+/** Narrow the dashboard-supplied binding before trusting it has a `run()`. */
+const isAiBinding = (v: unknown): v is AiBinding =>
+  typeof v === 'object' && v !== null && typeof (v as AiBinding).run === 'function'
 
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), {
@@ -93,6 +100,10 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     // preview deployments answer "disabled" rather than serving requests on
     // every pull request.
     enabled: env.AI_ENABLED === 'true',
+    // Two independent switches, and that is the point: the flag says "AI is
+    // allowed here", the binding says "there is a model to call". Losing the
+    // binding degrades to "switched off" instead of throwing on first use.
+    provider: isAiBinding(env.AI) ? workersAiProvider(env.AI) : undefined,
   })
 
   return json(result, status)

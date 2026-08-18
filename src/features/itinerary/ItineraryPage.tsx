@@ -11,7 +11,8 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
-  Map as MapIcon, MapPin, MoreHorizontal, Navigation, Pencil, Plus, TriangleAlert, Trash2,
+  Map as MapIcon, MapPin, MoreHorizontal, Navigation, Pencil, Plus, Sparkles,
+  TriangleAlert, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -30,6 +31,7 @@ import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
 import { coveredDays, isSpanning, spanPosition } from './spans'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
+import { aiParseDisabled, useAiParseBooking } from './aiParse'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { ItemBudgetLink } from './BudgetLink'
 import { searchAnchorId } from '@/features/search/anchor'
@@ -38,7 +40,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
+import { EmptyState, ErrorState, Skeleton, Spinner } from '@/components/ui/misc'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
@@ -535,6 +537,12 @@ function toPrefill(p: ParsedBooking): Partial<ItineraryFormValues> {
  * Paste-a-booking entry point (#77). Collects raw confirmation text and hands
  * it to the heuristic parser; the caller opens the pre-filled create form. This
  * dialog never saves anything itself — it only prepares the form.
+ *
+ * When the parser comes back empty it offers the model fallback (#212) instead
+ * of closing. The offer is a *tap*, never automatic: the free path has to fail
+ * first, and then the user has to ask, so a call is always something someone
+ * chose. Declining, or the model failing, lands on exactly the behaviour this
+ * dialog had before — the create form with the raw text in its notes.
  */
 function PasteBookingDialog({
   open,
@@ -543,13 +551,20 @@ function PasteBookingDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  onParsed: (parsed: ReservationParse) => void
+  onParsed: (parsed: ReservationParse, viaAi?: boolean) => void
 }) {
   const { trip } = useTripContext()
   const [text, setText] = React.useState('')
+  // The heuristic result that came back empty, held so the fallback panel can
+  // offer the model and still fall through to this exact draft if it declines.
+  const [stuck, setStuck] = React.useState<ReservationParse | null>(null)
+  const aiParse = useAiParseBooking()
 
   React.useEffect(() => {
-    if (open) setText('')
+    if (open) {
+      setText('')
+      setStuck(null)
+    }
   }, [open])
 
   function handleSubmit(e: React.FormEvent) {
@@ -560,7 +575,27 @@ function PasteBookingDialog({
     const referenceYear = trip.start_date
       ? new Date(trip.start_date).getFullYear()
       : undefined
-    onParsed(parseReservation(text, referenceYear))
+    const parsed = parseReservation(text, referenceYear)
+    // Nothing structured, and AI is available to ask: stay open and offer it.
+    // Otherwise behave exactly as this dialog always has.
+    if (!parsed.matched && !aiParseDisabled()) setStuck(parsed)
+    else onParsed(parsed)
+  }
+
+  async function handleAskAi() {
+    if (!stuck) return
+    const outcome = await aiParse.mutateAsync({ tripId: trip.id, text, base: stuck.drafts[0] })
+    if (outcome.status === 'parsed') {
+      onParsed({ kind: 'generic', drafts: [outcome.booking], matched: true }, true)
+      return
+    }
+    // 'empty' and every refusal converge here deliberately: to the person
+    // pasting, "the model found nothing" and "the model was unavailable" have
+    // the same next step, and the original draft is still exactly what they get.
+    if (outcome.status === 'refused' && outcome.reason !== 'disabled') {
+      toast(outcome.message)
+    }
+    onParsed(stuck)
   }
 
   return (
@@ -573,24 +608,58 @@ function PasteBookingDialog({
             itinerary item with whatever we can read. You review and confirm before it&rsquo;s saved.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="paste-booking">Confirmation text</Label>
-            <Textarea
-              id="paste-booking"
-              className="min-h-40"
-              autoFocus={!isMobileViewport()}
-              placeholder={
-                'Paste here, e.g.\n\nFlight confirmation — United UA 837\nDeparts July 24, 2026 at 10:30 AM\nSFO to NRT'
-              }
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
+        {stuck ? (
+          <div className="space-y-4">
+            <Card className="space-y-1 p-4">
+              <p className="text-sm font-medium text-ink">
+                Couldn&rsquo;t find a date, time, or place in that
+              </p>
+              <p className="text-sm text-ink-soft">
+                Wander AI can have a closer read — it only sees the text above, and you
+                still review everything before it&rsquo;s saved.
+              </p>
+            </Card>
+            <Button
+              type="button"
+              size="lg"
+              className="w-full"
+              onClick={handleAskAi}
+              disabled={aiParse.isPending}
+            >
+              {aiParse.isPending ? <Spinner className="size-4 text-on-primary" /> : <Sparkles />}
+              {aiParse.isPending ? 'Reading\u2026' : 'Let Wander read it'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="lg"
+              className="w-full"
+              onClick={() => onParsed(stuck)}
+              disabled={aiParse.isPending}
+            >
+              Fill it in myself
+            </Button>
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!text.trim()}>
-            Review pre-filled item
-          </Button>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="paste-booking">Confirmation text</Label>
+              <Textarea
+                id="paste-booking"
+                className="min-h-40"
+                autoFocus={!isMobileViewport()}
+                placeholder={
+                  'Paste here, e.g.\n\nFlight confirmation — United UA 837\nDeparts July 24, 2026 at 10:30 AM\nSFO to NRT'
+                }
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+            </div>
+            <Button type="submit" size="lg" className="w-full" disabled={!text.trim()}>
+              Review pre-filled item
+            </Button>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -656,12 +725,17 @@ export default function ItineraryPage() {
     setNewOpen(true)
   }
 
-  function handleParsed(result: ReservationParse) {
+  function handleParsed(result: ReservationParse, viaAi = false) {
     setPrefillQueue(result.drafts.map(toPrefill))
     setPasteOpen(false)
     setNewOpen(true)
     if (!result.matched) {
       toast('Couldn’t read that automatically — added it to the notes')
+    } else if (viaAi) {
+      // Named as a read rather than a result: the model is more likely to be
+      // wrong here than the regexes are, so the toast should send someone to
+      // check the dates rather than tell them it worked.
+      toast.success('Wander AI read it — check the dates before saving')
     } else if (result.drafts.length > 1) {
       toast.success(`Found ${result.drafts.length} items — review and save each`)
     } else {

@@ -23,8 +23,16 @@
   is established by Postgres as a side effect of a query we needed anyway,
   rather than costing a second secret.
 */
-import { AiRequest, QUOTA_PER_TRIP, QUOTA_WINDOW_HOURS } from './schemas'
+import {
+  AiRequest,
+  ParsedBookingResult,
+  QUOTA_PER_TRIP,
+  QUOTA_WINDOW_HOURS,
+} from './schemas'
 import type { AiResponse, Intent, RefusalReason } from './schemas'
+import { bookingParsePrompt } from './prompts'
+import { MODELS } from './provider'
+import type { ModelProvider } from './provider'
 
 /** The slice of a Supabase client this module needs — so tests can pass a fake. */
 export interface Db {
@@ -47,6 +55,12 @@ export interface HandlerDeps {
   db: Db
   /** Kill switch: false or absent disables the endpoint. */
   enabled: boolean
+  /**
+   * Model access. Optional on purpose: a runtime with no binding configured is
+   * a runtime where AI is off, and that must read as "disabled" rather than as
+   * a crash on the first request.
+   */
+  provider?: ModelProvider
   /** Injected so tests are not clock-dependent. */
   now?: () => Date
 }
@@ -70,16 +84,55 @@ const refuse = (
  */
 async function record(
   deps: HandlerDeps,
-  args: { tripId: string; feature: string; outcome: 'ok' | 'refused' | 'failed' },
+  args: {
+    tripId: string
+    feature: string
+    outcome: 'ok' | 'refused' | 'failed'
+    model?: string
+    inputTokens?: number
+    outputTokens?: number
+  },
 ): Promise<void> {
   try {
     await deps.db.rpc('record_ai_usage', {
       p_trip_id: args.tripId,
       p_feature: args.feature,
       p_outcome: args.outcome,
+      p_model: args.model ?? '',
+      p_input_tokens: args.inputTokens ?? 0,
+      p_output_tokens: args.outputTokens ?? 0,
+      // Left at zero deliberately. Workers AI bills in neurons, which the
+      // binding does not report, so any dollar figure derived here would be a
+      // guess dressed as a measurement. Tokens are what we actually observe.
+      p_estimated_cost_usd: 0,
     })
   } catch {
     // Intentionally swallowed — see above.
+  }
+}
+
+/**
+ * The trip's own date range, read as the caller.
+ *
+ * Only used to anchor year-less dates ("Jul 24") in the prompt, so a failure is
+ * a degraded answer rather than a refusal: nulls simply tell the model not to
+ * guess a year. Never throws.
+ */
+async function tripRange(
+  deps: HandlerDeps,
+  tripId: string,
+): Promise<{ start: string | null; end: string | null }> {
+  try {
+    const { data, error } = await deps.db
+      .from('trips')
+      .select('start_date, end_date')
+      .eq('id', tripId)
+      .maybeSingle()
+    if (error || !data) return { start: null, end: null }
+    const row = data as { start_date?: string | null; end_date?: string | null }
+    return { start: row.start_date ?? null, end: row.end_date ?? null }
+  } catch {
+    return { start: null, end: null }
   }
 }
 
@@ -162,9 +215,14 @@ export async function handleAiRequest(
     )
   }
 
-  // 5. Dispatch. No model is called in this slice (#211) — the point is to
-  //    prove auth, quota and the ledger in isolation, before anything spends.
-  //    The tracking issue for the model call is #212.
+  // 5. Dispatch.
+  if (request.intent === 'parse_booking') {
+    return parseBooking(deps, request.tripId, request.text)
+  }
+
+  // improve_day still has no model behind it — that is #213. Kept as an
+  // explicit stub rather than removed from the enum so the endpoint's shape
+  // does not change when it lands.
   await record(deps, { tripId, feature: intent, outcome: 'ok' })
 
   return {
@@ -175,5 +233,75 @@ export async function handleAiRequest(
       result: { stub: true, note: 'No model is wired up yet.' },
       usage: { inputTokens: 0, outputTokens: 0 },
     },
+  }
+}
+
+/**
+ * parse_booking (#212): read a confirmation the regex parser could not.
+ *
+ * The contract with the caller is that this is *never worse than not calling
+ * it*. `src/features/itinerary/parse.ts` already degrades a failed parse to a
+ * create form with the raw text in its notes, and every failure path here —
+ * no binding, a thrown call, output that does not validate — returns nothing
+ * usable so the caller falls back to exactly that. Nothing is retried: a second
+ * attempt at the same text with the same prompt costs a second call to be wrong
+ * again, and the user is one tap from doing it themselves.
+ */
+async function parseBooking(
+  deps: HandlerDeps,
+  tripId: string,
+  text: string,
+): Promise<HandlerResult> {
+  const feature = 'parse_booking'
+
+  // No binding configured is a runtime with AI switched off, not an error.
+  // Not recorded, for the same reason the kill switch is not: nothing happened.
+  if (!deps.provider) {
+    return refuse('disabled', 'Wander AI is switched off right now. Nothing was sent anywhere.', 503)
+  }
+
+  const range = await tripRange(deps, tripId)
+  const args = bookingParsePrompt({ text, tripStart: range.start, tripEnd: range.end })
+  const model = MODELS[args.tier]
+
+  let completion
+  try {
+    completion = await deps.provider.complete(args)
+  } catch {
+    // The call itself failed, so there are no token counts to record — but the
+    // attempt still gets a row, or an outage looks like nobody tried.
+    await record(deps, { tripId, feature, outcome: 'failed', model })
+    return refuse(
+      'unavailable',
+      'Wander AI could not read that just now. Your text is still here.',
+      503,
+    )
+  }
+
+  const usage = {
+    inputTokens: completion.inputTokens,
+    outputTokens: completion.outputTokens,
+  }
+  const usageRow = { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
+
+  // Model output is untrusted input. JSON mode constrains the shape at the
+  // provider; this decides whether what came back is usable.
+  const parsed = ParsedBookingResult.safeParse(completion.json)
+  if (!parsed.success) {
+    await record(deps, { tripId, feature, outcome: 'failed', ...usageRow })
+    // Deliberately a 200 with an empty result rather than an error: the call
+    // completed and cost tokens, it simply found nothing. The caller shows
+    // today's raw-text create form either way, and reporting this as a failure
+    // would push a normal outcome into an error toast.
+    return {
+      status: 200,
+      body: { ok: true, intent: 'parse_booking', result: { booking: null }, usage },
+    }
+  }
+
+  await record(deps, { tripId, feature, outcome: 'ok', ...usageRow })
+  return {
+    status: 200,
+    body: { ok: true, intent: 'parse_booking', result: { booking: parsed.data }, usage },
   }
 }

@@ -768,7 +768,7 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 | Phase | Database | Server | Frontend | Complexity |
 |---|---|---|---|---|
 | **0 · Foundation** | `ai_usage` + `record_ai_usage` RPC | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call, **no credentials** | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
-| **1 · Paste anything** | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
+| **1 · Paste anything** ✅ | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
 | **2 · Improve this day** | `get_ai_day_context` | **Deterministic candidate generation** + model *selects and explains* (see below) | Preview cards, approve/reject, apply via existing mutations | High |
 | **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
 | **4 · Ask Wander** | Query RPCs per intent | Intent classification, deterministic answers first | Cmd-K row, single-turn, no history | High |
@@ -829,6 +829,12 @@ src/features/ai/
   api.ts                   # callAi() + useAiRequest() — POSTs to /api/ai
   SuggestionPreview.tsx    # (arrives with phase 2)
 
+src/features/itinerary/
+  aiParse.ts               # phase 1's fallback: interprets one /api/ai reply
+                           # into a ParsedBooking, or into nothing. Lives with
+                           # the feature, not in features/ai/, because it knows
+                           # the itinerary's shapes and features/ai/ must not.
+
 # No wrangler.toml: its presence makes Cloudflare's Git integration deploy with
 # `wrangler deploy` (Workers) instead of `wrangler pages deploy`. The Workers AI
 # binding is set in the Pages dashboard instead — see §4.2.
@@ -843,6 +849,16 @@ already uses for `.ts` sources.
 Lazy-load `SuggestionPreview`. The bundle gate enforces 500 kB gzipped total and
 220 kB per chunk. **No model SDK belongs in the frontend at all** — the edge
 function is the only client.
+
+`prompts.ts` must never be imported from `src/features/` — a prompt in the
+bundle is a prompt anyone can read and work around. `schemas.ts` deliberately
+*is* shipped: the browser re-validates the endpoint's reply against the same
+zod schema the handler used, which is the cheapest guard against a deploy skew
+putting `undefined` into a form field. Verify the split holds after a build:
+
+```
+grep -c "You are a parser" dist/assets/*.js   # expect 0 everywhere
+```
 
 ---
 
