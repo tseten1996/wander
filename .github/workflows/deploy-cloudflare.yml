@@ -101,6 +101,7 @@ jobs:
           fi
 
       - name: Publish
+        id: publish
         if: steps.creds.outputs.ready == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
@@ -115,3 +116,64 @@ jobs:
             --project-name=${{ env.PROJECT_NAME }}
             --branch=${{ github.head_ref || github.ref_name }}
             --commit-dirty=true
+
+      # Proof that /api/ai is routed and executing, not just uploaded.
+      #
+      # Worth having because the failure it catches is silent. `pages deploy`
+      # prints "Uploading Functions bundle" whether or not the route works, and
+      # if the Function is missing, Pages answers /api/ai with the SPA's
+      # index.html — a 200 full of HTML that a browser turns into a JSON parse
+      # error somewhere in a toast. The endpoint refusing loudly in JSON is a
+      # much sharper signal than anything the deploy log can offer.
+      #
+      # POSTing `{}` with no Authorization header is deliberately the *worst*
+      # possible request: the handler refuses it either way — 503 `disabled`
+      # when AI_ENABLED is unset, 400 `forbidden` once it is set — and both
+      # answers prove the same thing. So this check does not care whether AI is
+      # switched on, and will not start failing the day it is.
+      - name: Smoke-test the Pages Function
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          # NOTE: this output name could not be verified when written — the
+          # sandbox that develops this repo cannot reach Cloudflare's docs. If
+          # it is wrong the step skips with a notice rather than failing the
+          # run, so a bad guess costs a missing check, never a false red.
+          URL: ${{ steps.publish.outputs.deployment-url }}
+        run: |
+          set -uo pipefail
+          if [ -z "${URL:-}" ]; then
+            echo "::notice::No deployment URL reported — skipping the Function smoke test."
+            exit 0
+          fi
+
+          # A fresh deployment takes a moment to become routable, so retry
+          # rather than racing it. Three tries is enough to tell "propagating"
+          # from "not there".
+          for attempt in 1 2 3; do
+            body=$(curl -sS --max-time 20 -o /tmp/ai-probe.txt -w '%{http_code} %{content_type}' \
+              -X POST "$URL/api/ai" \
+              -H 'content-type: application/json' \
+              -d '{}') && break
+            echo "::notice::Attempt $attempt could not reach $URL/api/ai; retrying."
+            sleep $((attempt * 5))
+          done
+
+          echo "Response: $body"
+          echo "Body: $(head -c 400 /tmp/ai-probe.txt)"
+
+          case "$body" in
+            *application/json*) ;;
+            *)
+              echo "::error::/api/ai did not answer with JSON. If this is HTML, the"
+              echo "::error::Function is not routed and Pages served the SPA instead."
+              exit 1
+              ;;
+          esac
+
+          if ! grep -q '"ok":false' /tmp/ai-probe.txt; then
+            echo "::error::/api/ai answered JSON but not a refusal. Expected the handler"
+            echo "::error::to reject an empty, unauthenticated body — see src/server/ai/handler.ts."
+            exit 1
+          fi
+
+          echo "::notice::/api/ai is routed and refusing correctly."
