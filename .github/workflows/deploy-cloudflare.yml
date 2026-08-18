@@ -121,23 +121,25 @@ jobs:
       #
       # Worth having because the failure it catches is silent. `pages deploy`
       # prints "Uploading Functions bundle" whether or not the route works, and
-      # if the Function is missing, Pages answers /api/ai with the SPA's
-      # index.html — a 200 full of HTML that a browser turns into a JSON parse
-      # error somewhere in a toast. The endpoint refusing loudly in JSON is a
-      # much sharper signal than anything the deploy log can offer.
+      # a missing Function is not an error anywhere in the deploy log — it is a
+      # 404 that only shows up later as a broken feature.
       #
       # POSTing `{}` with no Authorization header is deliberately the *worst*
       # possible request: the handler refuses it either way — 503 `disabled`
       # when AI_ENABLED is unset, 400 `forbidden` once it is set — and both
       # answers prove the same thing. So this check does not care whether AI is
       # switched on, and will not start failing the day it is.
+      #
+      # WAIT FOR THE ORIGIN FIRST. A brand-new deployment gets its own
+      # `<hash>.<project>.pages.dev` hostname, and that hostname is not routable
+      # the instant `pages deploy` returns — for a few seconds it answers
+      # Cloudflare's own 404. The first version of this check probed
+      # immediately, read that 404 as "the Function is missing", and failed a
+      # deploy that was fine. So `/` is polled until the origin answers before
+      # anything at all is concluded about `/api/ai`.
       - name: Smoke-test the Pages Function
         if: steps.creds.outputs.ready == 'true'
         env:
-          # NOTE: this output name could not be verified when written — the
-          # sandbox that develops this repo cannot reach Cloudflare's docs. If
-          # it is wrong the step skips with a notice rather than failing the
-          # run, so a bad guess costs a missing check, never a false red.
           URL: ${{ steps.publish.outputs.deployment-url }}
         run: |
           set -uo pipefail
@@ -146,33 +148,56 @@ jobs:
             exit 0
           fi
 
-          # A fresh deployment takes a moment to become routable, so retry
-          # rather than racing it. Three tries is enough to tell "propagating"
-          # from "not there".
+          probe() { curl -sS --max-time 20 -o "$2" -w '%{http_code} %{content_type}' "${@:3}" "$1"; }
+
+          # 1. Is the deployment routable at all?
+          origin=""
+          for attempt in 1 2 3 4 5 6; do
+            origin=$(probe "$URL/" /tmp/root.txt || echo "000 unreachable")
+            case "$origin" in 2*) break ;; esac
+            echo "Origin not ready yet (attempt $attempt): $origin"
+            sleep $((attempt * 5))
+          done
+          case "$origin" in
+            2*) echo "Origin is live: $origin" ;;
+            *)
+              echo "::warning::$URL never answered on / (last: $origin), so the Function"
+              echo "::warning::could not be tested. That is a deployment-propagation problem,"
+              echo "::warning::not evidence about /api/ai — not failing the run on it."
+              exit 0
+              ;;
+          esac
+
+          # 2. Now the endpoint itself. The origin is up, so a non-JSON answer
+          #    here is about the Function, not about the deployment.
+          answer=""
           for attempt in 1 2 3; do
-            body=$(curl -sS --max-time 20 -o /tmp/ai-probe.txt -w '%{http_code} %{content_type}' \
-              -X POST "$URL/api/ai" \
-              -H 'content-type: application/json' \
-              -d '{}') && break
-            echo "::notice::Attempt $attempt could not reach $URL/api/ai; retrying."
+            answer=$(probe "$URL/api/ai" /tmp/ai-probe.txt \
+              -X POST -H 'content-type: application/json' -d '{}' || echo "000 unreachable")
+            case "$answer" in *application/json*) break ;; esac
+            echo "No JSON yet (attempt $attempt): $answer"
             sleep $((attempt * 5))
           done
 
-          echo "Response: $body"
+          echo "Response: $answer"
           echo "Body: $(head -c 400 /tmp/ai-probe.txt)"
 
-          case "$body" in
+          case "$answer" in
             *application/json*) ;;
             *)
-              echo "::error::/api/ai did not answer with JSON. If this is HTML, the"
-              echo "::error::Function is not routed and Pages served the SPA instead."
+              echo "::error::/api/ai did not answer with JSON, even though $URL/ is live."
+              echo "::error::The Function is not routed. Check that functions/api/ai.ts still"
+              echo "::error::exports onRequestPost, and that the deploy ran from the repo root"
+              echo "::error::so wrangler could find functions/ — see AI-ARCHITECTURE.md 5.1.1."
               exit 1
               ;;
           esac
 
-          if ! grep -q '"ok":false' /tmp/ai-probe.txt; then
-            echo "::error::/api/ai answered JSON but not a refusal. Expected the handler"
-            echo "::error::to reject an empty, unauthenticated body — see src/server/ai/handler.ts."
+          # Whitespace-tolerant: the handler emits compact JSON today, but this
+          # is asserting a *property* of the response, not its formatting.
+          if ! grep -qE '"ok"[[:space:]]*:[[:space:]]*false' /tmp/ai-probe.txt; then
+            echo "::error::/api/ai answered JSON but not a refusal. Expected the handler to"
+            echo "::error::reject an empty, unauthenticated body — see src/server/ai/handler.ts."
             exit 1
           fi
 
