@@ -1,0 +1,70 @@
+name: Probe Workers AI
+
+# Diagnostic only — never runs on push. Calls one Workers AI model with a fixed
+# itinerary-reasoning payload and prints the answer to the log, so the model can
+# be evaluated from CI rather than through a browser (the sandbox that develops
+# this repo cannot reach playground.ai.cloudflare.com or *.pages.dev).
+#
+# Exists to answer one question: can a Workers AI model do the #213 "improve
+# this day" job that a cheap OpenRouter model failed? The payload below is
+# byte-for-byte the prompt that failed, so the comparison is like-for-like.
+#
+# Requires CLOUDFLARE_API_TOKEN to include Workers AI permissions — the Pages
+# deploy token does NOT by default. A 403/authentication error here means the
+# scope was not widened, not that the model is unavailable.
+#
+# DELETE THIS FILE once the model question is settled (tracked on #213).
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Workers AI model id
+        default: '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the model
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          set -uo pipefail
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "::error::Cloudflare secrets are not configured."; exit 1
+          fi
+
+          # Payload in a file so no prompt text ever reaches a command line.
+          cat > /tmp/body.json <<'JSON'
+          {
+            "messages": [
+              {"role":"system","content":"You improve one day of a trip itinerary. You get the day's items plus findings already computed by the app (do not recompute them). Propose at most 3 changes. Reply with ONLY JSON: {\"summary\": string, \"suggestions\": [{\"type\":\"MOVE_ACTIVITY\"|\"REORDER_DAY\",\"itemId\":string|null,\"itemIds\":string[]|null,\"startTime\":string|null,\"reason\":string}]}. Every suggestion needs a reason a traveller would understand. If the day is already sensible, return an empty suggestions array."},
+              {"role":"user","content":"{\"leg\":{\"name\":\"Paris\",\"startDate\":\"2026-09-12\",\"endDate\":\"2026-09-20\"},\"day\":\"2026-09-15\",\"items\":[{\"id\":\"a\",\"title\":\"Louvre Museum\",\"category\":\"activity\",\"startTime\":\"09:30\",\"endTime\":\"12:30\",\"lat\":48.8606,\"lng\":2.3376},{\"id\":\"b\",\"title\":\"Lunch at Le Comptoir\",\"category\":\"restaurant\",\"startTime\":\"13:00\",\"endTime\":\"14:30\",\"lat\":48.8535,\"lng\":2.3389},{\"id\":\"c\",\"title\":\"Sacre-Coeur\",\"category\":\"activity\",\"startTime\":\"14:00\",\"endTime\":\"16:00\",\"lat\":48.8867,\"lng\":2.3431},{\"id\":\"d\",\"title\":\"Musee d Orsay\",\"category\":\"activity\",\"startTime\":\"16:30\",\"endTime\":\"18:00\",\"lat\":48.8600,\"lng\":2.3266}],\"computedFindings\":[\"Lunch at Le Comptoir (13:00-14:30) overlaps Sacre-Coeur (14:00-16:00)\",\"Leg b->c: 4.1 km, ~18 min drive\",\"Leg c->d: 4.4 km, ~20 min drive\"]}"}
+            ],
+            "max_tokens": 600
+          }
+          JSON
+
+          echo "Model: $MODEL"
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' \
+            -X POST "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/run/${MODEL}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/body.json) || true
+
+          echo "HTTP $code"
+          echo '--- response ---'
+          # The account id can appear in error bodies; strip it before logging.
+          sed "s/${ACCOUNT}/<account>/g" /tmp/out.json
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Probe failed with HTTP $code. A 403 or authentication_error means CLOUDFLARE_API_TOKEN lacks Workers AI permissions."
+            exit 1
+          fi
