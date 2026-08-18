@@ -10,20 +10,18 @@
   request forever at full cost; an abuse pattern that never succeeds would leave
   no trace at all.
 
-  Two database clients, and the split between them IS the security model:
+  ONE database client, carrying the caller's own JWT, so every read and write
+  runs under exactly the RLS policies the browser gets. There is no service-role
+  key here and there must never be one: it bypasses RLS on every table, and the
+  only thing this needs privilege for is appending an audit row — which the
+  `record_ai_usage` SECURITY DEFINER RPC does instead, validating membership
+  inside Postgres (the join_trip pattern this repo already uses).
 
-    * `asCaller` carries the caller's own JWT, so every read runs under exactly
-      the RLS policies the browser gets. A non-member reads nothing. This is
-      also why there is no JWT-signature verification here — the RLS read *is*
-      the verification. A forged or expired token is rejected by PostgREST and
-      returns zero rows, and the membership check below is itself an RLS read,
-      so identity is established by Postgres as a side effect of a query we
-      needed anyway.
-
-    * `asService` bypasses RLS and touches `ai_usage` ONLY. If it is ever used
-      to read or write a content table, that is an authorization bug: the whole
-      claim that Postgres remains the enforcement boundary rests on this client
-      having exactly one job.
+  That is also why there is no JWT-signature verification: the RLS read IS the
+  verification. A forged or expired token is rejected by PostgREST and returns
+  zero rows, and the membership check below is itself an RLS read — so identity
+  is established by Postgres as a side effect of a query we needed anyway,
+  rather than costing a second secret.
 */
 import { AiRequest, QUOTA_PER_TRIP, QUOTA_WINDOW_HOURS } from './schemas'
 import type { AiResponse, Intent, RefusalReason } from './schemas'
@@ -40,15 +38,13 @@ export interface Db {
         maybeSingle: () => Promise<{ data: unknown; error: unknown }>
       }
     }
-    insert: (row: Record<string, unknown>) => Promise<{ error: unknown }>
   }
+  rpc(fn: string, args: Record<string, unknown>): Promise<{ error: unknown }>
 }
 
 export interface HandlerDeps {
-  /** Reads run under the caller's RLS. */
-  asCaller: Db
-  /** Writes the usage ledger. Must never touch a content table. */
-  asService: Db
+  /** Runs as the caller. RLS is the authorization boundary. */
+  db: Db
   /** Kill switch: false or absent disables the endpoint. */
   enabled: boolean
   /** Injected so tests are not clock-dependent. */
@@ -67,22 +63,21 @@ const refuse = (
 ): HandlerResult => ({ status, body: { ok: false, reason, message } })
 
 /**
- * Record the call. Never throws: a ledger write failing must not turn a served
- * request into a 500, and must not mask the original outcome. A dropped row
- * costs a little accuracy in the quota; an exception here would cost the
- * response.
+ * Append to the usage ledger. Never throws: a bookkeeping failure must not turn
+ * a served request into a 500, nor mask the outcome the caller actually needs.
+ * A dropped row costs a little quota accuracy; an exception here would cost the
+ * user their answer.
  */
 async function record(
   deps: HandlerDeps,
-  row: {
-    trip_id: string
-    member_id: string | null
-    feature: string
-    outcome: 'ok' | 'refused' | 'failed'
-  },
+  args: { tripId: string; feature: string; outcome: 'ok' | 'refused' | 'failed' },
 ): Promise<void> {
   try {
-    await deps.asService.from('ai_usage').insert(row)
+    await deps.db.rpc('record_ai_usage', {
+      p_trip_id: args.tripId,
+      p_feature: args.feature,
+      p_outcome: args.outcome,
+    })
   } catch {
     // Intentionally swallowed — see above.
   }
@@ -96,9 +91,9 @@ export async function handleAiRequest(
   rawBody: unknown,
   deps: HandlerDeps,
 ): Promise<HandlerResult> {
-  // 1. Kill switch, before anything else can cost money or touch the database.
-  //    Absent config means disabled: an endpoint that turns itself on when its
-  //    configuration fails to load is the wrong way round.
+  // 1. Kill switch, before anything can cost money or touch the database.
+  //    Absent config means disabled: an endpoint that switches itself on when
+  //    its configuration fails to load is the wrong way round.
   if (!deps.enabled) {
     return refuse(
       'disabled',
@@ -107,8 +102,8 @@ export async function handleAiRequest(
     )
   }
 
-  // 2. Shape. A caller-supplied prompt field would be rejected here simply by
-  //    not existing in the schema (see schemas.ts).
+  // 2. Shape. A caller-supplied prompt field is rejected here simply by not
+  //    existing in the schema (see schemas.ts).
   const parsed = AiRequest.safeParse(rawBody)
   if (!parsed.success) {
     return refuse('forbidden', 'That request was not something Wander AI can do.', 400)
@@ -121,9 +116,8 @@ export async function handleAiRequest(
   //    no row back, which is both the authorization check and the proof the
   //    token is real. Deliberately a distinct 403 rather than an empty success,
   //    so a genuine bug does not look like an empty trip.
-  let memberId: string | null = null
   try {
-    const { data, error } = await deps.asCaller
+    const { data, error } = await deps.db
       .from('members')
       .select('id')
       .eq('trip_id', tripId)
@@ -131,18 +125,20 @@ export async function handleAiRequest(
     if (error || !data) {
       return refuse('forbidden', 'You do not have access to this trip.', 403)
     }
-    memberId = (data as { id: string }).id
   } catch {
     // A failed authorization read is not permission to continue.
     return refuse('forbidden', 'Could not confirm your access to this trip.', 403)
   }
 
   // 4. Quota, per trip (never per user — see schemas.ts and the migration).
+  //    Read as the caller: the ai_usage select policy already scopes rows to
+  //    trip members, so the number enforced here is the same number the app can
+  //    show them. They cannot hide rows — there is no delete policy.
   const now = (deps.now ?? (() => new Date()))()
   const since = new Date(now.getTime() - QUOTA_WINDOW_HOURS * 3600_000).toISOString()
   let used: number
   try {
-    const { count, error } = await deps.asService
+    const { count, error } = await deps.db
       .from('ai_usage')
       .select('id', { count: 'exact', head: true })
       .eq('trip_id', tripId)
@@ -158,7 +154,7 @@ export async function handleAiRequest(
   }
 
   if (used >= QUOTA_PER_TRIP) {
-    await record(deps, { trip_id: tripId, member_id: memberId, feature: intent, outcome: 'refused' })
+    await record(deps, { tripId, feature: intent, outcome: 'refused' })
     return refuse(
       'quota',
       `This trip has used its ${QUOTA_PER_TRIP} AI requests for today. It resets within ${QUOTA_WINDOW_HOURS} hours.`,
@@ -168,17 +164,14 @@ export async function handleAiRequest(
 
   // 5. Dispatch. No model is called in this slice (#211) — the point is to
   //    prove auth, quota and the ledger in isolation, before anything spends.
-  //    #212 replaces this with the provider call.
-  await record(deps, { trip_id: tripId, member_id: memberId, feature: intent, outcome: 'ok' })
+  //    The tracking issue for the model call is #212.
+  await record(deps, { tripId, feature: intent, outcome: 'ok' })
 
   return {
     status: 200,
     body: {
       ok: true,
       intent,
-      // The issue number stays out of the string below: the token lint scans
-      // quoted spans for hex colours, and a #-prefixed issue number matches.
-      // Tracking issue for the model call: #212.
       result: { stub: true, note: 'No model is wired up yet.' },
       usage: { inputTokens: 0, outputTokens: 0 },
     },

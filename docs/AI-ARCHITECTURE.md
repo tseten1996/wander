@@ -142,38 +142,54 @@ work, not as an extension.
 referrer-locked geocoding key) is safe to ship because its blast radius is bounded
 by something other than secrecy. A **true secret** must never reach the client.
 
-Its top recommendation — *prefer having no secret at all* — has worked every time
-so far, and **it does not survive contact with this case.** There is no
-referrer-locked public LLM key; these credentials are bearer tokens carrying
-billing authority. AI is the first feature that genuinely needs somewhere to put
-a secret, which is why it depends on #191 rather than merely relating to it.
+Its top recommendation is *prefer having no secret at all* — a credential that
+does not exist cannot leak.
 
-### 4.2 Where the key lives
+An earlier draft of this document concluded that recommendation **had no
+AI-shaped answer**: there is no referrer-locked public LLM key, and every
+provider credential is a bearer token carrying billing authority. That was
+wrong, and it was wrong for an interesting reason — it was written before the
+app moved to Cloudflare, so Cloudflare's own inference platform was not on the
+table. **Workers AI is a platform-authenticated binding, so #191's preferred
+answer holds after all** (§4.2).
 
-The runtime is a **Cloudflare Pages Function** (see the decision record in §5.1),
-so the key is a Pages secret, bound **per environment**:
+What remains true is that AI is the first feature needing *server-side code*,
+which is why #211 depends on #191's guardrail amendment. It just turned out not
+to need a secret to go with it.
 
-```bash
-# Production only, deliberately. See below.
-npx wrangler pages secret put OPENROUTER_API_KEY --project-name wander
+### 4.2 Where the key lives — there isn't one
+
+The runtime is a Cloudflare Pages Function using **Workers AI** (§4.4), which is
+a platform-authenticated *binding* rather than an API credential. Declared once
+in `wrangler.toml`:
+
+```toml
+[ai]
+binding = "AI"
 ```
 
-Read it from the request's `env` binding. Rotation is the same command plus a
-redeploy.
+The function calls `env.AI` and Cloudflare handles authentication. **There is no
+key to store, scope, rotate or leak.**
 
-**Bind it to production only.** Preview deployments get their own environment,
-and a preview with a working AI endpoint is a live endpoint spending real money
-on every pull request. Previews should get the endpoint and a clean "AI is
-disabled in previews" refusal — the §10 kill switch applied per-environment.
-Costs nothing to do at the start; expensive to discover after a busy PR day.
+Three other credentials that might have been needed, and why none of them are:
 
-Three places it must never go:
-
-| Never | Why |
+| Credential | Why it is absent |
 |---|---|
-| `VITE_*` at build time | Ships inside the JS bundle, readable in devtools. #191 calls this *laundering a secret into a public artifact* — it looks legitimate because CI is involved and is exactly as exposed as hardcoding it. |
-| GitHub Secrets | Unnecessary: `wrangler pages secret put` writes straight to the Pages project, so the key never enters a workflow environment and can never be caught by a `set -x` or a debug print. The repo already holds `SUPABASE_ACCESS_TOKEN`, the DB password and the Cloudflare token; another credential in a system that does not need it is pure downside. Fewer copies, fewer leaks. |
-| Supabase Vault | Trust-domain separation (#191). A Vault secret decrypts inside Postgres, which already holds trip data, member identities and invite codes — one Postgres compromise would take both the data and the credential. Cloudflare puts the key one domain further out still. |
+| LLM API key | Workers AI is a binding. Nothing to hold. |
+| Supabase service-role key | The ledger write goes through the `record_ai_usage` `SECURITY DEFINER` RPC instead — the `join_trip` pattern. A key that bypasses RLS on *every* table is wildly disproportionate for appending one audit row. |
+| Supabase URL + anon key | Public by design (RLS is the boundary) and already in every client bundle. Shared from `src/lib/supabase-public.ts` so app and function cannot drift. |
+
+So the only configuration is the kill switch: `AI_ENABLED=true`, bound to the
+**production environment only**. A preview deployment with a live AI endpoint
+would serve requests on every pull request; leaving the variable unset there
+means previews answer "disabled" by construction rather than by discipline.
+
+If a true secret is ever needed — the OpenRouter fallback in §4.4, say — it goes
+to `wrangler pages secret put`, production only, and nowhere else. Never a
+`VITE_*` variable (ships in the bundle — #191 calls this *laundering a secret
+into a public artifact*), never GitHub Secrets (unnecessary; the CLI writes
+straight to the project), never Supabase Vault (it would decrypt inside the same
+Postgres that holds the trip data).
 
 ### 4.3 Choosing a provider — the criteria that actually matter here
 
@@ -194,29 +210,52 @@ the four properties below.
 4. **Two tiers from one account** — a cheap model for extraction (#212) and a
    stronger one for judgement (#213), without two billing relationships.
 
-### 4.4 Recommendation: an aggregator for the pilot, direct once settled
+### 4.4 Provider: Workers AI, with OpenRouter as the recorded fallback
 
-**Use OpenRouter (or an equivalent aggregator) for phases 1–3.** It scores well
-on criteria 1 and 4, which are the two that bite first: prepaid credits are a hard
-cap *by construction*, and one key reaching many models is worth real money while
-it is still unknown which model does "Improve this day" well.
+*Decided 2026-08-18, from measurements rather than benchmarks. This position
+changed three times as evidence arrived; the reasoning is recorded so the next
+reader inherits the conclusions rather than the churn.*
 
-Three conditions:
+**Workers AI** — Cloudflare's own inference, reached through the `env.AI`
+binding. Free allocation is 10,000 Neurons/day; a measured 596-token call cost
+**47.96 Neurons**, so roughly **200 calls/day free**, hard-stopping. Structured
+output is supported and OpenAI-compatible (`response_format` with `json_schema`).
 
-- **Turn prompt logging and training off explicitly** (§4.5).
-- **Keep it behind the `ModelProvider` interface** (§5.4) so switching to a direct
-  provider is a one-file change, not a refactor.
-- **Verify structured-output behaviour on the specific model chosen**, not in
-  general — support varies by underlying provider through a proxy, and that is
-  precisely where an aggregator's abstraction leaks.
+Against the criteria in §4.3 it wins three of four outright: it hard-stops
+rather than bills, it does structured output natively, and its retention story
+is the best available — prompts never leave the platform already serving the
+app. That last point carries more weight than it first appears: `parse_booking`
+sends the most identity-dense text in Wander, a forwarded confirmation carrying
+a full name, street address and booking reference.
 
-**Switch to direct once a model is settled.** At that point the aggregator's main
-benefit is spent and it costs a markup plus an extra network hop and one more
-party in the trust chain.
+#### The evidence
 
-*Pricing, retention defaults and structured-output support in this space change
-monthly. Re-check all three against current provider documentation before
-committing — do not trust the state of the world described here.*
+Three measurements, all on the same prompts so the comparison is like-for-like:
+
+| Test | Model | Result |
+|---|---|---|
+| Extraction (French hotel confirmation, year-less dates, multi-day span) | Gemma 4 26B (free, AA index 26.1) | **Clean pass** — every field correct, nothing invented |
+| Judgement ("improve this day", Paris) | Gemma 4 26B | **Failed** — missed an 8.5 km backtrack it was handed as data; two redundant suggestions; created a 16:30 collision |
+| Judgement (identical prompt) | Llama 3.3 70B via Workers AI | **Failed similarly** — spotted the Louvre/Orsay proximity, but made the *identical* 15:00 collision error and violated the action schema |
+
+**The conclusion is stronger than "use a bigger model".** Two models three tiers
+apart made the same downstream-collision mistake, so the constraint is task
+shape, not model size — see the reframing note in §12 for #213.
+
+#### When to reach for OpenRouter instead
+
+An account with prepaid credit already exists, so the fallback is live rather
+than theoretical. Switch when **any** of these holds:
+
+1. #213 still fails after being reshaped to select-a-candidate, and a
+   frontier-class model is needed. (At ~$0.014/call for a top model, a $5
+   balance is ~350 calls — ample for a rare, high-value action.)
+2. Embeddings are needed. If pgvector ever happens (§8.3), Workers AI has
+   embedding models built in and OpenRouter's coverage should be checked first.
+3. Concentrating hosting *and* inference in one vendor becomes a concern. This
+   is the real cost of the decision and it is not zero.
+
+The `ModelProvider` interface (§5.4) is what keeps this a one-file change.
 
 ### 4.5 Retention, and the thing Wander has not decided
 
@@ -726,14 +765,26 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 
 | Phase | Database | Server | Frontend | Complexity |
 |---|---|---|---|---|
-| **0 · Foundation** | `ai_usage` + RLS | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
+| **0 · Foundation** | `ai_usage` + `record_ai_usage` RPC | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call, **no credentials** | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
 | **1 · Paste anything** | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
-| **2 · Improve this day** | `get_ai_day_context` | Context builder, reasoning model, action authorization | Preview cards, approve/reject, apply via existing mutations | High |
+| **2 · Improve this day** | `get_ai_day_context` | **Deterministic candidate generation** + model *selects and explains* (see below) | Preview cards, approve/reject, apply via existing mutations | High |
 | **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
 | **4 · Ask Wander** | Query RPCs per intent | Intent classification, deterministic answers first | Cmd-K row, single-turn, no history | High |
 | **5 · pgvector** | `vector` extension, embeddings | Semantic retrieval | — | Medium |
 
 Phases 4 and 5 are gated on trigger conditions (§3.3, §8.3), not on the calendar.
+
+**Why phase 2 changed shape.** It was originally "the model proposes changes."
+Measurement killed that: two models three tiers apart (§4.4) made the *identical*
+mistake — each moved an activity to resolve one conflict while creating another
+downstream, and each missed an 8.5 km backtrack it had been handed as data.
+Scaling the model did not fix it, so the task is wrong rather than the model.
+
+Generate the candidate orderings **in code** — the distances are already
+computed — and give the model one job: pick one and explain why. Selection is a
+far easier task than generation, it is verifiable because every candidate was
+constructed by us, and both observed failure modes become impossible by
+construction rather than by prompt instruction.
 
 **Why "Paste anything" is phase 1 rather than "Improve this day":** it needs no
 context builder, no RPC, and no retrieval — the entire prompt is the pasted
@@ -765,18 +816,19 @@ functions/                 # Cloudflare Pages Functions — file-routed
                            # Response out. Keep it ~30 lines so §5.1's
                            # "reversing this is an afternoon" stays true.
 
-src/server/ai/             # plain TypeScript — runs on Workers or Deno
+src/server/ai/             # plain TypeScript — runs on Workers, Deno or Node
   handler.ts               # auth, quota, kill switch, dispatch, usage logging
-  context.ts               # context builder + token budgeting
-  prompts.ts               # system prompts, one per intent
-  provider.ts              # model call + structured output
   schemas.ts               # zod request/response/action contracts
+  context.ts               # context builder + token budgeting  (phase 2)
+  prompts.ts               # system prompts, one per intent      (phase 1)
+  provider.ts              # model call + structured output       (phase 1)
 
 src/features/ai/
-  api.ts                   # useImproveDay() etc. — the existing convention
-  schemas.ts               # mirrors the server schemas; a test asserts parity
-  SuggestionPreview.tsx
-  index.ts
+  api.ts                   # callAi() + useAiRequest() — POSTs to /api/ai
+  SuggestionPreview.tsx    # (arrives with phase 2)
+
+wrangler.toml              # Pages config; the [ai] binding lives here. NEVER
+                           # a secret — this file is committed.
 ```
 
 The split between `functions/api/ai.ts` and `src/server/ai/` is the insurance

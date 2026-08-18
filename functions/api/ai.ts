@@ -9,17 +9,33 @@
 
   Keep it thin. Anything with a rule in it belongs in the handler, where the
   Node test runner can reach it without a Workers environment.
+
+  NOTE WHAT IS ABSENT: there is no secret here. The Supabase URL and anon key
+  are public by design (RLS is the boundary), the ledger write goes through a
+  SECURITY DEFINER RPC instead of a service-role key, and Workers AI is a
+  platform-authenticated binding rather than an API credential. The endpoint
+  holds nothing worth stealing.
 */
 import { createClient } from '@supabase/supabase-js'
+import {
+  PUBLIC_SUPABASE_ANON_KEY,
+  PUBLIC_SUPABASE_URL,
+} from '../../src/lib/supabase-public'
 import { handleAiRequest } from '../../src/server/ai/handler'
 import type { Db } from '../../src/server/ai/handler'
 
 interface Env {
-  SUPABASE_URL: string
-  SUPABASE_ANON_KEY: string
-  SUPABASE_SERVICE_ROLE_KEY: string
+  /** Optional overrides; the public defaults are used when unset. */
+  SUPABASE_URL?: string
+  SUPABASE_ANON_KEY?: string
   /** Kill switch. Anything other than the exact string 'true' disables AI. */
   AI_ENABLED?: string
+  /**
+   * Workers AI binding — declared in wrangler.toml, authenticated by the
+   * platform. Unused until the first model call lands (#212); typed now so
+   * that slice is a handler change rather than a plumbing change.
+   */
+  AI?: unknown
 }
 
 /**
@@ -48,43 +64,29 @@ const json = (body: unknown, status: number): Response =>
   })
 
 export async function onRequestPost({ request, env }: PagesContext): Promise<Response> {
-  // Fail closed on missing configuration. A function that cannot build its
-  // clients must not fall through to some degraded path — there isn't one.
-  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY || !env.SUPABASE_SERVICE_ROLE_KEY) {
-    return json(
-      { ok: false, reason: 'disabled', message: 'Wander AI is not configured.' },
-      503,
-    )
-  }
-
   let body: unknown
   try {
     body = await request.json()
   } catch {
-    return json(
-      { ok: false, reason: 'forbidden', message: 'Expected a JSON body.' },
-      400,
-    )
+    return json({ ok: false, reason: 'forbidden', message: 'Expected a JSON body.' }, 400)
   }
 
-  // Reads run as the caller so RLS applies exactly as it does in the browser.
-  // `persistSession: false` matters here: this is a shared, stateless worker
-  // and there is no per-user storage to write a session into.
-  const asCaller = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: request.headers.get('Authorization') ?? '' } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  }) as unknown as Db
-
-  // Service role: the usage ledger and nothing else. See handler.ts.
-  const asService = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  }) as unknown as Db
+  // Runs as the caller so RLS applies exactly as it does in the browser.
+  // `persistSession: false` matters: this is a shared, stateless worker with no
+  // per-user storage to write a session into.
+  const db = createClient(
+    env.SUPABASE_URL || PUBLIC_SUPABASE_URL,
+    env.SUPABASE_ANON_KEY || PUBLIC_SUPABASE_ANON_KEY,
+    {
+      global: { headers: { Authorization: request.headers.get('Authorization') ?? '' } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    },
+  ) as unknown as Db
 
   const { status, body: result } = await handleAiRequest(body, {
-    asCaller,
-    asService,
+    db,
     // Explicit opt-in. Unset, misspelled, or bound only to production means
-    // preview deployments answer "disabled" instead of spending money on
+    // preview deployments answer "disabled" rather than serving requests on
     // every pull request.
     enabled: env.AI_ENABLED === 'true',
   })

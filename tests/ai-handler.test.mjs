@@ -38,45 +38,52 @@ const TRIP = 'de300000-0000-4000-8000-000000000001'
 /**
  * A fake Supabase client covering the two shapes handler.ts uses: a
  * `maybeSingle()` membership read and a counting `select(…, {head:true})`.
- * `inserted` captures the usage ledger so tests can assert what was recorded.
+ * `rpcCalls` captures the usage ledger so tests can assert what was recorded.
+ *
+ * `throwOn` distinguishes which read blows up. It matters because both reads
+ * now go through ONE caller-scoped client (the service-role key was removed in
+ * favour of the record_ai_usage RPC), so a blanket "throw" would always trip
+ * the membership guard first and the quota's fail-closed path would never be
+ * reached — the test would pass while asserting nothing.
  */
-function fakeDb({ member = { id: 'm1' }, count = 0, error = null, throws = false } = {}) {
-  const inserted = []
-  const db = {
-    inserted,
+function fakeDb({ member = { id: 'm1' }, count = 0, quotaError = null, memberError = null, throwOn = null } = {}) {
+  const rpcCalls = []
+  return {
+    rpcCalls,
     from() {
       return {
         select() {
           return {
             eq() {
               return {
+                // Errors are per-read, not shared: both go through one client
+                // now, so a single `error` flag would trip the membership guard
+                // and the quota assertion below would never be exercised.
                 gte: async () => {
-                  if (throws) throw new Error('boom')
-                  return { count, error }
+                  if (throwOn === 'quota' || throwOn === 'all') throw new Error('boom')
+                  return { count, error: quotaError }
                 },
                 maybeSingle: async () => {
-                  if (throws) throw new Error('boom')
-                  return { data: member, error }
+                  if (throwOn === 'membership' || throwOn === 'all') throw new Error('boom')
+                  return { data: member, error: memberError }
                 },
               }
             },
           }
         },
-        insert: async (row) => {
-          inserted.push(row)
-          return { error: null }
-        },
       }
     },
+    rpc: async (fn, args) => {
+      rpcCalls.push({ fn, args })
+      return { error: null }
+    },
   }
-  return db
 }
 
 const validBody = { intent: 'improve_day', tripId: TRIP, day: '2026-09-04' }
 
 const deps = (over = {}) => ({
-  asCaller: fakeDb(),
-  asService: fakeDb(),
+  db: fakeDb(),
   enabled: true,
   ...over,
 })
@@ -84,13 +91,12 @@ const deps = (over = {}) => ({
 /* ── kill switch ─────────────────────────────────────────────────────────── */
 
 test('the kill switch refuses before touching the database', async () => {
-  const asCaller = fakeDb()
-  const asService = fakeDb()
-  const res = await handleAiRequest(validBody, { asCaller, asService, enabled: false })
+  const db = fakeDb()
+  const res = await handleAiRequest(validBody, { db, enabled: false })
   assert.equal(res.status, 503)
   assert.equal(res.body.ok, false)
   assert.equal(res.body.reason, 'disabled')
-  assert.equal(asService.inserted.length, 0, 'nothing recorded — nothing happened')
+  assert.equal(db.rpcCalls.length, 0, 'nothing recorded — nothing happened')
 })
 
 /* ── request shape: the "no free-text prompt" property ───────────────────── */
@@ -133,66 +139,64 @@ test('a malformed day is rejected', async () => {
 /* ── membership: the RLS read IS the authentication ──────────────────────── */
 
 test('a non-member gets 403, not an empty success', async () => {
-  const res = await handleAiRequest(validBody, deps({ asCaller: fakeDb({ member: null }) }))
+  const res = await handleAiRequest(validBody, deps({ db: fakeDb({ member: null }) }))
   assert.equal(res.status, 403)
   assert.equal(res.body.reason, 'forbidden')
 })
 
 test('a failed membership read refuses rather than continuing', async () => {
   // Fails closed: an authorization query we could not run is not permission.
-  const res = await handleAiRequest(validBody, deps({ asCaller: fakeDb({ throws: true }) }))
+  const res = await handleAiRequest(validBody, deps({ db: fakeDb({ throwOn: 'membership' }) }))
   assert.equal(res.status, 403)
 })
 
 /* ── quota: per trip, and fails closed ───────────────────────────────────── */
 
 test('a trip at its limit is refused, and the refusal is recorded', async () => {
-  const asService = fakeDb({ count: QUOTA_PER_TRIP })
-  const res = await handleAiRequest(validBody, deps({ asService }))
+  const db = fakeDb({ count: QUOTA_PER_TRIP })
+  const res = await handleAiRequest(validBody, deps({ db }))
   assert.equal(res.status, 429)
   assert.equal(res.body.reason, 'quota')
-  assert.equal(asService.inserted.length, 1, 'refusals cost a row too')
-  assert.equal(asService.inserted[0].outcome, 'refused')
+  assert.equal(db.rpcCalls.length, 1, 'refusals cost a row too')
+  assert.equal(db.rpcCalls[0].args.p_outcome, 'refused')
 })
 
 test('a trip one under its limit is served', async () => {
-  const asService = fakeDb({ count: QUOTA_PER_TRIP - 1 })
-  const res = await handleAiRequest(validBody, deps({ asService }))
+  const db = fakeDb({ count: QUOTA_PER_TRIP - 1 })
+  const res = await handleAiRequest(validBody, deps({ db }))
   assert.equal(res.status, 200)
   assert.equal(res.body.ok, true)
-  assert.equal(asService.inserted[0].outcome, 'ok')
+  assert.equal(db.rpcCalls[0].args.p_outcome, 'ok')
 })
 
 test('an unreadable quota refuses — never fails open', async () => {
   // This is the one that matters. Failing open here would delete the only
   // bound on what a leaked invite link can cost.
-  const errored = await handleAiRequest(validBody, deps({ asService: fakeDb({ count: null, error: 'nope' }) }))
+  const errored = await handleAiRequest(validBody, deps({ db: fakeDb({ count: null, quotaError: 'nope' }) }))
   assert.equal(errored.status, 503)
   assert.equal(errored.body.reason, 'quota')
 
-  const threw = await handleAiRequest(validBody, deps({ asService: fakeDb({ throws: true }) }))
-  assert.equal(threw.status, 503)
+  const threw = await handleAiRequest(validBody, deps({ db: fakeDb({ throwOn: 'quota' }) }))
+  assert.equal(threw.status, 503, 'a throwing quota read must refuse, not proceed')
 })
 
 /* ── the ledger ──────────────────────────────────────────────────────────── */
 
 test('a served call records the trip, member and feature', async () => {
-  const asService = fakeDb()
-  await handleAiRequest(validBody, deps({ asService }))
-  assert.deepEqual(asService.inserted[0], {
-    trip_id: TRIP, member_id: 'm1', feature: 'improve_day', outcome: 'ok',
+  const db = fakeDb()
+  await handleAiRequest(validBody, deps({ db }))
+  assert.equal(db.rpcCalls[0].fn, 'record_ai_usage')
+  assert.deepEqual(db.rpcCalls[0].args, {
+    p_trip_id: TRIP, p_feature: 'improve_day', p_outcome: 'ok',
   })
 })
 
 test('a ledger write failure does not break the response', async () => {
   // Losing a row costs a little quota accuracy; throwing here would cost the
   // user their answer for a bookkeeping problem.
-  const asService = fakeDb()
-  asService.from = () => ({
-    select: () => ({ eq: () => ({ gte: async () => ({ count: 0, error: null }) }) }),
-    insert: async () => { throw new Error('ledger down') },
-  })
-  const res = await handleAiRequest(validBody, deps({ asService }))
+  const db = fakeDb()
+  db.rpc = async () => { throw new Error('ledger down') }
+  const res = await handleAiRequest(validBody, deps({ db }))
   assert.equal(res.status, 200)
 })
 
