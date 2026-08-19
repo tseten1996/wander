@@ -360,12 +360,20 @@ test('an unreadable trip row degrades the prompt rather than the request', async
   assert.equal(provider.calls.length, 1)
 })
 
-test('with no provider configured the endpoint reads as switched off', async () => {
+test('a missing binding does not read as the kill switch', async () => {
+  // Two different problems with two different fixes: a flag someone chose to
+  // set, versus a binding nobody attached. They shared a sentence once, and it
+  // sent a debugging session to the wrong dashboard page.
   const db = fakeDb()
   const res = await handleAiRequest(paste(), deps({ db, provider: undefined }))
   assert.equal(res.status, 503)
-  assert.equal(res.body.reason, 'disabled')
+  assert.equal(res.body.reason, 'disabled', 'the UI should stop offering it either way')
+  assert.match(res.body.message, /no model is connected/i)
   assert.equal(db.rpcCalls.length, 0, 'no call was made, so nothing is recorded')
+
+  const off = await handleAiRequest(paste(), { db: fakeDb(), enabled: false })
+  assert.notEqual(off.body.message, res.body.message, 'the two causes must be distinguishable')
+  assert.match(off.body.message, /switched off/i)
 })
 
 test('a thrown model call refuses and still costs a ledger row', async () => {

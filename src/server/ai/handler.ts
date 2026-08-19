@@ -244,10 +244,20 @@ async function parseBooking(
 ): Promise<HandlerResult> {
   const feature = 'parse_booking'
 
-  // No binding configured is a runtime with AI switched off, not an error.
-  // Not recorded, for the same reason the kill switch is not: nothing happened.
+  // No binding configured. Still not an error, and still not recorded — but
+  // deliberately NOT the same sentence as the kill switch above.
+  //
+  // These are two different problems with two different fixes: one is a flag
+  // someone chose to set, the other is a binding nobody attached. Saying
+  // "switched off" for both sent a real debugging session looking at the flag
+  // while the binding was the thing missing, which is the same failure the
+  // client-side transport messages had.
   if (!deps.provider) {
-    return refuse('disabled', 'Wander AI is switched off right now. Nothing was sent anywhere.', 503)
+    return refuse(
+      'disabled',
+      'Wander AI is switched on, but no model is connected to it yet.',
+      503,
+    )
   }
 
   const range = await tripRange(deps, tripId)
