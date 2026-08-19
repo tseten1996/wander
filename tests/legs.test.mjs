@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { hasRange, hasLegs, legForDay, groupDaysByLeg } from '../src/features/destinations/legs.ts'
+import { hasRange, hasLegs, legForDay, groupDaysByLeg, mergeLegWeather } from '../src/features/destinations/legs.ts'
 
 // Minimal leg factory — only the fields the derivation reads.
 const leg = (id, name, start_date, end_date, position = 0) => ({
@@ -92,4 +92,66 @@ test('groupDaysByLeg starts a fresh group each time the leg changes', () => {
   const days = ['2026-08-01', '2026-08-20', '2026-08-02']
   const groups = groupDaysByLeg(days, [paris])
   assert.deepEqual(groups.map((g) => g.leg?.name ?? 'Unassigned'), ['Paris', 'Unassigned', 'Paris'])
+})
+
+// --- mergeLegWeather (#249, weather per leg) ------------------------------
+
+// A leg with coordinates, plus the ranged legs used for day-ownership. Legs
+// with a range but no coords still own their days (so those days must not
+// borrow the trip default), they just contribute no forecast.
+const legCoord = (id, name, start_date, end_date, position = 0) => ({
+  id, name, start_date, end_date, position, latitude: 1, longitude: 1,
+})
+const w = (date, tempMax) => ({ date, tempMax, tempMin: tempMax - 5, code: 0 })
+
+test('mergeLegWeather with no legs returns exactly the trip-default map', () => {
+  const tripDays = [w('2026-08-01', 20), w('2026-08-02', 21)]
+  const map = mergeLegWeather(tripDays, [], [])
+  assert.equal(map.size, 2)
+  assert.equal(map.get('2026-08-01').tempMax, 20)
+  assert.equal(map.get('2026-08-02').tempMax, 21)
+})
+
+test('mergeLegWeather gives each day its owning leg forecast, not the trip default', () => {
+  // Trip default would put 10° everywhere; the Kyoto leg owns Aug 4 and must win.
+  const kyoto = legCoord('k', 'Kyoto', '2026-08-04', '2026-08-06', 1)
+  const tripDays = [w('2026-08-04', 10), w('2026-08-05', 10)]
+  const legDays = [w('2026-08-04', 30), w('2026-08-05', 31)]
+  const map = mergeLegWeather(tripDays, [{ leg: kyoto, days: legDays }], [kyoto])
+  assert.equal(map.get('2026-08-04').tempMax, 30)
+  assert.equal(map.get('2026-08-05').tempMax, 31)
+})
+
+test('mergeLegWeather never lets a leg-owned day borrow the trip default', () => {
+  // A coordinate-less leg (no forecast) owns Aug 4–6; those days must stay
+  // absent, not fall back to the 10° trip default.
+  const dateless = leg('d', 'Osaka', '2026-08-04', '2026-08-06', 1)
+  const tripDays = [w('2026-08-04', 10), w('2026-08-05', 10), w('2026-08-06', 10)]
+  const map = mergeLegWeather(tripDays, [], [dateless])
+  assert.equal(map.has('2026-08-04'), false)
+  assert.equal(map.has('2026-08-05'), false)
+  assert.equal(map.has('2026-08-06'), false)
+})
+
+test('mergeLegWeather falls back to the trip default for days no leg owns', () => {
+  const kyoto = legCoord('k', 'Kyoto', '2026-08-04', '2026-08-06', 1)
+  const tripDays = [w('2026-08-01', 12), w('2026-08-05', 12)] // Aug 1 is outside every leg
+  const legDays = [w('2026-08-05', 30)]
+  const map = mergeLegWeather(tripDays, [{ leg: kyoto, days: legDays }], [kyoto])
+  assert.equal(map.get('2026-08-01').tempMax, 12) // trip default fills the gap day
+  assert.equal(map.get('2026-08-05').tempMax, 30) // leg still wins its own day
+})
+
+test('mergeLegWeather resolves overlapping legs to the earlier one in route order', () => {
+  const first = legCoord('a', 'Paris', '2026-08-04', '2026-08-06', 1)
+  const second = legCoord('b', 'Lyon', '2026-08-05', '2026-08-07', 2)
+  const map = mergeLegWeather(
+    [],
+    [
+      { leg: first, days: [w('2026-08-05', 20)] },
+      { leg: second, days: [w('2026-08-05', 25)] },
+    ],
+    [first, second],
+  )
+  assert.equal(map.get('2026-08-05').tempMax, 20) // earliest leg claims the shared day
 })
