@@ -47,6 +47,26 @@ It assumes the standard Supabase role baseline (the `authenticated` role holds
 the default table/function grants Supabase provisions). Any Supabase project —
 the local stack or a scratch/staging project — has this out of the box.
 
+## When it runs
+
+`.github/workflows/rls-tests.yml` runs this suite in CI on every pull request
+that touches `supabase/**` (and is `workflow_dispatch`-able). RLS is Wander's
+entire authorization layer, and the permission matrix can only change when a
+migration does — so a schema-change PR that widens a policy into a cross-trip
+leak fails this check before it can merge. The job stands up a throwaway
+`postgres:16` container, applies the Supabase role/schema baseline
+(`ci/supabase_baseline.sql`), applies every migration in order, then runs this
+suite — entirely free-tier, with no live Supabase project and no secret.
+`scripts/run-rls-tests.sh` is the exact sequence, runnable locally too:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run test:rls
+```
+
+The static counterpart, `scripts/check-invariants.mjs` (the `guards` job), only
+checks that a policy *exists* on each new table; this suite checks that each
+policy *enforces* correctly.
+
 ## Running it
 
 ### Against the local Supabase stack (recommended)

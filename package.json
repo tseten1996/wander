@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test:unit": "node --test tests/*.test.mjs",
+    "test:rls": "bash scripts/run-rls-tests.sh",
     "test": "node --test tests/*.test.mjs && node tests/smoke.mjs",
     "screenshot": "node scripts/screenshot.mjs",
     "screenshot:mock": "node scripts/screenshot-mock.mjs"
