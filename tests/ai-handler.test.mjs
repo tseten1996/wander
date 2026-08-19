@@ -70,6 +70,10 @@ const DEFAULT_DAY_CONTEXT = {
  */
 function fakeDb({
   member = { id: 'm1' },
+  // How many member rows the caller can SEE for this trip. Defaults to 2
+  // because that is what a real trip looks like the moment a friend joins, and
+  // because the old default of one row hid a 403 bug from every test here.
+  memberRows = 2,
   count = 0,
   quotaError = null,
   memberError = null,
@@ -95,15 +99,42 @@ function fakeDb({
                   if (throwOn === 'quota' || throwOn === 'all') throw new Error('boom')
                   return { count, error: quotaError }
                 },
+                // `.limit(n)` narrows before the single-row read, exactly as
+                // PostgREST does. Modelled because it is the difference between
+                // a working membership check and a 403 on every shared trip.
+                limit: (n) => ({
+                  maybeSingle: async () => {
+                    if (table === 'trips') {
+                      if (throwOn === 'trip' || throwOn === 'all') throw new Error('boom')
+                      return { data: trip, error: null }
+                    }
+                    if (throwOn === 'membership' || throwOn === 'all') throw new Error('boom')
+                    if (!member || memberRows === 0) return { data: null, error: memberError }
+                    return { data: n >= 1 ? member : null, error: memberError }
+                  },
+                }),
                 maybeSingle: async () => {
                   // The trips read only anchors year-less dates in the prompt,
                   // so it is a separate, non-authorizing lookup and must not be
-                  // conflated with the membership one.
+                  // conflated with the membership one. `trips.id` is unique, so
+                  // this one genuinely does return at most a single row.
                   if (table === 'trips') {
                     if (throwOn === 'trip' || throwOn === 'all') throw new Error('boom')
                     return { data: trip, error: null }
                   }
                   if (throwOn === 'membership' || throwOn === 'all') throw new Error('boom')
+                  if (!member || memberRows === 0) return { data: null, error: memberError }
+                  // THE REAL BEHAVIOUR: PostgREST's maybeSingle() is an error
+                  // when more than one row matches, not a silent "first row".
+                  // Reproducing that here is the whole point — the previous fake
+                  // always returned one row, so an unlimited membership read
+                  // passed every test and 403'd every shared trip in production.
+                  if (memberRows > 1) {
+                    return {
+                      data: null,
+                      error: { code: 'PGRST116', message: 'JSON object requested, multiple rows returned' },
+                    }
+                  }
                   return { data: member, error: memberError }
                 },
               }
@@ -190,6 +221,19 @@ test('a non-member gets 403, not an empty success', async () => {
   const res = await handleAiRequest(validBody, deps({ db: fakeDb({ member: null }) }))
   assert.equal(res.status, 403)
   assert.equal(res.body.reason, 'forbidden')
+})
+
+test('a trip with several members is served, not refused', async () => {
+  // The regression. members_select lets a member see EVERY member of their
+  // trip, so the membership filter matches one row alone and several the moment
+  // a friend joins — and maybeSingle() calls "more than one row" an error.
+  // Without a limit this refused every shared trip with "You do not have
+  // access to this trip", which is the most alarming possible way to be wrong:
+  // it reads as a permissions problem in an app whose whole point is sharing.
+  for (const memberRows of [1, 2, 5]) {
+    const res = await handleAiRequest(validBody, deps({ db: fakeDb({ memberRows }) }))
+    assert.equal(res.status, 200, `a ${memberRows}-member trip must be served`)
+  }
 })
 
 test('a failed membership read refuses rather than continuing', async () => {

@@ -46,6 +46,7 @@ export interface Db {
     ) => {
       eq: (column: string, value: unknown) => {
         gte: (column: string, value: string) => Promise<{ count: number | null; error: unknown }>
+        limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown; error: unknown }> }
         maybeSingle: () => Promise<{ data: unknown; error: unknown }>
       }
     }
@@ -172,11 +173,22 @@ export async function handleAiRequest(
   //    no row back, which is both the authorization check and the proof the
   //    token is real. Deliberately a distinct 403 rather than an empty success,
   //    so a genuine bug does not look like an empty trip.
+  //
+  //    `.limit(1)` is load-bearing, not a micro-optimisation. The members_select
+  //    policy lets a member see EVERY member of their trip, so this filter
+  //    matches one row on a solo trip and several as soon as anyone joins — and
+  //    `.maybeSingle()` treats "more than one row" as an error. Without the
+  //    limit this refused every multi-member trip with "You do not have access",
+  //    which is both wrong and the most alarming way to be wrong.
+  //
+  //    Any visible row is sufficient proof: RLS only exposes member rows for
+  //    trips the caller belongs to, so seeing one at all IS the membership.
   try {
     const { data, error } = await deps.db
       .from('members')
       .select('id')
       .eq('trip_id', tripId)
+      .limit(1)
       .maybeSingle()
     if (error || !data) {
       return refuse('forbidden', 'You do not have access to this trip.', 403)
