@@ -13,6 +13,7 @@
  * needs `@/lib` helpers lives in `route.ts`, keeping this file dependency-free.
  */
 import type { Destination } from '@/types'
+import type { DailyWeather } from '@/lib/weather'
 
 /** A leg that can actually contain calendar days — it has a full date range.
  *  A leg with a name but no (or half a) range is still shown in the route, but
@@ -80,4 +81,52 @@ export function groupDaysByLeg(sortedDays: string[], destinations: Destination[]
     }
   }
   return groups
+}
+
+/** One leg's fetched forecast — the ranged, geocoded legs paired with their
+ *  daily weather (empty when the leg's window fell outside the forecast
+ *  horizon). */
+export interface LegForecast {
+  leg: Destination
+  days: DailyWeather[]
+}
+
+/**
+ * Merge per-leg forecasts and the single trip-destination forecast into one
+ * `YYYY-MM-DD → DailyWeather` map, so a day in Kyoto shows Kyoto's weather
+ * rather than the trip's one destination (#249, epic #196).
+ *
+ * The rules, in priority order:
+ * - A day owned by a leg takes **that leg's** forecast. `legForecasts` is in
+ *   route order, so the earliest leg wins any overlap (matching `legForDay`).
+ * - A day owned by any ranged leg **never** borrows the trip default — a leg
+ *   with no coordinates, or one whose days fall beyond the ~16-day horizon,
+ *   simply has no entry (the UI reads "weather unavailable") instead of
+ *   silently showing a different city's forecast.
+ * - A day in no leg's range falls back to the trip-destination forecast (or,
+ *   if that too has no entry, to nothing).
+ *
+ * With no ranged legs this returns exactly the trip-default map, so a
+ * single-destination (or legless) trip behaves precisely as before.
+ */
+export function mergeLegWeather(
+  tripDays: DailyWeather[],
+  legForecasts: LegForecast[],
+  rangedLegs: Destination[],
+): Map<string, DailyWeather> {
+  const map = new Map<string, DailyWeather>()
+  // Legs first, in route order — the earliest leg claims a shared day.
+  for (const { days } of legForecasts) {
+    for (const d of days) {
+      if (!map.has(d.date)) map.set(d.date, d)
+    }
+  }
+  // Trip default fills only the days no ranged leg owns; a leg-owned day with
+  // no forecast stays absent rather than borrowing another leg's city.
+  for (const d of tripDays) {
+    if (map.has(d.date)) continue
+    if (rangedLegs.length && legForDay(d.date, rangedLegs)) continue
+    map.set(d.date, d)
+  }
+  return map
 }

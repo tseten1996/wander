@@ -674,7 +674,7 @@ export default function ItineraryPage() {
   const { trip, me } = useTripContext()
   const itinerary = useItinerary(trip.id)
   const destinations = useDestinations(trip.id).data ?? []
-  const weather = useTripWeather(trip)
+  const weather = useTripWeather(trip, destinations)
   // One-tap "Add to itinerary" from a Nearby map suggestion (#165). A found
   // place becomes a plain itinerary item — name + coordinates prefilled, day
   // defaulted to the trip start (editable afterwards like any other item), so

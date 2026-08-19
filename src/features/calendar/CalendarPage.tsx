@@ -98,12 +98,13 @@ const KIND_ICON = {
 export default function CalendarPage() {
   const { trip } = useTripContext()
   const events = useCalendarEvents(trip.id)
-  const weather = useTripWeather(trip)
+  const destinations = useDestinations(trip.id).data ?? []
+  const weather = useTripWeather(trip, destinations)
   const { unit } = useTempUnit()
   // Legs that own days (a full date range). Days in a leg's range are tinted
   // with its colour and labelled below; in-trip days in no leg stay neutral
   // ("Unassigned"). Empty for a single-destination trip → calendar unchanged.
-  const rangedLegs = (useDestinations(trip.id).data ?? []).filter(hasRange)
+  const rangedLegs = destinations.filter(hasRange)
   const [month, setMonth] = React.useState(() =>
     trip.start_date ? parseISO(trip.start_date) : new Date()
   )
