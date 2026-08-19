@@ -199,13 +199,89 @@ export interface NearbyOptions {
 }
 
 /**
- * Fetch categorized POIs around `center` from OpenStreetMap via Overpass,
- * trying each public mirror until one answers. Resolves to the parsed places
- * (possibly empty — a real "nothing here"); throws only when every mirror
- * fails or the request is aborted, so the calling TanStack Query degrades to a
- * quiet "suggestions unavailable" rather than breaking the map.
+ * Whether `/api/nearby` has told us it has no key configured (#256).
+ *
+ * Module-level and sticky for the session, because the answer is a property of
+ * the deployment rather than of one search: the GitHub Pages origin has no
+ * /api/* at all, and a Cloudflare deployment without GEOAPIFY_KEY will answer
+ * the same way every time. Paying a round trip per search to relearn that is
+ * pure latency on the path that is already the degraded one.
+ */
+let endpointUnavailable = false
+
+/** Test seam — the flag is session state, and a test should not inherit it. */
+export function resetNearbyEndpointState(): void {
+  endpointUnavailable = false
+}
+
+/**
+ * Try the keyed provider behind our own origin (#256).
+ *
+ * Returns null — never throws — for every "use the other path" outcome: no
+ * endpoint (GitHub Pages), no key, upstream failure, malformed body. An abort
+ * is the one thing that propagates, because the caller navigating away must
+ * not be answered with a fallback request nobody is waiting for.
+ */
+async function fetchViaEndpoint(
+  center: { lat: number; lon: number },
+  { radiusMeters, limit }: { radiusMeters: number; limit: number },
+  signal?: AbortSignal,
+): Promise<NearbyPlace[] | null> {
+  if (endpointUnavailable) return null
+  const query = `lat=${center.lat}&lon=${center.lon}&r=${Math.round(radiusMeters)}&limit=${limit}`
+  try {
+    const res = await fetch(`/api/nearby?${query}`, { signal })
+    // 501 is the endpoint saying "no key here" — a settled fact, so stop
+    // asking. Any other failure might be transient, so only this one sticks.
+    if (res.status === 501) {
+      endpointUnavailable = true
+      return null
+    }
+    if (!res.ok) return null
+    const body: unknown = await res.json()
+    const places =
+      body && typeof body === 'object' ? (body as { places?: unknown }).places : undefined
+    return Array.isArray(places) ? (places as NearbyPlace[]) : null
+  } catch (err) {
+    if (signal?.aborted) throw err
+    // On GitHub Pages this is a 404 HTML page failing to parse as JSON, which
+    // is also a settled fact about the origin rather than a passing blip.
+    endpointUnavailable = true
+    return null
+  }
+}
+
+/**
+ * Fetch categorized POIs around `center`.
+ *
+ * Tries `/api/nearby` first — same origin, so no CORS, keyed provider, edge
+ * cached — then falls back to the public Overpass mirrors, which is what this
+ * function was before #256 and remains for every origin and configuration
+ * where the endpoint is not available.
+ *
+ * Resolves to the parsed places (possibly empty — a real "nothing here");
+ * throws only when the endpoint AND every mirror fails, or the request is
+ * aborted, so the calling TanStack Query degrades to a quiet "suggestions
+ * unavailable" rather than breaking the map.
  */
 export async function fetchNearbyPlaces(
+  center: { lat: number; lon: number },
+  options: NearbyOptions = {},
+  signal?: AbortSignal,
+): Promise<NearbyPlace[]> {
+  const { radiusMeters = 1500, limit = 24 } = options
+  const viaEndpoint = await fetchViaEndpoint(center, { radiusMeters, limit }, signal)
+  if (viaEndpoint) return viaEndpoint
+  return fetchViaOverpass(center, { radiusMeters, limit }, signal)
+}
+
+/**
+ * The original keyless path: OpenStreetMap via Overpass, trying each public
+ * mirror until one answers. Unchanged by #256 and deliberately kept — a free
+ * tier can change its terms, a community server cannot send you a bill, and
+ * this is what makes losing the key cost quality rather than the feature.
+ */
+export async function fetchViaOverpass(
   center: { lat: number; lon: number },
   { radiusMeters = 1500, limit = 24 }: NearbyOptions = {},
   signal?: AbortSignal,

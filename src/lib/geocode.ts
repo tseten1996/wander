@@ -1,9 +1,19 @@
 /*
-  Free, keyless place lookup via Photon (komoot's public OpenStreetMap
-  geocoder — https://photon.komoot.io). Used only for debounced autocomplete
-  suggestions; the destination/location fields stay plain text underneath,
-  so a slow, rate-limited, or unreachable geocoder just means no dropdown
-  rather than a broken field.
+  Place lookup for the autocomplete dropdown and for pinning a typed address on
+  save (#201).
+
+  Two providers, in order (#257, epic #255):
+
+    1. `/api/geocode` — Geoapify behind our own origin, so the key stays
+       server-side and the response is edge-cached.
+    2. Photon (komoot's public OpenStreetMap geocoder) — free, keyless, and
+       what this module was before #257.
+
+  The second is not a legacy path awaiting removal. It is what makes a missing
+  key, an exhausted quota, or the GitHub Pages origin (which has no /api/*)
+  cost resolution *quality* rather than the feature. Either way the
+  destination/location fields stay plain text underneath, so a slow or
+  unreachable geocoder means no dropdown rather than a broken field.
 */
 
 const PHOTON_URL = 'https://photon.komoot.io/api/'
@@ -71,9 +81,50 @@ export function formatPlaceLabel(props: PhotonProperties): string {
   return unique.join(', ')
 }
 
+/**
+ * Whether `/api/geocode` has told us it has no key configured. Sticky for the
+ * session for the same reason as places.ts — it is a fact about the deployment,
+ * and re-checking it per keystroke is latency on the degraded path.
+ */
+let endpointUnavailable = false
+
+/** Test seam — the flag is session state, and a test should not inherit it. */
+export function resetGeocodeEndpointState(): void {
+  endpointUnavailable = false
+}
+
+/**
+ * Ask our own endpoint, or null for every "use Photon instead" outcome.
+ *
+ * Never throws except on abort: a caller that navigated away must not have a
+ * fallback request issued on its behalf.
+ */
+async function viaEndpoint(query: string, params: string, signal?: AbortSignal): Promise<unknown | null> {
+  if (endpointUnavailable) return null
+  try {
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(query)}&${params}`, { signal })
+    if (res.status === 501) {
+      endpointUnavailable = true
+      return null
+    }
+    if (!res.ok) return null
+    return await res.json()
+  } catch (err) {
+    if (signal?.aborted) throw err
+    endpointUnavailable = true
+    return null
+  }
+}
+
 export async function searchPlaces(query: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
   const trimmed = query.trim()
   if (trimmed.length < 3) return []
+
+  const answer = await viaEndpoint(trimmed, 'limit=6', signal)
+  if (answer && typeof answer === 'object') {
+    const suggestions = (answer as { suggestions?: unknown }).suggestions
+    if (Array.isArray(suggestions)) return suggestions as PlaceSuggestion[]
+  }
 
   const url = `${PHOTON_URL}?q=${encodeURIComponent(trimmed)}&limit=6&lang=en`
   const res = await fetch(url, { signal })
@@ -104,6 +155,16 @@ export async function searchPlaces(query: string, signal?: AbortSignal): Promise
 export async function geocodeFirst(query: string, signal?: AbortSignal): Promise<Coords | null> {
   const trimmed = query.trim()
   if (trimmed.length < 3) return null
+
+  const answer = await viaEndpoint(trimmed, 'mode=one', signal)
+  if (answer && typeof answer === 'object') {
+    const coords = (answer as { coords?: unknown }).coords
+    // `coords: null` is a real answer — "we looked, nothing matched" — and must
+    // not fall through to Photon as if the endpoint had failed. Only an absent
+    // key or a failed call reaches the fallback.
+    if (coords === null) return null
+    if (coords && typeof coords === 'object') return coords as Coords
+  }
 
   const url = `${PHOTON_URL}?q=${encodeURIComponent(trimmed)}&limit=1&lang=en`
   const res = await fetch(url, { signal })
