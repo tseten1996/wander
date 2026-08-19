@@ -201,4 +201,64 @@ jobs:
             exit 1
           fi
 
-          echo "::notice::/api/ai is routed and refusing correctly."
+          echo "::notice::/api/ai is routed and refusing correctly on this deployment."
+
+          # 3. The same check against the STABLE alias, which is what people
+          #    actually open.
+          #
+          #    These can disagree, and the disagreement is invisible from the
+          #    deploy log. `pages deploy --branch=main` only produces a
+          #    *production* deployment if `main` is the project's production
+          #    branch; if it is not, every deploy lands as a preview, the
+          #    per-deployment hostname is perfect, and the alias keeps serving
+          #    whatever was last deployed to the real production branch —
+          #    possibly a build from before /api/ai existed. Checking only the
+          #    fresh hostname would report success while every user got a 404.
+          #    Derive the alias by dropping the deployment-hash label, but only
+          #    from a hostname that actually has one: `<hash>.<project>.pages.dev`
+          #    is four labels, the alias is three. Blindly stripping the first
+          #    label would turn the alias itself into `pages.dev` — a real
+          #    domain belonging to someone else, which this must never probe.
+          host=${URL#https://}
+          host=${host%%/*}
+          labels=$(echo "$host" | tr '.' '\n' | wc -l)
+          case "$host" in
+            *.pages.dev) ;;
+            *) labels=0 ;;
+          esac
+          if [ "$labels" -lt 4 ]; then
+            echo "::notice::$URL has no deployment-hash label — it is already the stable"
+            echo "::notice::hostname, so there is no separate alias to check."
+            exit 0
+          fi
+          alias_url="https://${host#*.}"
+          echo "Stable alias: $alias_url"
+
+          alias_answer=""
+          for attempt in 1 2 3; do
+            alias_answer=$(probe "$alias_url/api/ai" /tmp/alias-probe.txt \
+              -X POST -H 'content-type: application/json' -d '{}' || echo "000 unreachable")
+            case "$alias_answer" in *application/json*) break ;; esac
+            echo "Alias has no JSON yet (attempt $attempt): $alias_answer"
+            sleep $((attempt * 5))
+          done
+
+          echo "Alias response: $alias_answer"
+          echo "Alias body: $(head -c 300 /tmp/alias-probe.txt)"
+
+          case "$alias_answer" in
+            *application/json*)
+              echo "::notice::$alias_url/api/ai is routed too."
+              ;;
+            *)
+              echo "::error::$alias_url/api/ai answered '$alias_answer', but the same"
+              echo "::error::check passed on this deployment's own hostname. The alias is"
+              echo "::error::serving a different (older) build — almost certainly because"
+              echo "::error::this deploy was a PREVIEW, not production."
+              echo "::error::Check the project's production branch:"
+              echo "::error::  npx wrangler pages project list"
+              echo "::error::  npx wrangler pages deployment list --project-name=$PROJECT_NAME"
+              echo "::error::It must be 'main' for a push to main to update the alias."
+              exit 1
+              ;;
+          esac
