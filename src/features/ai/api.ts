@@ -1,6 +1,8 @@
 import { useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { AiResponse, Intent } from '@/server/ai/schemas'
+import { describeTransportFailure } from './messages'
+import type { AiTransportFailure } from './messages'
 
 /*
   Client access to the AI endpoint (#211).
@@ -17,9 +19,15 @@ import type { AiResponse, Intent } from '@/server/ai/schemas'
 
 /** Thrown for transport-level failures. Refusals are NOT errors — see below. */
 export class AiUnavailableError extends Error {
-  constructor(message = 'Wander AI is unavailable right now.') {
-    super(message)
+  readonly cause: AiTransportFailure
+  /** HTTP status, when something answered. Absent when nothing did. */
+  readonly status?: number
+
+  constructor(cause: AiTransportFailure, status?: number) {
+    super(describeTransportFailure(cause, status))
     this.name = 'AiUnavailableError'
+    this.cause = cause
+    this.status = status
   }
 }
 
@@ -56,17 +64,19 @@ export async function callAi(input: AiInput): Promise<AiResponse> {
       body: JSON.stringify(input),
     })
   } catch {
-    // Offline, or the function is unreachable. The PWA works offline, so this
-    // is an ordinary state rather than an exceptional one.
-    throw new AiUnavailableError()
+    // Nothing answered: offline, DNS, or a connection refused. The PWA works
+    // offline, so this is an ordinary state rather than an exceptional one.
+    throw new AiUnavailableError('offline')
   }
 
   try {
     return (await res.json()) as AiResponse
   } catch {
-    // A non-JSON body means something upstream of the function answered —
-    // an edge error page, say. Do not surface it raw.
-    throw new AiUnavailableError()
+    // Something answered, but it was not this endpoint — a 404 page, an edge
+    // error page, a host that never had the Function deployed. The status is
+    // carried through because it is the single most useful fact about this
+    // failure, and losing it leaves nothing to debug from.
+    throw new AiUnavailableError('bad-response', res.status)
   }
 }
 

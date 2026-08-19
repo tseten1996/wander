@@ -13,7 +13,7 @@
   notes. The paste flow cannot dead-end through this module.
 */
 import { useMutation } from '@tanstack/react-query'
-import { callAi } from '@/features/ai/api'
+import { AiUnavailableError, callAi } from '@/features/ai/api'
 import { ParsedBookingResult } from '@/server/ai/schemas'
 import type { AiResponse, RefusalReason } from '@/server/ai/schemas'
 import type { ParsedBooking } from './parse'
@@ -102,8 +102,19 @@ export function useAiParseBooking() {
       try {
         const response = await callAi({ intent: 'parse_booking', tripId, text })
         return interpretAiParse(response, base)
-      } catch {
-        return { status: 'refused', reason: 'unavailable', message: 'Wander AI could not be reached.' }
+      } catch (err) {
+        // The message names which failure this was — offline reads differently
+        // from "this deployment has no endpoint", and the paste flow degrades
+        // identically either way, so the only thing at stake is whether anyone
+        // can tell them apart afterwards.
+        return {
+          status: 'refused',
+          reason: 'unavailable',
+          message:
+            err instanceof AiUnavailableError
+              ? err.message
+              : 'Wander AI could not be reached.',
+        }
       }
     },
     retry: false,

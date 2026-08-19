@@ -20,7 +20,7 @@ import { ArrowRight, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ItineraryItem } from '@/types'
 import { useTripContext } from '@/hooks/useTrip'
-import { callAi } from '@/features/ai/api'
+import { AiUnavailableError, callAi } from '@/features/ai/api'
 import { useUpdateItineraryItem } from './api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -96,10 +96,15 @@ function useImproveDay(tripId: string) {
           return
         }
         setState({ phase: 'done', result: parsed.data })
-      } catch {
-        // Offline, or the function is unreachable. The PWA works offline, so
-        // this is an ordinary state and the day is unchanged either way.
-        toast('Wander AI is unavailable right now')
+      } catch (err) {
+        // The day is unchanged either way, but the *reason* is worth showing:
+        // "you may be offline" and "this version of the app has no endpoint"
+        // need completely different responses from whoever sees them.
+        toast(
+          err instanceof AiUnavailableError
+            ? err.message
+            : 'Wander AI is unavailable right now',
+        )
         setState({ phase: 'idle' })
       }
     },
