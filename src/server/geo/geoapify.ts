@@ -19,6 +19,7 @@
   feature. See docs/ARCHITECTURE.md and issue #255.
 */
 import type { NearbyPlace, PoiCategory } from '../../lib/places'
+import { normalizeQuery } from '../../lib/geocode'
 import type { Coords, PlaceSuggestion } from '../../lib/geocode'
 
 const PLACES_URL = 'https://api.geoapify.com/v2/places'
@@ -165,6 +166,9 @@ export function parseGeoapifyPlaces(data: unknown, limit = 24): NearbyPlace[] {
 }
 
 /* ── geocoding (#257) ────────────────────────────────────────────────────── */
+
+/** Re-exported so the endpoints have one import for their provider helpers. */
+export { normalizeQuery }
 
 /** Autocomplete (many suggestions) or forward search (one best match). */
 export function buildGeocodeUrl(

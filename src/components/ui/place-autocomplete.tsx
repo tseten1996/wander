@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Input } from '@/components/ui/input'
-import { searchPlaces, type PlaceSuggestion } from '@/lib/geocode'
+import { normalizeQuery, searchPlaces, type PlaceSuggestion } from '@/lib/geocode'
 import { cn } from '@/lib/utils'
 
 export interface PlaceAutocompleteProps
@@ -28,18 +28,25 @@ export interface PlaceAutocompleteProps
 const CACHE_LIMIT = 50
 const suggestionCache = new Map<string, PlaceSuggestion[]>()
 
+/*
+  Keyed on the NORMALISED query, shared with the edge cache (#257). Keyed on the
+  raw string, `Kyoto`, `kyoto` and `Kyoto ` were three entries and three
+  metered lookups — and case varies constantly when several people type the
+  same destination.
+*/
 function cacheGet(query: string): PlaceSuggestion[] | undefined {
-  const hit = suggestionCache.get(query)
+  const key = normalizeQuery(query)
+  const hit = suggestionCache.get(key)
   if (!hit) return undefined
   // Touch: delete + re-set moves the key to the end of the insertion order,
   // so the eviction below always drops the least-recently-used entry.
-  suggestionCache.delete(query)
-  suggestionCache.set(query, hit)
+  suggestionCache.delete(key)
+  suggestionCache.set(key, hit)
   return hit
 }
 
 function cacheSet(query: string, results: PlaceSuggestion[]): void {
-  suggestionCache.set(query, results)
+  suggestionCache.set(normalizeQuery(query), results)
   if (suggestionCache.size > CACHE_LIMIT) {
     const oldest = suggestionCache.keys().next().value
     if (oldest !== undefined) suggestionCache.delete(oldest)

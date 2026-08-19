@@ -18,6 +18,23 @@
 
 const PHOTON_URL = 'https://photon.komoot.io/api/'
 
+/**
+ * The cache key for a place query.
+ *
+ * Lowercased and whitespace-collapsed so `Kyoto`, `kyoto`, and `  Kyoto ` are
+ * one cached lookup instead of three. This is the cheapest credit saving
+ * available on a metered provider: within one trip the same few destinations
+ * get typed over and over, with different capitalisation every time.
+ *
+ * It lives here, in the module that already imports nothing, because three
+ * separate caches must agree on it — the browser's in-memory suggestion cache,
+ * the edge cache keyed on the request URL, and the upstream query itself. Two
+ * normalisers that drift would silently halve the hit rate on all of them.
+ */
+export function normalizeQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 export interface PlaceSuggestion {
   label: string
   lat: number
@@ -102,7 +119,11 @@ export function resetGeocodeEndpointState(): void {
 async function viaEndpoint(query: string, params: string, signal?: AbortSignal): Promise<unknown | null> {
   if (endpointUnavailable) return null
   try {
-    const res = await fetch(`/api/geocode?q=${encodeURIComponent(query)}&${params}`, { signal })
+    // Normalised so the edge cache key matches for every capitalisation and
+    // spacing of the same place — the provider bills per request, and within
+    // one trip the same few destinations get typed over and over.
+    const q = encodeURIComponent(normalizeQuery(query))
+    const res = await fetch(`/api/geocode?q=${q}&${params}`, { signal })
     if (res.status === 501) {
       endpointUnavailable = true
       return null

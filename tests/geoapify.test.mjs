@@ -31,7 +31,7 @@ export async function resolve(specifier, context, nextResolve) {
 const {
   buildPlacesUrl, buildGeocodeUrl, categorizeGeoapify, parseGeoapifyPlaces,
   parseGeoapifySuggestions, parseGeoapifyFirstCoords, formatGeoapifyLabel,
-  REQUESTED_CATEGORIES,
+  REQUESTED_CATEGORIES, normalizeQuery,
 } = await import('../src/server/geo/geoapify.ts')
 
 const PARIS = { lat: 48.8606, lon: 2.3376 }
@@ -225,5 +225,24 @@ test('the first usable coordinate wins, and junk yields null', () => {
   )
   for (const body of [null, {}, { features: [] }, { features: [feature({})] }]) {
     assert.equal(parseGeoapifyFirstCoords(body), null)
+  }
+})
+
+/* ── credit discipline ───────────────────────────────────────────────────── */
+
+test('the query normaliser collapses the variants people actually type', () => {
+  const same = ['Kyoto', 'kyoto', 'KYOTO', '  kyoto  ', 'kyoto']
+  const keys = new Set(same.map(normalizeQuery))
+  assert.equal(keys.size, 1, 'these must be one cached lookup, not five metered ones')
+
+  assert.equal(normalizeQuery('18  rue   Lepic'), '18 rue lepic', 'inner runs collapse')
+  assert.notEqual(normalizeQuery('kyoto'), normalizeQuery('osaka'), 'different places stay different')
+})
+
+test('normalising is idempotent — the key cannot drift on a second pass', () => {
+  // Three caches apply this independently (browser, edge, upstream query). If
+  // it were not idempotent they would disagree and the hit rate would collapse.
+  for (const q of ['  Kyoto,  Japan ', 'PARIS', 'a b']) {
+    assert.equal(normalizeQuery(normalizeQuery(q)), normalizeQuery(q))
   }
 })

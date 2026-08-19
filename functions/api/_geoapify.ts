@@ -135,6 +135,51 @@ export async function callGeoapify(url: string): Promise<unknown | null> {
   }
 }
 
+/**
+ * Whether this request came from our own page.
+ *
+ * These endpoints are public, unauthenticated, and spend a metered credit per
+ * call — which means without this, anyone who reads the URL out of devtools can
+ * drain a day's quota with a shell loop. That is not a billing risk (the free
+ * plan has no card attached, so the worst case is the app degrading to its
+ * keyless providers), but it is a trivially avoidable one.
+ *
+ * `Sec-Fetch-Site` is the primary signal because browsers set it and page
+ * JavaScript cannot forge or strip it. Origin and Referer are accepted as
+ * fallbacks for older clients, matched on host rather than on the full string
+ * so preview deployments and custom domains work without a list to maintain.
+ *
+ * This is a speed bump, not authentication — the same class of control as the
+ * referrer-locked key #191 endorses for credentials whose blast radius is
+ * bounded by something other than secrecy. A determined caller can set headers.
+ * A drive-by script cannot, and that is the whole threat being addressed.
+ */
+export function isSameOrigin(request: Request): boolean {
+  if (request.headers.get('sec-fetch-site') === 'same-origin') return true
+
+  const self = new URL(request.url).host
+  const hostOf = (value: string | null): string | null => {
+    if (!value) return null
+    try {
+      return new URL(value).host
+    } catch {
+      return null
+    }
+  }
+  const origin = hostOf(request.headers.get('origin'))
+  if (origin) return origin === self
+  const referer = hostOf(request.headers.get('referer'))
+  if (referer) return referer === self
+
+  // Nothing to go on. A same-origin fetch from a modern browser always carries
+  // at least one of the three, so this is a script.
+  return false
+}
+
+/** Refused for coming from somewhere else. Never cached. */
+export const notOurs = (): Response =>
+  json({ ok: false, reason: 'forbidden' }, 403, false)
+
 /** A finite number from a query string, or null. */
 export function numberParam(params: URLSearchParams, name: string): number | null {
   const raw = params.get(name)

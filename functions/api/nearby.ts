@@ -13,8 +13,8 @@
   behave exactly as they did before this existed.
 */
 import {
-  apiKey, badRequest, callGeoapify, numberParam, ok, unconfigured,
-  upstreamFailed, withEdgeCache,
+  apiKey, badRequest, callGeoapify, isSameOrigin, notOurs, numberParam, ok,
+  unconfigured, upstreamFailed, withEdgeCache,
 } from './_geoapify'
 import type { GeoContext } from './_geoapify'
 import { buildPlacesUrl, parseGeoapifyPlaces } from '../../src/server/geo/geoapify'
@@ -24,6 +24,10 @@ const MAX_RADIUS_M = 5000
 const MAX_LIMIT = 50
 
 export async function onRequestGet(ctx: GeoContext): Promise<Response> {
+  // Checked before the key is even read: a request from somewhere else should
+  // cost nothing at all, not a cache lookup.
+  if (!isSameOrigin(ctx.request)) return notOurs()
+
   const key = apiKey(ctx.env)
   if (!key) return unconfigured()
 

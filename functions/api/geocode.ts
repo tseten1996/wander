@@ -14,12 +14,12 @@
   and over within one trip.
 */
 import {
-  apiKey, badRequest, callGeoapify, numberParam, ok, unconfigured,
-  upstreamFailed, withEdgeCache,
+  apiKey, badRequest, callGeoapify, isSameOrigin, notOurs, numberParam, ok,
+  unconfigured, upstreamFailed, withEdgeCache,
 } from './_geoapify'
 import type { GeoContext } from './_geoapify'
 import {
-  buildGeocodeUrl, parseGeoapifyFirstCoords, parseGeoapifySuggestions,
+  buildGeocodeUrl, normalizeQuery, parseGeoapifyFirstCoords, parseGeoapifySuggestions,
 } from '../../src/server/geo/geoapify'
 
 /** Long enough for any real address, short enough that it cannot be abused. */
@@ -27,6 +27,10 @@ const MAX_QUERY = 200
 const MAX_LIMIT = 10
 
 export async function onRequestGet(ctx: GeoContext): Promise<Response> {
+  // Checked before the key is even read: a request from somewhere else should
+  // cost nothing at all, not a cache lookup.
+  if (!isSameOrigin(ctx.request)) return notOurs()
+
   const key = apiKey(ctx.env)
   if (!key) return unconfigured()
 
@@ -43,8 +47,11 @@ export async function onRequestGet(ctx: GeoContext): Promise<Response> {
   const single = params.get('mode') === 'one'
 
   return withEdgeCache(ctx, async () => {
+    // Normalised here as well as in the browser: the edge cache is keyed on the
+    // incoming URL, and the client already sends a normalised `q`, so this is
+    // belt and braces for anything that reaches the endpoint another way.
     const body = await callGeoapify(
-      buildGeocodeUrl(query, { limit: single ? 1 : limit, autocomplete: !single }, key),
+      buildGeocodeUrl(normalizeQuery(query), { limit: single ? 1 : limit, autocomplete: !single }, key),
     )
     if (body === null) return upstreamFailed()
     return single
