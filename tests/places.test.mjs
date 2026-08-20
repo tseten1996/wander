@@ -19,6 +19,7 @@ import {
   snapCenter,
   NEARBY_SNAP_DP,
   POI_CATEGORY_LABEL,
+  fetchViaOverpass,
 } from '../src/lib/places.ts'
 
 test('categorizePoi maps amenity/tourism tags to the right bucket', () => {
@@ -157,6 +158,108 @@ test('snapCenter wraps a map panned past the edge of the world', () => {
 test('snapCenter clamps an impossible latitude rather than passing it to Overpass', () => {
   assert.equal(snapCenter({ lat: 95, lon: 0 }).lat, 90)
   assert.equal(snapCenter({ lat: -95, lon: 0 }).lat, -90)
+})
+
+/* ── fetchViaOverpass: hedged mirror fallback (#251) ─────────────────────── */
+
+// A minimal Overpass-shaped response. One café → one parsed 'eat' place, so the
+// hedge tests can assert *which* mirror answered by its distinctive coordinate.
+function overpassBody(lat) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      elements: [{ type: 'node', id: 1, lat, lon: 0, tags: { name: 'Café', amenity: 'cafe' } }],
+    }),
+  }
+}
+
+const HEDGE_ENDPOINTS = ['https://m0.test', 'https://m1.test', 'https://m2.test']
+
+test('fetchViaOverpass hedges past a silent mirror to a faster one', async () => {
+  // The regression this fixes: a slow first mirror used to block the whole
+  // fallback for its full timeout before the next was even tried. With hedging,
+  // a mirror that stays silent past hedgeMs no longer holds up the answer — the
+  // next mirror is raced and its result returned. m0 never resolves here, so the
+  // only way to get a result at all is the hedge firing.
+  const called = []
+  const fetchImpl = (url) => {
+    called.push(url)
+    if (url === 'https://m0.test') return new Promise(() => {}) // silent forever
+    return Promise.resolve(overpassBody(11))
+  }
+  const places = await fetchViaOverpass(
+    { lat: 0, lon: 0 },
+    {},
+    undefined,
+    { endpoints: HEDGE_ENDPOINTS, hedgeMs: 15, fetchImpl },
+  )
+  assert.equal(places.length, 1)
+  assert.equal(places[0].lat, 11, 'answer came from the hedged (second) mirror')
+  assert.ok(called.includes('https://m1.test'), 'the hedge started the next mirror')
+})
+
+test('fetchViaOverpass advances immediately when a mirror fails, without waiting the hedge', async () => {
+  // A mirror that fails outright is not "slow" — we should move on at once, not
+  // sit out hedgeMs. hedgeMs is set huge so that resolving at all proves we took
+  // the fast-failure path, not the timer.
+  const fetchImpl = (url) => {
+    if (url === 'https://m0.test') return Promise.reject(new Error('network down'))
+    if (url === 'https://m1.test') return Promise.resolve({ ok: false, status: 429, json: async () => ({}) })
+    return Promise.resolve(overpassBody(22))
+  }
+  const places = await fetchViaOverpass(
+    { lat: 0, lon: 0 },
+    {},
+    undefined,
+    { endpoints: HEDGE_ENDPOINTS, hedgeMs: 1_000_000, fetchImpl },
+  )
+  assert.equal(places.length, 1)
+  assert.equal(places[0].lat, 22, 'fell through the failing mirrors to the one that answered')
+})
+
+test('fetchViaOverpass takes the first mirror when it answers, without arming a second', async () => {
+  const called = []
+  const fetchImpl = (url) => {
+    called.push(url)
+    return Promise.resolve(overpassBody(33))
+  }
+  const places = await fetchViaOverpass(
+    { lat: 0, lon: 0 },
+    {},
+    undefined,
+    { endpoints: HEDGE_ENDPOINTS, hedgeMs: 15, fetchImpl },
+  )
+  assert.equal(places[0].lat, 33)
+  assert.deepEqual(called, ['https://m0.test'], 'a healthy first mirror needs no hedge')
+})
+
+test('fetchViaOverpass rejects only once every mirror has failed', async () => {
+  const fetchImpl = (url) =>
+    url === 'https://m1.test'
+      ? Promise.reject(new Error('boom'))
+      : Promise.resolve({ ok: false, status: 504, json: async () => ({}) })
+  await assert.rejects(
+    fetchViaOverpass({ lat: 0, lon: 0 }, {}, undefined, {
+      endpoints: HEDGE_ENDPOINTS,
+      hedgeMs: 5,
+      fetchImpl,
+    }),
+    /Overpass returned 504|boom/,
+  )
+})
+
+test('fetchViaOverpass propagates an abort rather than masking it as a mirror failure', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  await assert.rejects(
+    fetchViaOverpass({ lat: 0, lon: 0 }, {}, controller.signal, {
+      endpoints: HEDGE_ENDPOINTS,
+      hedgeMs: 5,
+      fetchImpl: () => Promise.resolve(overpassBody(44)),
+    }),
+    (err) => err?.name === 'AbortError' || /abort/i.test(String(err?.message ?? err)),
+  )
 })
 
 test('snapCenter cell stays small against the 1500 m search radius', () => {

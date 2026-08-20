@@ -135,6 +135,31 @@ const OVERPASS_ENDPOINTS = [
 ]
 
 /**
+ * How long to wait for the current mirror before *also* starting the next one
+ * (ms), racing them and taking whichever answers first (#251).
+ *
+ * The old fallback was strictly serial: a slow mirror had to time out before
+ * the next was even tried, so a single sluggish server could cost the user the
+ * better part of the Overpass query timeout (15 s per the QL) before any pins
+ * appeared, and three slow mirrors stacked to ~45 s. Hedging bounds that tail —
+ * a mirror that fails outright still advances immediately (no wait), and the
+ * hedge only arms a *parallel* request when a mirror is genuinely slow, so it
+ * adds load to the volunteer pool only in the case that was already going to
+ * cost a long wait. 4 s is comfortably longer than a healthy mirror's typical
+ * response yet a fraction of the 15 s worst case it replaces.
+ */
+export const OVERPASS_HEDGE_MS = 4000
+
+/** Overrides for {@link fetchViaOverpass}. Production passes none; the hedge
+ *  and mirror list are seams so the fan-out timing can be tested without real
+ *  network or wall-clock waits. */
+export interface OverpassDeps {
+  endpoints?: readonly string[]
+  hedgeMs?: number
+  fetchImpl?: typeof fetch
+}
+
+/**
  * Decimal places the search centre is rounded to before it becomes a cache key.
  *
  * 3 dp is ~111 m of latitude, and ~73–90 m of longitude at the latitudes people
@@ -276,43 +301,112 @@ export async function fetchNearbyPlaces(
 }
 
 /**
- * The original keyless path: OpenStreetMap via Overpass, trying each public
- * mirror until one answers. Unchanged by #256 and deliberately kept — a free
- * tier can change its terms, a community server cannot send you a bill, and
- * this is what makes losing the key cost quality rather than the feature.
+ * The original keyless path: OpenStreetMap via Overpass. Kept deliberately —
+ * a free tier can change its terms, a community server cannot send you a bill,
+ * and this is what makes losing the key (#256) cost quality rather than the
+ * feature.
+ *
+ * Mirrors are tried with *hedging* rather than strictly in series (#251): the
+ * first mirror starts immediately, and if it has not answered within
+ * {@link OVERPASS_HEDGE_MS} the next starts in parallel — whichever returns
+ * first wins. A mirror that fails outright advances to the next at once, with
+ * no wait. This bounds the tail: one slow mirror no longer blocks the whole
+ * fallback for its full timeout, and slow mirrors no longer stack serially.
+ *
+ * Resolves to the parsed places (possibly empty — a real "nothing here");
+ * rejects only when every mirror fails, or the request is aborted, so the
+ * calling query degrades to a quiet "suggestions unavailable" rather than
+ * breaking the map.
  */
-export async function fetchViaOverpass(
+export function fetchViaOverpass(
   center: { lat: number; lon: number },
   { radiusMeters = 1500, limit = 24 }: NearbyOptions = {},
   signal?: AbortSignal,
+  deps: OverpassDeps = {},
 ): Promise<NearbyPlace[]> {
+  const endpoints = deps.endpoints ?? OVERPASS_ENDPOINTS
+  const hedgeMs = deps.hedgeMs ?? OVERPASS_HEDGE_MS
+  const doFetch = deps.fetchImpl ?? fetch
   const body = `data=${encodeURIComponent(buildOverpassQuery(center, radiusMeters))}`
-  let lastError: unknown = new Error('Nearby suggestions unavailable')
 
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal,
-      })
-      // 429 (rate-limited) / 504 (busy) are Overpass's "try again elsewhere"
-      // signals — fall through to the next mirror instead of failing outright.
-      if (!res.ok) {
-        lastError = new Error(`Overpass returned ${res.status}`)
-        continue
-      }
-      const data: unknown = await res.json()
-      const elements =
-        data && typeof data === 'object' ? (data as { elements?: unknown }).elements : undefined
-      return parseOverpassElements(elements, limit)
-    } catch (err) {
-      // A caller-driven abort (navigated away / searched elsewhere) must
-      // propagate immediately, not be masked as a mirror failure.
-      if (signal?.aborted) throw err
-      lastError = err
-    }
+  // One mirror attempt: resolves with parsed places, or rejects (a non-ok
+  // status, a malformed body, a transport error, or a caller-driven abort).
+  const attempt = async (endpoint: string): Promise<NearbyPlace[]> => {
+    const res = await doFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal,
+    })
+    // 429 (rate-limited) / 504 (busy) are Overpass's "try again elsewhere"
+    // signals — treat any non-ok as this mirror failing so we move on.
+    if (!res.ok) throw new Error(`Overpass returned ${res.status}`)
+    const data: unknown = await res.json()
+    const elements =
+      data && typeof data === 'object' ? (data as { elements?: unknown }).elements : undefined
+    return parseOverpassElements(elements, limit)
   }
-  throw lastError instanceof Error ? lastError : new Error('Nearby suggestions unavailable')
+
+  return new Promise<NearbyPlace[]>((resolve, reject) => {
+    let next = 0 // index of the next mirror to start
+    let outstanding = 0 // attempts still in flight
+    let done = false
+    let hedgeTimer: ReturnType<typeof setTimeout> | undefined
+    let lastError: unknown = new Error('Nearby suggestions unavailable')
+
+    const clearHedge = () => {
+      if (hedgeTimer !== undefined) {
+        clearTimeout(hedgeTimer)
+        hedgeTimer = undefined
+      }
+    }
+
+    const finish = (fn: () => void) => {
+      if (done) return
+      done = true
+      clearHedge()
+      signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+
+    // A caller-driven abort (navigated away / searched elsewhere) must reject
+    // immediately, even while we are only waiting on a hedge timer.
+    const onAbort = () =>
+      finish(() => reject(signal?.reason ?? new DOMException('Aborted', 'AbortError')))
+
+    // Advance the frontier: start the next mirror (if any), or — once none are
+    // left to start and none remain in flight — reject with the last failure.
+    const advance = () => {
+      if (done) return
+      clearHedge()
+      if (next >= endpoints.length) {
+        if (outstanding === 0) {
+          finish(() =>
+            reject(lastError instanceof Error ? lastError : new Error('Nearby suggestions unavailable')),
+          )
+        }
+        return
+      }
+      const endpoint = endpoints[next++]
+      outstanding++
+      attempt(endpoint).then(
+        (places) => finish(() => resolve(places)),
+        (err) => {
+          outstanding--
+          if (signal?.aborted) return finish(() => reject(err))
+          lastError = err
+          advance() // this mirror failed — bring on the next one now, no wait
+        },
+      )
+      // Arm the hedge: if a mirror remains and the one we just started is still
+      // silent after hedgeMs, start the next in parallel and race them.
+      if (next < endpoints.length) {
+        hedgeTimer = setTimeout(advance, hedgeMs)
+      }
+    }
+
+    if (signal?.aborted) return onAbort()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    advance()
+  })
 }
