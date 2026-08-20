@@ -8,6 +8,7 @@ import { AuthProvider } from '@/hooks/useAuth'
 import { OfflineBanner } from '@/components/layout/OfflineBanner'
 import { InstallNudge } from '@/components/layout/InstallNudge'
 import { UpdateNudge } from '@/components/layout/UpdateNudge'
+import { ScrollToTop } from '@/components/layout/ScrollToTop'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
 import { initErrorReporting } from '@/lib/errorReporting'
 import App from './App'
@@ -46,6 +47,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               `motion` proxy. See src/lib/motion.ts. */}
           <LazyMotion features={domAnimation}>
             <HashRouter>
+              {/* Reset scroll to the top on tab/route change so a page never
+                  opens mid-scroll from the previous one (#261). Router-scoped,
+                  so it sits inside HashRouter. */}
+              <ScrollToTop />
               <App />
             </HashRouter>
             <OfflineBanner />
