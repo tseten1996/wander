@@ -51,12 +51,18 @@ function Hero() {
         ) : (
           <div className="gradient-travel absolute inset-0" />
         )}
+        {/* `z-10` on the button is load-bearing, not decoration. The content
+            div below is `relative` and comes AFTER this in the DOM, and two
+            positioned elements with `z-index: auto` paint in DOM order — so
+            without it that (transparent) div sits on top and swallows every
+            click. The button stayed perfectly visible while doing nothing,
+            which is the worst way for a control to fail. */}
         {showInvite && (
           <button
             type="button"
             onClick={copy}
             aria-label="Copy invite link to share with friends"
-            className="absolute right-4 top-4 flex min-h-11 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="absolute right-4 top-4 z-10 flex min-h-11 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           >
             {copied ? <Check className="size-4" /> : <UserPlus className="size-4" />}
             <span aria-live="polite">{copied ? 'Copied!' : 'Invite'}</span>
