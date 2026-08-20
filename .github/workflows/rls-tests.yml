@@ -1,0 +1,57 @@
+name: RLS Tests
+
+# Runs the behavioural RLS regression suite (supabase/tests/rls_policies_test.sql)
+# against a throwaway Postgres. RLS is Wander's entire authorization layer
+# (guardrail #1) — this is the only signal that a migration hasn't silently
+# widened a policy into a cross-trip data leak. The static `guards` job in ci.yml
+# checks a policy *exists* on each new table; this checks each policy *enforces*.
+#
+# Scoped to PRs that touch supabase/** (and manual dispatch): the permission
+# matrix can only change when a migration does. Entirely free-tier — a stock
+# postgres service container, no live Supabase project, no service-role key, no
+# secret. See supabase/tests/README.md and scripts/run-rls-tests.sh.
+on:
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'scripts/run-rls-tests.sh'
+      - '.github/workflows/rls-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rls-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rls:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Wait for the container to accept connections before the job's steps run.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Applied by the postgres client the suite/migrations run through. The
+      # container is disposable and holds only fixtures the suite rolls back.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install postgres client (psql)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Apply baseline + migrations, run the RLS suite
+        run: bash scripts/run-rls-tests.sh
