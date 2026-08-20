@@ -6,6 +6,7 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/hooks/useAuth'
 import { OfflineBanner } from '@/components/layout/OfflineBanner'
+import { ScrollToTop } from '@/components/layout/ScrollToTop'
 import { InstallNudge } from '@/components/layout/InstallNudge'
 import { UpdateNudge } from '@/components/layout/UpdateNudge'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
@@ -46,6 +47,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               `motion` proxy. See src/lib/motion.ts. */}
           <LazyMotion features={domAnimation}>
             <HashRouter>
+              <ScrollToTop />
               <App />
             </HashRouter>
             <OfflineBanner />
