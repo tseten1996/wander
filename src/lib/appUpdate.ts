@@ -71,7 +71,17 @@ export function watchForUpdate(
   // look for a new worker. This is what makes the feature useful during an
   // active session rather than only on the next cold start.
   let timer: ReturnType<typeof setInterval> | undefined
-  const timers = poll ?? { setInterval, clearInterval }
+  // `setInterval`/`clearInterval` are methods of the global object and must be
+  // called with it as their receiver. Putting the bare references on a plain
+  // object and calling `timers.setInterval(...)` invokes them with that object
+  // as `this`, which strict-receiver engines reject with a "TypeError: Illegal
+  // invocation" — crashing the whole app at first paint the moment a service
+  // worker is present. Bind to `globalThis` so the default path is safe; tests
+  // still inject their own `poll`.
+  const timers = poll ?? {
+    setInterval: setInterval.bind(globalThis),
+    clearInterval: clearInterval.bind(globalThis),
+  }
   if (sw.getRegistration) {
     timer = timers.setInterval(() => {
       // Fire and forget: a failed check is a check that happens again in
