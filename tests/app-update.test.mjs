@@ -114,6 +114,41 @@ test('a browser with no registration support still watches for changes', () => {
   assert.equal(called, 1, 'controllerchange is still observed')
 })
 
+test('the default timers path calls the real setInterval with a valid receiver', () => {
+  // Regression for the boot white-screen (#264): the default branch built
+  // `{ setInterval, clearInterval }` and called `timers.setInterval(...)`, which
+  // invokes the global with `this` = that plain object. Modern Chromium enforces
+  // the WHATWG rule that these run with `this === window` (a bare call, whose
+  // `this` is undefined, is coerced to the global), so a detached `this` throws
+  // `TypeError: Illegal invocation` — and since this runs in a root mount effect,
+  // it white-screened the whole app. Node's own timers tolerate the detached
+  // `this`, so the earlier fake-`poll`-only tests never exercised the crash. Here
+  // we stand in a strict double that mirrors Chromium's enforcement and run the
+  // REAL default path (no `poll` injected).
+  const realSetInterval = globalThis.setInterval
+  const realClearInterval = globalThis.clearInterval
+  const strict = (real) => function (...args) {
+    // WebIDL coerces an undefined/null `this` to the global; any other detached
+    // receiver (a plain object) is an Illegal invocation.
+    if (this != null && this !== globalThis) throw new TypeError('Illegal invocation')
+    return real.apply(globalThis, args)
+  }
+  globalThis.setInterval = strict(realSetInterval)
+  globalThis.clearInterval = strict(realClearInterval)
+  try {
+    const sw = fakeSW({ controller: { id: 'sw1' } })
+    let stop
+    assert.doesNotThrow(() => {
+      stop = watchForUpdate(sw, () => {})
+    }, 'the default-timers path must not throw Illegal invocation when it schedules its poll')
+    // And the teardown path (clearInterval) must be equally safe.
+    assert.doesNotThrow(() => stop(), 'unsubscribe must clear the real interval without throwing')
+  } finally {
+    globalThis.setInterval = realSetInterval
+    globalThis.clearInterval = realClearInterval
+  }
+})
+
 test('a failing update check is swallowed rather than surfaced', async () => {
   const sw = fakeSW({ controller: { id: 'sw1' } })
   sw.getRegistration = async () => { throw new Error('offline') }

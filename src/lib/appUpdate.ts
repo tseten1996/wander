@@ -71,7 +71,17 @@ export function watchForUpdate(
   // look for a new worker. This is what makes the feature useful during an
   // active session rather than only on the next cold start.
   let timer: ReturnType<typeof setInterval> | undefined
-  const timers = poll ?? { setInterval, clearInterval }
+  // Wrap the globals rather than passing them bare: `{ setInterval }.setInterval(…)`
+  // calls the global with `this` = this object, and modern Chromium enforces the
+  // WHATWG rule that timer methods run with `this === window`, throwing
+  // `TypeError: Illegal invocation`. Since this runs in a root mount effect, that
+  // throw would tear down the whole React tree and white-screen the app. The
+  // arrow wrappers keep the injectable-timers seam (tests pass `poll`) while
+  // always invoking the real globals with their correct receiver.
+  const timers = poll ?? {
+    setInterval: (fn: TimerHandler, ms?: number) => setInterval(fn, ms),
+    clearInterval: (id?: number) => clearInterval(id),
+  }
   if (sw.getRegistration) {
     timer = timers.setInterval(() => {
       // Fire and forget: a failed check is a check that happens again in
