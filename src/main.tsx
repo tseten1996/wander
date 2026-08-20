@@ -7,6 +7,7 @@ import { Toaster } from 'sonner'
 import { AuthProvider } from '@/hooks/useAuth'
 import { OfflineBanner } from '@/components/layout/OfflineBanner'
 import { InstallNudge } from '@/components/layout/InstallNudge'
+import { UpdateNudge } from '@/components/layout/UpdateNudge'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
 import { initErrorReporting } from '@/lib/errorReporting'
 import App from './App'
@@ -49,6 +50,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             </HashRouter>
             <OfflineBanner />
             <InstallNudge />
+            {/* Tells you when a newer build has claimed the page. The service
+                worker is `autoUpdate`, so new assets arrive silently and the
+                running page keeps the old code until something reloads — which
+                is how a deployed, verified fix can appear not to exist. */}
+            <UpdateNudge />
             <Toaster
               position="top-center"
               toastOptions={{
