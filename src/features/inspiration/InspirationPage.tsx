@@ -122,10 +122,11 @@ function IdeaCard({
                 size="icon"
                 className="size-9 text-danger transition-opacity md:size-7 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                 aria-label="Delete idea"
-                onClick={() => {
-                  deleteItem.mutate(item.id)
-                  toast.success('Idea removed')
-                }}
+                onClick={() =>
+                  deleteItem.mutate(item.id, {
+                    onSuccess: () => toast.success('Idea removed'),
+                  })
+                }
               >
                 <Trash2 className="size-4" />
               </Button>

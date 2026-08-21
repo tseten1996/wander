@@ -112,10 +112,11 @@ function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
           {canDelete && (
             <DropdownMenuItem
               destructive
-              onClick={() => {
-                deleteItem.mutate(item.id)
-                toast.success('Task deleted')
-              }}
+              onClick={() =>
+                deleteItem.mutate(item.id, {
+                  onSuccess: () => toast.success('Task deleted'),
+                })
+              }
             >
               <Trash2 /> Delete
             </DropdownMenuItem>

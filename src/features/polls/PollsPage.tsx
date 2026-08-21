@@ -165,10 +165,11 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   destructive
-                  onClick={() => {
-                    deletePoll.mutate(poll.id)
-                    toast.success('Poll deleted')
-                  }}
+                  onClick={() =>
+                    deletePoll.mutate(poll.id, {
+                      onSuccess: () => toast.success('Poll deleted'),
+                    })
+                  }
                 >
                   <Trash2 /> Delete poll
                 </DropdownMenuItem>
