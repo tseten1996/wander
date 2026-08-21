@@ -279,10 +279,11 @@ export default function NotesPage() {
                           size="icon"
                           className="size-9 text-danger md:size-7"
                           aria-label="Delete note"
-                          onClick={() => {
-                            deleteNote.mutate(note.id)
-                            toast.success('Note deleted')
-                          }}
+                          onClick={() =>
+                            deleteNote.mutate(note.id, {
+                              onSuccess: () => toast.success('Note deleted'),
+                            })
+                          }
                         >
                           <Trash2 className="size-4" />
                         </Button>

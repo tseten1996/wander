@@ -136,10 +136,11 @@ function QuestionCard({ question, index }: { question: Question; index: number }
                 {canDelete && (
                   <DropdownMenuItem
                     destructive
-                    onClick={() => {
-                      deleteQuestion.mutate(question.id)
-                      toast.success('Question deleted')
-                    }}
+                    onClick={() =>
+                      deleteQuestion.mutate(question.id, {
+                        onSuccess: () => toast.success('Question deleted'),
+                      })
+                    }
                   >
                     <Trash2 /> Delete
                   </DropdownMenuItem>
