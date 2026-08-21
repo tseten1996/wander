@@ -32,6 +32,10 @@ import {
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
 const MESSAGE_MAX_LENGTH = 4000
+// Distance from the bottom (px) under which the reader counts as "pinned" to
+// the live edge and keeps following new messages. Scroll further up than this
+// to re-read older chat and new arrivals no longer yank you back down (#270).
+const NEAR_BOTTOM_PX = 120
 
 function Reactions({
   message,
@@ -286,9 +290,22 @@ export default function ChatPage() {
   const [attachment, setAttachment] = React.useState<File | null>(null)
   const [lightbox, setLightbox] = React.useState<string | null>(null)
   const bottomRef = React.useRef<HTMLDivElement>(null)
+  const scrollRef = React.useRef<HTMLDivElement>(null)
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const count = messages.data?.length ?? 0
+  // Whether the reader is currently at/near the live edge. Starts true so the
+  // first load lands at the bottom; a scroll handler keeps it current.
+  const atBottomRef = React.useRef(true)
+  // Set when the local member sends: their own message always brings them down,
+  // even if they were reading older chat when they hit send.
+  const forceScrollRef = React.useRef(false)
+
+  function handleScroll() {
+    const el = scrollRef.current
+    if (!el) return
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+  }
 
   function attachImage(file: File | null | undefined) {
     if (!file) return
@@ -335,7 +352,14 @@ export default function ChatPage() {
   }
 
   React.useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    // Don't steal the scroll position from someone reading older chat: only
+    // follow new messages when they're near the bottom, or just sent one.
+    if (!atBottomRef.current && !forceScrollRef.current) return
+    forceScrollRef.current = false
+    // A raw scrollIntoView isn't governed by the root MotionConfig, so honour
+    // prefers-reduced-motion by hand (matching SearchHighlighter/Itinerary).
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    bottomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' })
   }, [count])
 
   const byId = React.useMemo(
@@ -353,6 +377,9 @@ export default function ChatPage() {
     const previousReplyTo = replyTo
     const reply = replyTo?.id ?? null
     const sendingFile = attachment
+    // The sender always follows their own message down, even if they'd scrolled
+    // up to re-read; the optimistic insert bumps `count` and the effect reads this.
+    forceScrollRef.current = true
     // Optimistically clear the typed context so a successful send feels instant.
     // The image chip stays until the upload resolves (it's mid-flight), then
     // clears on success — on failure it's left so the user can retry.
@@ -392,7 +419,11 @@ export default function ChatPage() {
         </div>
       )}
 
-      <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto pb-4 pr-1">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="scrollbar-thin flex-1 space-y-4 overflow-y-auto pb-4 pr-1"
+      >
         {messages.isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-14 w-2/3" />
