@@ -448,6 +448,39 @@ const PACKING_SEED_ITEM = {
 let packingScenario = false
 let packingItems = []
 
+// Notes optimistic-concurrency (#272): a stateful store scoped to `runNotes`
+// via `notesScenario`, so the guarded save can be exercised end to end. Only
+// while that flag is set does /rest/v1/notes become stateful; every other
+// scenario keeps the empty read the notes page's mount does today. useNotes
+// reads `select('*').eq('trip_id',…).order('pinned').order('updated_at')`;
+// useUpdateNote's guarded save is
+// `update(patch).eq('id',…).eq('updated_at',opened).select()` — zero rows back
+// means the note moved underneath, so it re-reads the row with
+// `select('*').eq('id',…).single()` to offer a reload. The unguarded save
+// (pin toggle / "keep mine") is `update(patch).eq('id',…)` with no `.select()`.
+// The `notes_touch_updated_at` trigger bumps `updated_at` on every write; the
+// stub mirrors that with a monotonic stamp so a second guarded save collides.
+const NOTES_SEED_ITEM = {
+  id: 'note-seed-1',
+  trip_id: TRIP_ID,
+  title: 'Restaurant shortlist',
+  content: '- Ichiran ramen',
+  pinned: false,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+  updated_at: '2026-03-01T00:00:00Z',
+}
+let notesScenario = false
+let notesRows = []
+let notesStampSeq = 0
+// A monotonic UTC stamp standing in for the trigger's clock, so each write
+// yields a strictly newer `updated_at` than the one the editor captured.
+function nextNoteStamp() {
+  notesStampSeq += 1
+  const mm = String(notesStampSeq).padStart(2, '0')
+  return `2026-03-01T01:${mm}:00Z`
+}
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -799,6 +832,43 @@ async function routeSupabase(route) {
     }
     if (method === 'GET') return json([...pollVotes])
     return json([])
+  }
+
+  // Notes (#272): two modes on /rest/v1/notes.
+  //   • Default (every other scenario): an empty read, matching the catch-all
+  //     behavior the notes page relied on before this route existed.
+  //   • Notes scenario (`notesScenario` set): a stateful store so the guarded
+  //     save's optimistic-concurrency check can be exercised. A GET with an
+  //     `order=` clause is the list read; a GET without it is the post-conflict
+  //     `.single()` re-read of one row. A PATCH carrying an `updated_at=eq.`
+  //     filter is the guarded save — it matches only while the stored stamp is
+  //     unchanged, and returns [] (zero rows → conflict) once it has moved. A
+  //     PATCH without that filter is the unguarded "keep mine" overwrite.
+  if (pathname.endsWith('/rest/v1/notes')) {
+    if (!notesScenario) return json([])
+    if (method === 'GET') {
+      if (search.includes('order=')) return json([...notesRows]) // list read
+      // Post-conflict re-read: `.eq('id',…).single()` → a bare object.
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      return json(notesRows.find((n) => n.id === id) ?? null)
+    }
+    if (method === 'PATCH') {
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      const patch = Array.isArray(body) ? body[0] : body
+      const row = notesRows.find((n) => n.id === id)
+      const guard = search.match(/updated_at=eq\.([^&]+)/)
+      if (guard) {
+        const opened = decodeURIComponent(guard[1])
+        // Guarded save: only the editor that opened at the current version wins.
+        if (!row || row.updated_at !== opened) return json([]) // zero rows → conflict
+        Object.assign(row, patch, { updated_at: nextNoteStamp() })
+        return json([row]) // `.select()` → representation
+      }
+      // Unguarded save ("keep mine" overwrite): last write wins, no version gate.
+      if (row) Object.assign(row, patch, { updated_at: nextNoteStamp() })
+      return route.fulfill({ status: 204, body: '' }) // no `.select()` → return=minimal
+    }
+    return json([]) // insert/delete unused by this scenario
   }
 
   // Client error telemetry (#57): the global handlers fire-and-forget an insert
@@ -2296,6 +2366,86 @@ async function runRecapShareToggle(browser) {
   }
 }
 
+async function runNotes(browser) {
+  console.log('\n▶ notes: concurrent edits do not silently clobber (#272)')
+  notesScenario = true
+  notesStampSeq = 0
+  notesRows = [{ ...NOTES_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/notes`, { waitUntil: 'domcontentloaded' })
+    const card = page.getByRole('heading', { name: 'Restaurant shortlist' })
+    await card.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the seeded note renders on the notes page')
+
+    // ── A normal single-editor save still works, unchanged (criterion 2) ──
+    await card.click()
+    const titleInput = page.getByPlaceholder('Note title')
+    await titleInput.waitFor({ state: 'visible', timeout: 10_000 })
+    const textarea = page.locator('textarea')
+    await textarea.fill('- Ichiran ramen\n- Booked for Friday')
+    await page.getByRole('button', { name: 'Save note' }).click()
+    await page.getByText('Booked for Friday').waitFor({ state: 'visible', timeout: 10_000 })
+    if (notesRows[0].content !== '- Ichiran ramen\n- Booked for Friday') {
+      throw new Error('a normal save did not persist the edited content')
+    }
+    ok('a normal single-editor save persists unchanged')
+
+    // ── A colliding save is caught, not silently applied (criterion 1) ──
+    await card.click()
+    await titleInput.waitFor({ state: 'visible', timeout: 10_000 })
+    // Someone else saves while this editor is open: the stored row moves to a
+    // newer version whose content differs from what this editor will submit.
+    notesRows[0] = {
+      ...notesRows[0],
+      content: 'THEIRS — moved to a different place',
+      updated_at: nextNoteStamp(),
+    }
+    await textarea.fill('MINE — my own rewrite')
+    await page.getByRole('button', { name: 'Save note' }).click()
+    await page
+      .getByText('This note changed while you were editing.')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a save against a moved note surfaces the conflict prompt, not a clobber')
+    if (notesRows[0].content !== 'THEIRS — moved to a different place') {
+      throw new Error('the colliding save overwrote the other version instead of stopping')
+    }
+    ok('the other member’s version is intact — nothing was clobbered')
+
+    // Reload theirs: the editor loads the current server version in place.
+    await page.getByRole('button', { name: 'Reload theirs' }).click()
+    await page.waitForFunction(
+      () => document.querySelector('textarea')?.value === 'THEIRS — moved to a different place',
+      { timeout: 10_000 }
+    )
+    ok('“Reload theirs” loads the version that landed while editing')
+
+    // ── "Keep mine" is the deliberate-overwrite escape hatch (criterion 1) ──
+    // One more concurrent save, then choose to keep our own text over it.
+    notesRows[0] = { ...notesRows[0], content: 'THEIRS AGAIN', updated_at: nextNoteStamp() }
+    await textarea.fill('MINE — keep this one')
+    await page.getByRole('button', { name: 'Save note' }).click()
+    const keepMine = page.getByRole('button', { name: 'Keep mine' })
+    await keepMine.waitFor({ state: 'visible', timeout: 10_000 })
+    await keepMine.click()
+    await page.getByText('MINE — keep this one').waitFor({ state: 'visible', timeout: 10_000 })
+    if (notesRows[0].content !== 'MINE — keep this one') {
+      throw new Error('“Keep mine” did not overwrite with the editor’s content')
+    }
+    ok('“Keep mine” overwrites deliberately after an explicit choice')
+
+    if (errors.length) throw new Error(`Uncaught page error on the notes page: ${errors[0]}`)
+    ok('the notes conflict flow raised no uncaught errors')
+  } finally {
+    notesScenario = false
+    notesRows = []
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -2319,6 +2469,7 @@ async function main() {
     await runItinerary(browser)
     await runChecklist(browser)
     await runPacking(browser)
+    await runNotes(browser)
     await runPolls(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)

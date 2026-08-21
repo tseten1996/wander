@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { NotebookPen, Pin, PinOff, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
-import { useCreateNote, useDeleteNote, useNotes, useUpdateNote } from './api'
+import { NoteConflictError, useCreateNote, useDeleteNote, useNotes, useUpdateNote } from './api'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -55,8 +55,18 @@ function NoteDialog({
     defaultValues: empty,
   })
 
+  // The note's `updated_at` at the moment the editor opened, and the server's
+  // current row when a save collides with someone else's (#272). `openedAt`
+  // guards the save; `conflict` drives the reload / keep-mine prompt.
+  const [openedAt, setOpenedAt] = React.useState<string | null>(null)
+  const [conflict, setConflict] = React.useState<Note | null>(null)
+
   React.useEffect(() => {
-    if (open) form.reset(note ? { title: note.title, content: note.content } : empty)
+    if (open) {
+      form.reset(note ? { title: note.title, content: note.content } : empty)
+      setOpenedAt(note?.updated_at ?? null)
+      setConflict(null)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, note])
 
@@ -66,8 +76,40 @@ function NoteDialog({
   async function onSubmit(values: NoteFormValues) {
     const payload = { title: values.title.trim() || 'Untitled', content: values.content.trim() }
     try {
-      if (note) await updateNote.mutateAsync({ id: note.id, ...payload })
-      else await createNote.mutateAsync(payload)
+      if (note) {
+        await updateNote.mutateAsync({
+          id: note.id,
+          expectedUpdatedAt: openedAt ?? undefined,
+          ...payload,
+        })
+      } else {
+        await createNote.mutateAsync(payload)
+      }
+      onOpenChange(false)
+    } catch (e) {
+      if (e instanceof NoteConflictError) {
+        setConflict(e.latest)
+        return
+      }
+      // otherwise toasted by the mutation's onError
+    }
+  }
+
+  // Discard my edits and load the version that landed while I was editing.
+  function reloadLatest() {
+    if (!conflict) return
+    form.reset({ title: conflict.title, content: conflict.content })
+    setOpenedAt(conflict.updated_at)
+    setConflict(null)
+  }
+
+  // Deliberately overwrite the other save with what's in the editor now.
+  async function keepMine() {
+    if (!note) return
+    const values = form.getValues()
+    const payload = { title: values.title.trim() || 'Untitled', content: values.content.trim() }
+    try {
+      await updateNote.mutateAsync({ id: note.id, ...payload })
       onOpenChange(false)
     } catch {
       // toasted by the mutation's onError
@@ -110,9 +152,42 @@ function NoteDialog({
               </div>
             </TabsContent>
           </Tabs>
-          <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
-            {note ? 'Save note' : 'Create note'}
-          </Button>
+          {conflict ? (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="space-y-3 rounded-xl border border-accent bg-accent-soft p-4"
+            >
+              <p className="text-sm text-ink">
+                <span className="font-semibold">This note changed while you were editing.</span>{' '}
+                Someone else saved it. Reload to see their version, or keep yours and overwrite it.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="lg"
+                  className="w-full"
+                  onClick={reloadLatest}
+                >
+                  Reload theirs
+                </Button>
+                <Button
+                  type="button"
+                  size="lg"
+                  className="w-full"
+                  disabled={updateNote.isPending}
+                  onClick={keepMine}
+                >
+                  Keep mine
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
+              {note ? 'Save note' : 'Create note'}
+            </Button>
+          )}
         </form>
       </DialogContent>
     </Dialog>
