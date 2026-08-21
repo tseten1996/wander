@@ -186,7 +186,7 @@ export function useSetPinned(tripId: string) {
 }
 
 export function useToggleReaction(tripId: string, memberId: string) {
-  const invalidate = useInvalidateMessages(tripId)
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async ({
       message,
@@ -211,7 +211,40 @@ export function useToggleReaction(tripId: string, memberId: string) {
         if (error) throw error
       }
     },
-    onSuccess: invalidate,
-    onError: (err) => toast.error(friendlyError(err, 'Could not react to that message')),
+    // Optimistic toggle — a reaction is a core collaborative tap and must land
+    // instantly (#269). Realtime + the settle invalidation reconcile the true
+    // rows (real id, other members' reactions).
+    onMutate: async ({ message, emoji }) => {
+      await queryClient.cancelQueries({ queryKey: ['messages', tripId] })
+      const previous = queryClient.getQueryData<MessageWithReactions[]>(['messages', tripId])
+      queryClient.setQueryData<MessageWithReactions[]>(['messages', tripId], (old) =>
+        (old ?? []).map((m) => {
+          if (m.id !== message.id) return m
+          const mine = m.message_reactions.find(
+            (r) => r.member_id === memberId && r.emoji === emoji
+          )
+          if (mine) {
+            return {
+              ...m,
+              message_reactions: m.message_reactions.filter((r) => r.id !== mine.id),
+            }
+          }
+          const optimistic: MessageReaction = {
+            id: `optimistic-${crypto.randomUUID()}`,
+            trip_id: tripId,
+            message_id: m.id,
+            member_id: memberId,
+            emoji,
+          }
+          return { ...m, message_reactions: [...m.message_reactions, optimistic] }
+        })
+      )
+      return { previous }
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['messages', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not react to that message'))
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['messages', tripId] }),
   })
 }

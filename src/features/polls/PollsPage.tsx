@@ -187,7 +187,7 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
               <div key={option.id} className="space-y-1.5">
                 <button
                   type="button"
-                  disabled={!open || vote.isPending}
+                  disabled={!open}
                   onClick={() => vote.mutate({ poll, optionId: option.id })}
                   className={cn(
                     'relative w-full overflow-hidden rounded-xl border px-4 py-3 text-left transition-all',

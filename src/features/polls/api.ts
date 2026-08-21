@@ -82,7 +82,7 @@ export function useCreatePoll(tripId: string, memberId: string, memberIds: strin
 }
 
 export function useVote(tripId: string, memberId: string) {
-  const invalidate = useInvalidatePolls(tripId)
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async ({ poll, optionId }: { poll: PollWithVotes; optionId: string }) => {
       const existing = poll.votes.find((v) => v.member_id === memberId)
@@ -104,8 +104,48 @@ export function useVote(tripId: string, memberId: string) {
       if (error) throw error
       if (!existing) logActivity(tripId, memberId, 'voted on', poll.question)
     },
-    onSuccess: invalidate,
-    onError: (err) => toast.error(friendlyError(err, 'Could not record your vote')),
+    // Optimistic tally + selection — a vote is a core "decide together" tap and
+    // must move the moment it's pressed (#269). Realtime + the settle
+    // invalidation reconcile the true rows (real id, other members' votes).
+    onMutate: async ({ poll, optionId }) => {
+      await queryClient.cancelQueries({ queryKey: ['polls', tripId] })
+      const previous = queryClient.getQueryData<PollWithVotes[]>(['polls', tripId])
+      queryClient.setQueryData<PollWithVotes[]>(['polls', tripId], (old) =>
+        (old ?? []).map((p) => {
+          if (p.id !== poll.id) return p
+          const mine = p.votes.find((v) => v.member_id === memberId)
+          if (mine?.option_id === optionId) {
+            // tapping current choice clears it
+            return { ...p, votes: p.votes.filter((v) => v.id !== mine.id) }
+          }
+          if (mine) {
+            // switching choice moves the existing vote
+            return {
+              ...p,
+              votes: p.votes.map((v) =>
+                v.id === mine.id ? { ...v, option_id: optionId } : v
+              ),
+            }
+          }
+          // first vote — add a placeholder the invalidation will replace
+          const optimistic: Vote = {
+            id: `optimistic-${crypto.randomUUID()}`,
+            trip_id: tripId,
+            poll_id: p.id,
+            option_id: optionId,
+            member_id: memberId,
+            created_at: new Date().toISOString(),
+          }
+          return { ...p, votes: [...p.votes, optimistic] }
+        })
+      )
+      return { previous }
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['polls', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not record your vote'))
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['polls', tripId] }),
   })
 }
 
