@@ -32,6 +32,7 @@ import {
 } from './schemas'
 import type { AiResponse, Intent, ReasonSource, RefusalReason } from './schemas'
 import { bookingParsePrompt, improveDayPrompt } from './prompts'
+import type { PromptPreferences } from './prompts'
 import { MODELS } from './provider'
 import type { ModelProvider } from './provider'
 import { planDay } from './day'
@@ -382,6 +383,7 @@ async function improveDay(
   let context: {
     items?: DayItem[]
     leg?: { name?: string | null } | null
+    preferences?: PromptPreferences | null
   } | null
   try {
     const { data, error } = await deps.db.rpc('get_ai_day_context', {
@@ -448,6 +450,10 @@ async function improveDay(
       endsAt: c.endsAt,
     })),
     notes: plans.notes,
+    // Stated preferences (#268), read as the caller by get_ai_day_context.
+    // Only ever reaches the model on the judgement call — the deterministic
+    // "nothing to do" and single-plan paths above never build a prompt.
+    preferences: context?.preferences ?? null,
   })
   const model = MODELS[args.tier]
 

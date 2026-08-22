@@ -73,6 +73,29 @@ export interface Member {
   joined_at: string
 }
 
+/** How the group likes to travel — the pace of a day. */
+export type TripPace = 'relaxed' | 'balanced' | 'packed'
+/** How the group likes to spend on a trip. */
+export type TripBudgetStyle = 'budget' | 'moderate' | 'comfortable' | 'luxury'
+
+/**
+ * Stated, group-owned trip preferences (#268, epic #209 slice 4). One row per
+ * trip, editable by any member. Feeds the "improve this day" AI context as data
+ * the group stated — never auto-derived from chat. Every field is optional; an
+ * all-empty record behaves exactly as no record (the AI degrades to today's
+ * behaviour). `updated_by` is an audit stamp and never reaches the model.
+ */
+export interface TripPreferences {
+  trip_id: string
+  pace: TripPace | null
+  budget_style: TripBudgetStyle | null
+  interests: string[]
+  dietary: string[]
+  notes: string | null
+  updated_by: string | null
+  updated_at: string
+}
+
 export interface Poll {
   id: string
   trip_id: string
