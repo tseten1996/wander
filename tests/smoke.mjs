@@ -481,6 +481,49 @@ function nextNoteStamp() {
   return `2026-03-01T01:${mm}:00Z`
 }
 
+// Questions (#273): a stateful store, like the other content stores above, so an
+// asked question (POST) and the answer/reopen PATCHes survive the mutation's
+// invalidate → refetch and render. Scoped to `runQuestions` via
+// `questionsScenario`: only while that flag is set does /rest/v1/questions become
+// stateful; every other scenario keeps the empty catch-all the questions page
+// mounted against before this route existed. useQuestions reads
+// `select('*').eq('trip_id',…).order('created_at',{ascending:false})`;
+// useCreateQuestion's insert() has no `.select()` (return=minimal → bare 201), and
+// useAnswerQuestion/useReopenQuestion are update(patch).eq('id',…) with none either.
+const QUESTION_SEED_ITEM = {
+  id: 'q-seed-1',
+  trip_id: TRIP_ID,
+  member_id: OWNER_MEMBER.id,
+  title: 'Who is booking the Airbnb?',
+  body: null,
+  answered: false,
+  answer: null,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let questionsScenario = false
+let questionsRows = []
+
+// Ideas / inspiration (#273): a stateful store, like the stores above, so a
+// pinned idea (POST) survives the invalidate → refetch and renders on the board.
+// Scoped to `runIdeas` via `inspirationScenario`: only while that flag is set does
+// /rest/v1/inspiration_items become stateful; every other scenario keeps the empty
+// catch-all the board mounted against before. useInspiration reads
+// `select('*').eq('trip_id',…).order('created_at',{ascending:false})`;
+// useCreateInspiration's insert() has no `.select()` (return=minimal → bare 201).
+const INSPIRATION_SEED_ITEM = {
+  id: 'idea-seed-1',
+  trip_id: TRIP_ID,
+  title: 'Rooftop bar in Bairro Alto',
+  url: null,
+  image_url: null,
+  note: 'Great sunset views',
+  category: 'food',
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let inspirationScenario = false
+let inspirationRows = []
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -846,6 +889,17 @@ async function routeSupabase(route) {
   //     PATCH without that filter is the unguarded "keep mine" overwrite.
   if (pathname.endsWith('/rest/v1/notes')) {
     if (!notesScenario) return json([])
+    if (method === 'POST') {
+      // Create (#273): useCreateNote's insert().select().single() wants one full
+      // row back, so the create mutation's invalidate → refetch lists the new
+      // note. A monotonic stamp matches the trigger's clock like the guarded save.
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = notesRows.length + 1
+      const stamp = nextNoteStamp()
+      const row = { id: `note-${n}`, pinned: false, created_at: stamp, updated_at: stamp, ...payload }
+      notesRows.push(row)
+      return json(row) // `.select().single()` → a bare object
+    }
     if (method === 'GET') {
       if (search.includes('order=')) return json([...notesRows]) // list read
       // Post-conflict re-read: `.eq('id',…).single()` → a bare object.
@@ -869,6 +923,67 @@ async function routeSupabase(route) {
       return route.fulfill({ status: 204, body: '' }) // no `.select()` → return=minimal
     }
     return json([]) // insert/delete unused by this scenario
+  }
+
+  // Questions (#273): two modes on /rest/v1/questions.
+  //   • Default (every other scenario): an empty read, matching the catch-all
+  //     behavior the questions page mounted against before this route existed.
+  //   • Questions scenario (`questionsScenario` set): a stateful store so an asked
+  //     question (POST) and the answer/reopen PATCHes survive the invalidate →
+  //     refetch and render. Newest-first on GET, mirroring the real descending
+  //     `order('created_at')`.
+  if (pathname.endsWith('/rest/v1/questions')) {
+    if (!questionsScenario) return json([])
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = questionsRows.length + 1
+      questionsRows.push({
+        id: `q-${n}`,
+        body: null,
+        answered: false,
+        answer: null,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+      })
+      return route.fulfill({ status: 201, body: '' }) // insert() has no `.select()`
+    }
+    if (method === 'PATCH') {
+      // update(patch).eq('id', id): answer sets {answered:true, answer}, reopen
+      // sets {answered:false}. The id rides in the query string; the patch merges.
+      const id = decodeURIComponent((search.match(/id=eq\.([^&]+)/) ?? [])[1] ?? '')
+      const patch = Array.isArray(body) ? body[0] : body
+      const row = questionsRows.find((q) => q.id === id)
+      if (row) Object.assign(row, patch)
+      return json([]) // no `.select()` → return=minimal
+    }
+    if (method === 'GET') return json([...questionsRows].reverse())
+    return json([]) // DELETE unused by this scenario
+  }
+
+  // Ideas / inspiration (#273): two modes on /rest/v1/inspiration_items.
+  //   • Default (every other scenario): an empty read, matching the catch-all
+  //     behavior the board mounted against before this route existed.
+  //   • Ideas scenario (`inspirationScenario` set): a stateful store so a pinned
+  //     idea (POST) survives the invalidate → refetch and renders. Newest-first on
+  //     GET, mirroring the real descending `order('created_at')`.
+  if (pathname.endsWith('/rest/v1/inspiration_items')) {
+    if (!inspirationScenario) return json([])
+    if (method === 'POST') {
+      const payload = Array.isArray(body) ? body[0] : body
+      const n = inspirationRows.length + 1
+      inspirationRows.push({
+        id: `idea-${n}`,
+        title: null,
+        url: null,
+        image_url: null,
+        note: null,
+        created_at: `2026-03-01T00:10:0${n}Z`,
+        ...payload,
+      })
+      return route.fulfill({ status: 201, body: '' }) // insert() has no `.select()`
+    }
+    if (method === 'GET') return json([...inspirationRows].reverse())
+    return json([]) // DELETE unused by this scenario
   }
 
   // Client error telemetry (#57): the global handlers fire-and-forget an insert
@@ -2446,6 +2561,347 @@ async function runNotes(browser) {
   }
 }
 
+/*
+  Questions surface (#273).
+
+  Questions — the "who's driving? who books the flights?" ledger a group settles
+  once — is a shipped interactive surface that mounted with no smoke scenario and
+  no /rest/v1/questions route in the harness, so a broken render or a dead
+  ask/answer control could reach `main` with nothing catching it (the exact class
+  of production escape #262/#264 were). This drives the real QuestionsPage end to
+  end against the stubbed Supabase: a seeded question proves the surface reads
+  from the route, asking one exercises the create POST, and answering it exercises
+  the PATCH — asserting each payload shape and that the answered question moves to
+  the "Answered" section with its answer shown.
+*/
+async function runQuestions(browser) {
+  console.log('\n▶ questions (ask a question, then answer it)')
+  questionsScenario = true
+  questionsRows = [{ ...QUESTION_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/questions`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded question prove the surface renders from the
+    // /rest/v1/questions route (the populated list, not the empty state).
+    await page
+      .getByRole('heading', { name: 'Questions' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Who is booking the Airbnb?').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the questions surface renders a question from the questions route')
+
+    // Asking: "Ask" opens the dialog; the create POSTs to /rest/v1/questions and
+    // the stateful store lets the invalidate → refetch bring the new row back.
+    const asked = 'Do we need travel insurance?'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/questions') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'Ask', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#q-title').waitFor({ state: 'visible', timeout: 10_000 })
+    await dialog.locator('#q-title').fill(asked)
+    await dialog.getByRole('button', { name: 'Post question' }).click()
+
+    // The POST carries the trip id, the asker's member id, and the typed title.
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.member_id !== OWNER_MEMBER.id ||
+      payload?.title !== asked
+    ) {
+      throw new Error(`question POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('asking posts a question with trip, asker, and title')
+
+    // After the refetch the new question renders in the open list.
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.getByText(asked).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an asked question appears in the open list')
+
+    // Answering: the asked card's "Answer" opens an inline editor; "Mark answered"
+    // PATCHes {answered:true, answer}, and the refetch moves it to the Answered
+    // section with the answer shown. Scope to the asked card so the seed's own
+    // "Answer" control doesn't get clicked instead.
+    const answerPatch = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/questions') && req.method() === 'PATCH',
+      { timeout: 10_000 }
+    )
+    const askedCard = page.locator('.p-5', { hasText: asked })
+    await askedCard.getByRole('button', { name: 'Answer', exact: true }).click()
+    const answer = 'Yes — booking it through the card provider.'
+    await askedCard.getByPlaceholder('Write the answer…').fill(answer)
+    await askedCard.getByRole('button', { name: 'Mark answered' }).click()
+
+    const patchPayload = (await answerPatch).postDataJSON()
+    if (patchPayload?.answered !== true) {
+      throw new Error(`answer PATCH payload wrong: ${JSON.stringify(patchPayload)}`)
+    }
+    ok('answering a question PATCHes answered:true')
+
+    // The answered question surfaces under its "Answered" heading with the answer.
+    await page.getByText('Answered (1)').waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText(answer).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an answered question moves to the Answered section with its answer')
+
+    if (errors.length) throw new Error(`Uncaught page error on the questions page: ${errors[0]}`)
+    ok('the questions flow raised no uncaught errors')
+  } finally {
+    questionsScenario = false
+    questionsRows = []
+    await context.close()
+  }
+}
+
+/*
+  Notes create surface (#273).
+
+  The notes concurrency scenario (runNotes, #272) already covers rendering and a
+  guarded edit on a seeded note, but never the create path — the "New note" →
+  write → it appears flow, which had no /rest/v1/notes POST in the harness. This
+  fills that gap: it mounts the empty board, creates a note through the real
+  editor, asserts the create POST's payload shape, and asserts the new note
+  renders on the board.
+*/
+async function runNotesCreate(browser) {
+  console.log('\n▶ notes: create a note from scratch (#273)')
+  notesScenario = true
+  notesStampSeq = 0
+  notesRows = []
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/notes`, { waitUntil: 'domcontentloaded' })
+
+    // The surface mounts and renders its empty state — the route is reachable.
+    await page.getByRole('heading', { name: 'Notes' }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('No notes yet').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the notes surface renders its empty state')
+
+    // Creating: "New note" opens the editor; "Create note" POSTs to /rest/v1/notes
+    // and the stateful store lets the invalidate → refetch list the new note.
+    const title = 'Packing reminders'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/notes') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'New note' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByPlaceholder('Note title').waitFor({ state: 'visible', timeout: 10_000 })
+    await dialog.getByPlaceholder('Note title').fill(title)
+    await dialog.locator('textarea').fill('- Universal adapter\n- Rain shell')
+    await dialog.getByRole('button', { name: 'Create note' }).click()
+
+    // The POST carries the trip id, the creator's member id, and the typed title.
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.created_by !== OWNER_MEMBER.id ||
+      payload?.title !== title
+    ) {
+      throw new Error(`note POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('creating posts a note with trip, creator, and title')
+
+    // After the refetch the new note renders on the board and the dialog closed.
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.getByRole('heading', { name: title }).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a created note appears on the notes board')
+
+    if (errors.length) throw new Error(`Uncaught page error on the notes page: ${errors[0]}`)
+    ok('the note-create flow raised no uncaught errors')
+  } finally {
+    notesScenario = false
+    notesRows = []
+    await context.close()
+  }
+}
+
+/*
+  Ideas / inspiration surface (#273).
+
+  The shared idea board — the moodboard of hotels, restaurants and things worth
+  doing — is a shipped interactive surface that mounted with no smoke scenario and
+  no /rest/v1/inspiration_items route in the harness. This drives the real
+  InspirationPage end to end against the stubbed Supabase: a seeded idea proves
+  the surface reads from the route, then pinning one through the dialog exercises
+  the create POST (asserting its payload shape) and the refetch proves the new
+  idea renders on the board.
+*/
+async function runIdeas(browser) {
+  console.log('\n▶ ideas (board renders + a pinned idea appears)')
+  inspirationScenario = true
+  inspirationRows = [{ ...INSPIRATION_SEED_ITEM }]
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/ideas`, { waitUntil: 'domcontentloaded' })
+
+    // The heading plus the seeded idea prove the surface renders from the
+    // /rest/v1/inspiration_items route (the populated board, not the empty state).
+    await page.getByRole('heading', { name: 'Ideas' }).waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Rooftop bar in Bairro Alto').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the ideas surface renders an idea from the inspiration_items route')
+
+    // Pinning: "Pin an idea" opens the dialog; "Pin it" POSTs to
+    // /rest/v1/inspiration_items and the stateful store lets the invalidate →
+    // refetch bring the new row back so it renders on the board.
+    const idea = 'Tram 28 photo spot'
+    const createPost = page.waitForRequest(
+      (req) => req.url().includes('/rest/v1/inspiration_items') && req.method() === 'POST',
+      { timeout: 10_000 }
+    )
+    await page.getByRole('button', { name: 'Pin an idea' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#idea-title').waitFor({ state: 'visible', timeout: 10_000 })
+    await dialog.locator('#idea-title').fill(idea)
+    await dialog.getByRole('button', { name: 'Pin it' }).click()
+
+    // The POST carries the trip id, the creator's member id, the typed title, and
+    // the default category — the idea write's payload shape.
+    const payload = (await createPost).postDataJSON()
+    if (
+      payload?.trip_id !== TRIP_ID ||
+      payload?.created_by !== OWNER_MEMBER.id ||
+      payload?.title !== idea ||
+      payload?.category !== 'general'
+    ) {
+      throw new Error(`idea POST payload wrong: ${JSON.stringify(payload)}`)
+    }
+    ok('pinning posts an idea with trip, creator, title, and category')
+
+    // After the refetch the new idea renders on the board and the dialog closed.
+    await dialog.waitFor({ state: 'hidden', timeout: 10_000 })
+    await page.getByText(idea).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a pinned idea appears on the board')
+
+    if (errors.length) throw new Error(`Uncaught page error on the ideas page: ${errors[0]}`)
+    ok('the ideas flow raised no uncaught errors')
+  } finally {
+    inspirationScenario = false
+    inspirationRows = []
+    await context.close()
+  }
+}
+
+/*
+  Calendar surface (#273).
+
+  The month view — travel dates, reservations, deadlines and activities in one
+  grid — is a shipped surface that mounted with no smoke scenario at all, so a
+  render break (a bad date parse, a null crash) could ship a silent white screen.
+  This drives the real CalendarPage against the stubbed Supabase and asserts the
+  primary things a smoke click protects: the month grid mounts without crashing,
+  and paging to the next month updates the month label. It reads the default
+  itinerary/checklist/budget routes the harness already serves; the weather
+  overlay degrades to nothing without a forecast, so it never blocks (the same way
+  the itinerary scenario tolerates it).
+*/
+async function runCalendar(browser) {
+  console.log('\n▶ calendar (month grid renders + month navigation)')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  // The month heading is the one "MMMM yyyy" <h2> — read it by that shape so a
+  // layout heading elsewhere in the shell never stands in for it.
+  const monthLabel = () =>
+    page.evaluate(() => {
+      const h = Array.from(document.querySelectorAll('h2')).find((el) =>
+        /\s\d{4}$/.test((el.textContent || '').trim())
+      )
+      return h ? h.textContent.trim() : null
+    })
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/calendar`, { waitUntil: 'domcontentloaded' })
+
+    // The page heading and the weekday grid prove the month view mounts without
+    // crashing — the escape class this scenario guards (a silent render break).
+    await page
+      .getByRole('heading', { name: 'Calendar' })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    await page.getByText('Mon', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the calendar renders its heading and weekday grid')
+
+    // Paging forward updates the month label — the primary interaction produces a
+    // visible result, independent of what today's date happens to be.
+    const before = await monthLabel()
+    if (!before) throw new Error('the calendar did not render a month label')
+    await page.getByRole('button', { name: 'Next month' }).click()
+    await page.waitForFunction(
+      (prev) => {
+        const h = Array.from(document.querySelectorAll('h2')).find((el) =>
+          /\s\d{4}$/.test((el.textContent || '').trim())
+        )
+        return !!h && h.textContent.trim() !== prev
+      },
+      before,
+      { timeout: 10_000 }
+    )
+    ok('paging to the next month updates the month label')
+
+    if (errors.length) throw new Error(`Uncaught page error on the calendar page: ${errors[0]}`)
+    ok('the calendar flow raised no uncaught errors')
+  } finally {
+    await context.close()
+  }
+}
+
+/*
+  Global search palette (#273).
+
+  The ⌘K command palette searches the sections a member has opened this visit
+  (it reads the TanStack Query cache, not the network) and deep-links to matches.
+  It mounted with no smoke scenario, yet its focus/open/escape behaviour is
+  exactly the kind of interaction a silent regression can break. This opens the
+  checklist first so its cached items become searchable, then proves the palette
+  opens on ⌘K, matches a query against that cache, and closes on Escape.
+*/
+async function runSearch(browser) {
+  console.log('\n▶ search (⌘K opens, matches a query, closes on Escape)')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    // Search only covers sections opened this visit (it reads the query cache).
+    // Open the checklist first so its cached item — the single overdue task the
+    // default route serves — is searchable when the palette opens.
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/checklist`, { waitUntil: 'domcontentloaded' })
+    await page.getByText('Renew passport').waitFor({ state: 'visible', timeout: 10_000 })
+
+    // ⌘/Ctrl-K opens the command palette from anywhere in the trip.
+    await page.keyboard.press('Control+k')
+    const searchInput = page.getByRole('combobox', { name: 'Search this trip' })
+    await searchInput.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('⌘K opens the search palette')
+
+    // A query matches the cached checklist item and surfaces it as a result option.
+    await searchInput.fill('passport')
+    await page
+      .getByRole('option', { name: /Renew passport/ })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a query jumps to a matching result')
+
+    // Escape closes the palette — the focus/escape behaviour the surface owns.
+    await page.keyboard.press('Escape')
+    await searchInput.waitFor({ state: 'hidden', timeout: 10_000 })
+    ok('the palette closes on Escape')
+
+    if (errors.length) throw new Error(`Uncaught page error on the search palette: ${errors[0]}`)
+    ok('the search flow raised no uncaught errors')
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -2470,6 +2926,11 @@ async function main() {
     await runChecklist(browser)
     await runPacking(browser)
     await runNotes(browser)
+    await runNotesCreate(browser)
+    await runQuestions(browser)
+    await runIdeas(browser)
+    await runCalendar(browser)
+    await runSearch(browser)
     await runPolls(browser)
     await runErrorReporting(browser)
     await runPublicShare(browser)
