@@ -33,7 +33,7 @@ export function SearchDialog({
   const [query, setQuery] = React.useState('')
   const [active, setActive] = React.useState(0)
 
-  const { groups, total } = useTripSearch(tripId, query)
+  const { groups, total } = useTripSearch(tripId, query, open)
   const flat = React.useMemo(() => groups.flatMap((g) => g.results), [groups])
 
   // Fresh state + focus each time the palette opens.
@@ -107,7 +107,7 @@ export function SearchDialog({
               aria-controls="search-results"
               aria-activedescendant={flat.length ? `search-opt-${active}` : undefined}
               aria-label="Search this trip"
-              placeholder="Search polls, chat, checklist, notes, ideas…"
+              placeholder="Search itinerary, budget, chat, notes…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKeyDown}
@@ -122,9 +122,9 @@ export function SearchDialog({
         <div id="search-results" role="listbox" aria-label="Search results" className="pt-3">
           {tooShort ? (
             <p className="px-1 py-8 text-center text-sm text-muted">
-              Type to search across polls, chat, checklist, notes and ideas.
+              Type to search across your whole trip.
               <span className="mt-1 block text-xs text-faint">
-                Covers the sections you’ve opened this visit.
+                Itinerary, budget, chat, polls, checklist, notes and ideas.
               </span>
             </p>
           ) : total === 0 ? (
@@ -133,7 +133,7 @@ export function SearchDialog({
                 No matches for “<span className="text-ink-soft">{trimmed}</span>”.
               </p>
               <p className="mt-1 text-xs text-faint">
-                Search only covers sections you’ve opened this visit.
+                Try a place, an expense, or a name from your trip.
               </p>
             </div>
           ) : (

@@ -38,38 +38,45 @@ export function validateChatImage(file: File): string | null {
   return null
 }
 
+/** The trip's chat messages (capped at 300, oldest first) with reactions
+ *  embedded and image messages' short-lived signed URLs resolved. Exported as a
+ *  plain function (not just the hook) so the global search palette can warm this
+ *  same cache key without touching Supabase itself — this api.ts stays the only
+ *  place that reads the table and mints the image URLs. */
+export async function fetchMessages(tripId: string): Promise<MessageWithReactions[]> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*, message_reactions(*)')
+    .eq('trip_id', tripId)
+    .order('created_at', { ascending: true })
+    .limit(300)
+  if (error) throw error
+  const rows = data as MessageWithReactions[]
+  // The bucket is private, so an image is readable only through a short-lived
+  // signed URL that the SELECT policy gates on membership. Mint them for
+  // every image message on this page in one round-trip and attach them, so
+  // the feature's Supabase access stays inside this one query.
+  const paths = [...new Set(rows.map((m) => m.image_path).filter((p): p is string => !!p))]
+  if (paths.length > 0) {
+    // A signing failure must degrade to "image unavailable", never break the
+    // whole thread — so it's caught, not thrown out of the query.
+    try {
+      const { data: signed } = await supabase.storage
+        .from(CHAT_IMAGES_BUCKET)
+        .createSignedUrls(paths, SIGNED_URL_TTL_SECONDS)
+      const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]))
+      for (const m of rows) if (m.image_path) m.image_url = urls.get(m.image_path) ?? null
+    } catch {
+      /* leave image_url unset → the bubble shows the unavailable fallback */
+    }
+  }
+  return rows
+}
+
 export function useMessages(tripId: string) {
   return useQuery({
     queryKey: ['messages', tripId],
-    queryFn: async (): Promise<MessageWithReactions[]> => {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*, message_reactions(*)')
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: true })
-        .limit(300)
-      if (error) throw error
-      const rows = data as MessageWithReactions[]
-      // The bucket is private, so an image is readable only through a short-lived
-      // signed URL that the SELECT policy gates on membership. Mint them for
-      // every image message on this page in one round-trip and attach them, so
-      // the feature's Supabase access stays inside this one query.
-      const paths = [...new Set(rows.map((m) => m.image_path).filter((p): p is string => !!p))]
-      if (paths.length > 0) {
-        // A signing failure must degrade to "image unavailable", never break the
-        // whole thread — so it's caught, not thrown out of the query.
-        try {
-          const { data: signed } = await supabase.storage
-            .from(CHAT_IMAGES_BUCKET)
-            .createSignedUrls(paths, SIGNED_URL_TTL_SECONDS)
-          const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]))
-          for (const m of rows) if (m.image_path) m.image_url = urls.get(m.image_path) ?? null
-        } catch {
-          /* leave image_url unset → the bubble shows the unavailable fallback */
-        }
-      }
-      return rows
-    },
+    queryFn: () => fetchMessages(tripId),
   })
 }
 

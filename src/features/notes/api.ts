@@ -20,19 +20,25 @@ export class NoteConflictError extends Error {
   }
 }
 
+/** The trip's notes, pinned first then most-recently-updated. Exported as a
+ *  plain function (not just the hook) so the global search palette can warm this
+ *  same cache key without touching Supabase itself — this api.ts stays the only
+ *  place that reads the table. */
+export async function fetchNotes(tripId: string): Promise<Note[]> {
+  const { data, error } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('pinned', { ascending: false })
+    .order('updated_at', { ascending: false })
+  if (error) throw error
+  return data
+}
+
 export function useNotes(tripId: string) {
   return useQuery({
     queryKey: ['notes', tripId],
-    queryFn: async (): Promise<Note[]> => {
-      const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('pinned', { ascending: false })
-        .order('updated_at', { ascending: false })
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchNotes(tripId),
   })
 }
 

@@ -7,18 +7,24 @@ import { friendlyError } from '@/lib/errors'
 import { fetchRates } from '@/lib/rates'
 import type { BudgetCategory, BudgetEntry, Repayment } from '@/types'
 
+/** The trip's expense rows, newest first. Exported as a plain function (not
+ *  just the hook) so the global search palette can warm this same cache key
+ *  without touching Supabase itself — this api.ts stays the only place that
+ *  reads the table. */
+export async function fetchBudget(tripId: string): Promise<BudgetEntry[]> {
+  const { data, error } = await supabase
+    .from('budget_entries')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data
+}
+
 export function useBudget(tripId: string) {
   return useQuery({
     queryKey: ['budget_entries', tripId],
-    queryFn: async (): Promise<BudgetEntry[]> => {
-      const { data, error } = await supabase
-        .from('budget_entries')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchBudget(tripId),
   })
 }
 
