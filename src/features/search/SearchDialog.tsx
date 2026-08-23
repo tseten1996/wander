@@ -74,6 +74,15 @@ export function SearchDialog({
       e.preventDefault()
       const result = flat[active]
       if (result) go(result)
+    } else if (e.key === 'Escape') {
+      // Close directly. The palette IS the combobox, and while a query is typed
+      // it reports aria-expanded=true — which the dialog's Escape guard reads as
+      // "an inner autocomplete list is open, decline the dismiss so the list
+      // collapses first". That guard fits a form dialog embedding an
+      // autocomplete; here there is no inner list to collapse, so without this a
+      // single Escape would be swallowed and never close the palette.
+      e.preventDefault()
+      onOpenChange(false)
     }
   }
 
