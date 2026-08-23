@@ -6,19 +6,25 @@ import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
 import type { ChecklistItem } from '@/types'
 
+/** The trip's checklist rows, position- then age-ordered. Exported as a plain
+ *  function (not just the hook) so the global search palette can warm this same
+ *  cache key without touching Supabase itself — this api.ts stays the only place
+ *  that reads the table. */
+export async function fetchChecklist(tripId: string): Promise<ChecklistItem[]> {
+  const { data, error } = await supabase
+    .from('checklist_items')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('position')
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
 export function useChecklist(tripId: string) {
   return useQuery({
     queryKey: ['checklist_items', tripId],
-    queryFn: async (): Promise<ChecklistItem[]> => {
-      const { data, error } = await supabase
-        .from('checklist_items')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('position')
-        .order('created_at')
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchChecklist(tripId),
   })
 }
 

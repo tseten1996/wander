@@ -1,10 +1,17 @@
 import * as React from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { Lightbulb, ListChecks, MessageCircle, NotebookPen, Vote, type LucideIcon } from 'lucide-react'
-import type { ChecklistItem, InspirationItem, Message, Note, Poll, PollOption } from '@/types'
+import {
+  Lightbulb, ListChecks, MapPin, MessageCircle, NotebookPen, PiggyBank, Vote,
+  type LucideIcon,
+} from 'lucide-react'
+import type {
+  BudgetCategory, BudgetEntry, ChecklistItem, InspirationItem, ItineraryItem,
+  Message, Note, Poll, PollOption,
+} from '@/types'
 import { searchAnchorId } from './anchor'
 
-export type SearchKind = 'poll' | 'message' | 'checklist' | 'note' | 'idea'
+export type SearchKind =
+  | 'poll' | 'message' | 'checklist' | 'note' | 'idea' | 'itinerary' | 'budget'
 
 export interface SearchResult {
   id: string
@@ -38,6 +45,8 @@ export const MIN_QUERY_LENGTH = 2
 const MAX_PER_KIND = 6
 
 const KIND_META: Record<SearchKind, { label: string; icon: LucideIcon }> = {
+  itinerary: { label: 'Itinerary', icon: MapPin },
+  budget: { label: 'Budget', icon: PiggyBank },
   poll: { label: 'Polls', icon: Vote },
   message: { label: 'Chat', icon: MessageCircle },
   checklist: { label: 'Checklist', icon: ListChecks },
@@ -45,7 +54,23 @@ const KIND_META: Record<SearchKind, { label: string; icon: LucideIcon }> = {
   idea: { label: 'Ideas', icon: Lightbulb },
 }
 
-const KIND_ORDER: SearchKind[] = ['poll', 'message', 'checklist', 'note', 'idea']
+// Itinerary and budget lead — the trip's densest, most-referenced content —
+// followed by the original five in their established order.
+const KIND_ORDER: SearchKind[] = [
+  'itinerary', 'budget', 'poll', 'message', 'checklist', 'note', 'idea',
+]
+
+/** Human labels for a budget entry's category, so a search for "food" matches a
+ *  "Food & drinks" expense. Kept here (not imported from BudgetPage) so the
+ *  search chunk never pulls in that heavy page module. */
+const BUDGET_CATEGORY_LABELS: Record<BudgetCategory, string> = {
+  stay: 'Stay',
+  transport: 'Transport',
+  food: 'Food & drinks',
+  activities: 'Activities',
+  shopping: 'Shopping',
+  other: 'Other',
+}
 
 /** `q` is expected pre-lowercased. */
 function hit(haystack: string | null | undefined, q: string): boolean {
@@ -77,7 +102,43 @@ function hostOf(url: string): string {
  */
 function collect(queryClient: QueryClient, tripId: string, q: string): SearchOutcome {
   const byKind: Record<SearchKind, SearchResult[]> = {
-    poll: [], message: [], checklist: [], note: [], idea: [],
+    itinerary: [], budget: [], poll: [], message: [], checklist: [], note: [], idea: [],
+  }
+
+  const itinerary =
+    queryClient.getQueryData<ItineraryItem[]>(['itinerary_items', tripId]) ?? []
+  for (const it of itinerary) {
+    if (hit(it.title, q) || hit(it.location, q) || hit(it.notes, q)) {
+      byKind.itinerary.push({
+        id: it.id,
+        kind: 'itinerary',
+        route: 'itinerary',
+        anchorId: searchAnchorId(it.id),
+        title: it.title,
+        snippet: hit(it.title, q)
+          ? null
+          : hit(it.location, q)
+            ? it.location
+            : it.notes
+              ? excerpt(it.notes, q)
+              : null,
+      })
+    }
+  }
+
+  const budget = queryClient.getQueryData<BudgetEntry[]>(['budget_entries', tripId]) ?? []
+  for (const e of budget) {
+    const categoryLabel = BUDGET_CATEGORY_LABELS[e.category]
+    if (hit(e.title, q) || hit(categoryLabel, q)) {
+      byKind.budget.push({
+        id: e.id,
+        kind: 'budget',
+        route: 'budget',
+        anchorId: searchAnchorId(e.id),
+        title: e.title,
+        snippet: hit(e.title, q) ? null : `Category: ${categoryLabel}`,
+      })
+    }
   }
 
   const polls =
@@ -171,14 +232,38 @@ function collect(queryClient: QueryClient, tripId: string, q: string): SearchOut
 }
 
 /**
- * Client-side search across the current trip's already-cached feature data.
- * Recomputed synchronously from the cache whenever the query text changes.
+ * Client-side search across the current trip's cached feature data. Recomputed
+ * synchronously from the cache whenever the query text changes.
+ *
+ * When `active` (the palette is open) it also warms the cache for every
+ * searchable section, so results no longer depend on which pages the member
+ * happened to open this session. Each landed prefetch bumps a revision that
+ * recomputes the index against the now-fuller cache — that's the only reason
+ * `revision` is a dependency of the memo below.
  */
-export function useTripSearch(tripId: string, rawQuery: string): SearchOutcome {
+export function useTripSearch(tripId: string, rawQuery: string, active: boolean): SearchOutcome {
   const queryClient = useQueryClient()
+  const [revision, bumpRevision] = React.useReducer((n: number) => n + 1, 0)
+
+  React.useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    // Loaded lazily so the seven feature fetchers stay out of the eager shell
+    // bundle SearchDialog ships in — they arrive only once the palette opens.
+    void import('./prefetch').then(({ prefetchTripSearch }) => {
+      if (cancelled) return
+      void prefetchTripSearch(queryClient, tripId, () => {
+        if (!cancelled) bumpRevision()
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [active, queryClient, tripId])
+
   return React.useMemo(() => {
     const q = rawQuery.trim().toLowerCase()
     if (q.length < MIN_QUERY_LENGTH) return { groups: [], total: 0 }
     return collect(queryClient, tripId, q)
-  }, [queryClient, tripId, rawQuery])
+  }, [queryClient, tripId, rawQuery, revision])
 }

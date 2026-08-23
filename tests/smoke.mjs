@@ -524,6 +524,55 @@ const INSPIRATION_SEED_ITEM = {
 let inspirationScenario = false
 let inspirationRows = []
 
+// Global search prefetch (#282): the ⌘K palette warms every section's cache
+// when it opens, so a record is searchable on a page this session never
+// visited. Scoped to `runSearch` via `searchScenario`: only while that flag is
+// set do the itinerary_items and budget_entries reads return these two seeds,
+// so every other scenario keeps its own itinerary/budget stores untouched. The
+// itinerary seed is a plain single-day stop (so it renders with the
+// `wander-item-<id>` anchor a deep-link scrolls to); the budget seed sits in the
+// "food" category so a search for "Food" exercises the category-label match.
+const ITINERARY_SEARCH_SEED = {
+  id: 'itin-search-1',
+  trip_id: TRIP_ID,
+  title: 'Pastéis de Belém tasting',
+  category: 'restaurant',
+  day: '2026-05-02',
+  end_day: null,
+  start_time: '15:00:00',
+  end_time: null,
+  location: 'Belém, Lisbon',
+  latitude: null,
+  longitude: null,
+  url: null,
+  notes: null,
+  cost: null,
+  budget_entry_id: null,
+  position: 1,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+}
+const BUDGET_SEARCH_SEED = {
+  id: 'be-search-1',
+  trip_id: TRIP_ID,
+  title: 'Dinner at Time Out Market',
+  category: 'food',
+  estimated: null,
+  actual: 6000,
+  currency: null,
+  estimated_converted: null,
+  actual_converted: null,
+  exchange_rate: null,
+  participants: null,
+  shares: null,
+  paid_by: null,
+  entry_date: '2026-05-02',
+  notes: null,
+  created_by: OWNER_MEMBER.id,
+  created_at: '2026-03-01T00:00:00Z',
+}
+let searchScenario = false
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -679,7 +728,11 @@ async function routeSupabase(route) {
       budgetEntries.push(row)
       return json({ id: row.id }, 201)
     }
-    if (method === 'GET') return json([...budgetEntries].reverse())
+    // Like itinerary_items above: during the search scenario the palette's
+    // on-open prefetch reads this route with the budget page unvisited, so
+    // return the one seed to prove prefetch coverage (#282).
+    if (method === 'GET')
+      return json(searchScenario ? [BUDGET_SEARCH_SEED] : [...budgetEntries].reverse())
     return json([]) // PATCH/DELETE unused by this scenario
   }
 
@@ -735,7 +788,10 @@ async function routeSupabase(route) {
       })
       return route.fulfill({ status: 201, body: '' })
     }
-    if (method === 'GET') return json([...itineraryItems])
+    // While the search scenario runs, the palette's on-open prefetch reads this
+    // route without the itinerary page ever mounting — return the one seed so a
+    // match proves prefetch (#282), not navigation history.
+    if (method === 'GET') return json(searchScenario ? [ITINERARY_SEARCH_SEED] : [...itineraryItems])
     return json([]) // reorder/edit PATCH + DELETE unused by this scenario
   }
 
@@ -2855,25 +2911,30 @@ async function runCalendar(browser) {
 }
 
 /*
-  Global search palette (#273).
+  Global search palette (#273, extended for #282).
 
-  The ⌘K command palette searches the sections a member has opened this visit
-  (it reads the TanStack Query cache, not the network) and deep-links to matches.
-  It mounted with no smoke scenario, yet its focus/open/escape behaviour is
-  exactly the kind of interaction a silent regression can break. This opens the
-  checklist first so its cached items become searchable, then proves the palette
-  opens on ⌘K, matches a query against that cache, and closes on Escape.
+  The ⌘K command palette searches the trip's cached feature data and deep-links
+  to matches. As of #282 it also covers the itinerary and budget, and warms every
+  section's cache the moment it opens — so a record is found on a page this
+  session never visited, not only the ones already navigated to. This lands on
+  the checklist (which reads neither itinerary nor budget) and proves: the palette
+  opens on ⌘K; the still-cached checklist item matches; an itinerary stop and a
+  budget expense are found on unvisited pages via the on-open prefetch (the
+  budget one by its category label); Escape closes it; and selecting a result
+  deep-links to the record so the highlighter can scroll to it.
 */
 async function runSearch(browser) {
-  console.log('\n▶ search (⌘K opens, matches a query, closes on Escape)')
+  console.log('\n▶ search (⌘K finds itinerary + budget on unvisited pages, deep-links, closes)')
+  searchScenario = true
   const context = await newContext(browser, OWNER_SESSION)
   const page = await context.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
   try {
-    // Search only covers sections opened this visit (it reads the query cache).
-    // Open the checklist first so its cached item — the single overdue task the
-    // default route serves — is searchable when the palette opens.
+    // Land on the checklist — it reads neither the itinerary nor the budget, so
+    // those caches are empty until the palette warms them. Its own overdue task
+    // (the default route's single row) stays searchable, covering the pre-#282
+    // cache-read path in the same run.
     await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}/checklist`, { waitUntil: 'domcontentloaded' })
     await page.getByText('Renew passport').waitFor({ state: 'visible', timeout: 10_000 })
 
@@ -2883,21 +2944,59 @@ async function runSearch(browser) {
     await searchInput.waitFor({ state: 'visible', timeout: 10_000 })
     ok('⌘K opens the search palette')
 
-    // A query matches the cached checklist item and surfaces it as a result option.
+    // A query matches the already-cached checklist item and surfaces it.
     await searchInput.fill('passport')
     await page
       .getByRole('option', { name: /Renew passport/ })
       .waitFor({ state: 'visible', timeout: 10_000 })
-    ok('a query jumps to a matching result')
+    ok('a query jumps to a matching cached result')
+
+    // The itinerary page was never opened, so its stop is searchable only
+    // because the palette prefetched it on open (#282). The result appears a
+    // beat after the palette opens, once that prefetch lands.
+    await searchInput.fill('Belém')
+    await page
+      .getByRole('option', { name: /Pastéis de Belém tasting/ })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('an itinerary stop is found on a page not visited this session')
+
+    // The budget page was never opened either; this also proves the category
+    // match — "Food" hits the seed's "Food & drinks" category, not its title.
+    await searchInput.fill('Food')
+    await page
+      .getByRole('option', { name: /Dinner at Time Out Market/ })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a budget expense is found by its category on an unvisited page')
 
     // Escape closes the palette — the focus/escape behaviour the surface owns.
     await page.keyboard.press('Escape')
     await searchInput.waitFor({ state: 'hidden', timeout: 10_000 })
     ok('the palette closes on Escape')
 
+    // Reopen and select the itinerary result: it must deep-link to the itinerary
+    // page with the record's `#wander-item-<id>` hash, and that record must
+    // render there (the anchor the SearchHighlighter scrolls to).
+    await page.keyboard.press('Control+k')
+    await searchInput.waitFor({ state: 'visible', timeout: 10_000 })
+    await searchInput.fill('Belém')
+    const itineraryOption = page.getByRole('option', { name: /Pastéis de Belém tasting/ })
+    await itineraryOption.waitFor({ state: 'visible', timeout: 10_000 })
+    await itineraryOption.click()
+    await page.waitForURL(
+      (url) =>
+        url.hash.includes(`/trip/${TRIP_ID}/itinerary`) &&
+        url.hash.includes('wander-item-itin-search-1'),
+      { timeout: 10_000 }
+    )
+    await page
+      .locator('#wander-item-itin-search-1')
+      .waitFor({ state: 'visible', timeout: 10_000 })
+    ok('selecting a result deep-links to the record on its page')
+
     if (errors.length) throw new Error(`Uncaught page error on the search palette: ${errors[0]}`)
     ok('the search flow raised no uncaught errors')
   } finally {
+    searchScenario = false
     await context.close()
   }
 }

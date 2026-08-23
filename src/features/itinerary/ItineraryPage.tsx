@@ -297,7 +297,18 @@ function DayDirectionsAction({ items, dayLabel }: { items: ItineraryItem[]; dayL
  * concerns): it just marks "this runs through today", showing where in the span
  * today falls and the check-in / check-out time on the edge days.
  */
-function SpanBandCard({ item, day }: { item: ItineraryItem; day: string }) {
+function SpanBandCard({
+  item,
+  day,
+  anchored,
+}: {
+  item: ItineraryItem
+  day: string
+  /** True only on the span's earliest covered day, so a search deep-link has a
+   *  single scroll target — the band repeats across every day it spans, and a
+   *  duplicate DOM id would be invalid. */
+  anchored: boolean
+}) {
   const { trip, me, isOwner } = useTripContext()
   const deleteItem = useDeleteItineraryItem(trip.id)
   const [editOpen, setEditOpen] = React.useState(false)
@@ -327,7 +338,10 @@ function SpanBandCard({ item, day }: { item: ItineraryItem; day: string }) {
       .join(' · ') || meta.label
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken/60 px-3 py-2">
+    <div
+      id={anchored ? searchAnchorId(item.id) : undefined}
+      className="flex items-center gap-3 rounded-xl border border-line bg-sunken/60 px-3 py-2"
+    >
       <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', meta.chip)}>
         <meta.icon className="size-4.5" />
       </span>
@@ -373,6 +387,7 @@ function DaySection({
   day,
   items,
   spanning,
+  spanAnchorDays,
   weather,
   dayInfo,
   selectedId,
@@ -382,6 +397,8 @@ function DaySection({
   items: ItineraryItem[]
   /** Multi-day span items covering this day, shown as bands above the rows. */
   spanning: ItineraryItem[]
+  /** span id → its earliest covered day, so each span anchors on exactly one band. */
+  spanAnchorDays: Map<string, string>
   weather?: DailyWeather
   /** Day number + colour, matching the map's pins/legend (absent when undated). */
   dayInfo?: DayInfo
@@ -467,7 +484,7 @@ function DaySection({
       {day && spanning.length > 0 && (
         <div className="mb-3 space-y-2">
           {spanning.map((s) => (
-            <SpanBandCard key={s.id} item={s} day={day} />
+            <SpanBandCard key={s.id} item={s} day={day} anchored={spanAnchorDays.get(s.id) === day} />
           ))}
         </div>
       )}
@@ -804,12 +821,21 @@ export default function ItineraryPage() {
   for (const s of spanItems) for (const d of coveredDays(s)) {
     spansByDay.set(d, [...(spansByDay.get(d) ?? []), s])
   }
+  // The one day each span anchors its search id on: its earliest covered day.
+  // The band repeats across every day it spans, so only this one carries the
+  // `wander-item-<id>` id a deep-link scrolls to (a duplicate id is invalid).
+  const spanAnchorDays = new Map<string, string>()
+  for (const s of spanItems) {
+    const first = [...coveredDays(s)].sort((a, b) => a.localeCompare(b))[0]
+    if (first) spanAnchorDays.set(s.id, first)
+  }
   const renderDay = (day: string | null) => (
     <DaySection
       key={day ?? 'unscheduled'}
       day={day}
       items={byDay.get(day) ?? []}
       spanning={day ? spansByDay.get(day) ?? [] : []}
+      spanAnchorDays={spanAnchorDays}
       weather={day ? weather.data?.get(day) : undefined}
       dayInfo={day ? dayIndex.get(day) : undefined}
       selectedId={selectedId}

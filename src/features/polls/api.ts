@@ -8,21 +8,27 @@ import type { Poll, PollCategory, PollOption, Vote } from '@/types'
 
 export type PollWithVotes = Poll & { poll_options: PollOption[]; votes: Vote[] }
 
+/** The trip's polls with their options and votes embedded, newest first.
+ *  Exported as a plain function (not just the hook) so the global search palette
+ *  can warm this same cache key without touching Supabase itself — this api.ts
+ *  stays the only place that reads the table. */
+export async function fetchPolls(tripId: string): Promise<PollWithVotes[]> {
+  const { data, error } = await supabase
+    .from('polls')
+    .select('*, poll_options(*), votes(*)')
+    .eq('trip_id', tripId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data as PollWithVotes[]).map((p) => ({
+    ...p,
+    poll_options: [...p.poll_options].sort((a, b) => a.position - b.position),
+  }))
+}
+
 export function usePolls(tripId: string) {
   return useQuery({
     queryKey: ['polls', tripId],
-    queryFn: async (): Promise<PollWithVotes[]> => {
-      const { data, error } = await supabase
-        .from('polls')
-        .select('*, poll_options(*), votes(*)')
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      return (data as PollWithVotes[]).map((p) => ({
-        ...p,
-        poll_options: [...p.poll_options].sort((a, b) => a.position - b.position),
-      }))
-    },
+    queryFn: () => fetchPolls(tripId),
   })
 }
 

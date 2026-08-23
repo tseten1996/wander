@@ -5,19 +5,25 @@ import { logActivity } from '@/lib/activity'
 import { friendlyError } from '@/lib/errors'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
+/** The trip's itinerary rows, day- then position-ordered. Exported as a plain
+ *  function (not just the hook) so the global search palette can warm this same
+ *  cache key without reaching into Supabase itself — the feature's own api.ts
+ *  stays the only place that touches the table. */
+export async function fetchItinerary(tripId: string): Promise<ItineraryItem[]> {
+  const { data, error } = await supabase
+    .from('itinerary_items')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('day', { nullsFirst: false })
+    .order('position')
+  if (error) throw error
+  return data
+}
+
 export function useItinerary(tripId: string) {
   return useQuery({
     queryKey: ['itinerary_items', tripId],
-    queryFn: async (): Promise<ItineraryItem[]> => {
-      const { data, error } = await supabase
-        .from('itinerary_items')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('day', { nullsFirst: false })
-        .order('position')
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchItinerary(tripId),
   })
 }
 
