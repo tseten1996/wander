@@ -667,6 +667,21 @@ create policy ai_memories_delete on public.ai_memories for delete
 
 Note the absent `embedding` column — see below.
 
+**How slice 4 actually shipped (#268).** The stated-preferences slice landed as a
+single group-owned `trip_preferences` row (structured single-selects for pace and
+budget style, chip arrays for interests and dietary needs, one free-text field),
+not as the row-per-string `ai_memories` sketched above. The reasoning, recorded in
+#268 and consistent with §8.3's arithmetic: a trip's stated preferences are a
+handful of short strings that fit whole inside one call's budget, so a
+table-per-item buys nothing; and the data is genuinely *group-owned* ("how this
+group travels") rather than per-member, so it reads and writes on
+`is_trip_member` with no `member_id` on the content (only an `updated_by` audit
+stamp, never sent to the model). `ai_memories` remains the right shape if and when
+*per-member* or *derived* memory is built — that is still gated on the consent
+flow §8.1 describes. `get_ai_day_context` folds the row in as fenced data, and the
+prompt builder (`src/server/ai/prompts.ts`) narrows by dropping whole fields, never
+truncating one.
+
 ### 8.3 pgvector is deferred, and may never be needed
 
 Do the arithmetic. A single trip's durable preferences are perhaps 10–40 short
@@ -821,7 +836,7 @@ actually read beats an automated harness scoring outputs nobody has looked at.
 | **0 · Foundation** | `ai_usage` + `record_ai_usage` RPC | `/api/ai` Pages Function: auth, per-trip quota, usage log, kill switch, no model call, **no credentials** | `src/features/ai/api.ts`, invoke wrapper, error states | Medium |
 | **1 · Paste anything** ✅ | — | Small model, single-string context | Fallback when `parse.ts` returns `matched: false` | Low |
 | **2 · Improve this day** ✅ | `get_ai_day_context` | **Deterministic candidate generation** + model *selects and explains* (see below) | Preview cards, approve/reject, apply via existing mutations | High |
-| **3 · Stated preferences** | `ai_memories` | Include all preferences in context | Preference form on the member page | Low |
+| **3 · Stated preferences** ✅ | `trip_preferences` (group-owned; see §8.2) | Include all preferences in context | "How this group travels" panel in Settings | Low |
 | **4 · Ask Wander** | Query RPCs per intent | Intent classification, deterministic answers first | Cmd-K row, single-turn, no history | High |
 | **5 · pgvector** | `vector` extension, embeddings | Semantic retrieval | — | Medium |
 

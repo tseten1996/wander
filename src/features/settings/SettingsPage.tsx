@@ -27,6 +27,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { DestinationsCard } from '@/features/destinations/DestinationsCard'
+import { TripPreferencesCard } from '@/features/preferences/TripPreferencesCard'
 import { CoverPicker } from '@/features/trips/CoverPicker'
 import { DuplicateTripDialog } from '@/features/trips/DuplicateTripDialog'
 import { isPresetCover } from '@/features/trips/covers'
@@ -921,6 +922,8 @@ export default function SettingsPage() {
       <div className="space-y-5">
         {isOwner && <TripInfoCard />}
         {isOwner && <DestinationsCard />}
+        {/* Group-owned travel preferences — editable by every member (#268). */}
+        <TripPreferencesCard />
         <ProfileCard />
         <PreferencesCard />
         <InviteCard />
