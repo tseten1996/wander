@@ -11,6 +11,8 @@ import { useDestinations } from '@/features/destinations/api'
 import { routeText } from '@/features/destinations/route'
 import { useDashboard, planningProgress } from './api'
 import { TripRecap } from './TripRecap'
+import { Today } from './Today'
+import { tripPhase } from './today'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
 import { celebrateOncePerTrip, resetCelebration } from '@/lib/confetti'
@@ -19,6 +21,7 @@ import { Progress } from '@/components/ui/progress'
 import { MemberAvatar } from '@/components/ui/avatar'
 import { ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, dateRange, daysUntil, formatMoney, longDate, formatTime, timeAgo } from '@/lib/utils'
+import { format } from 'date-fns'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -112,10 +115,12 @@ export default function DashboardPage() {
   const { trip, membersById } = useTripContext()
   const dash = useDashboard(trip.id)
 
-  // Once the end date has passed, the countdown/progress area is meaningless —
-  // swap it for the Trip recap (#206). Same predicate the Hero uses to drop the
-  // (would-be-negative) countdown badge.
-  const ended = trip.end_date ? daysUntil(trip.end_date) < 0 : false
+  // Today drives the dashboard mode from one ISO date so the boundaries can't
+  // disagree: `during` the trip leads with the Today card (#281), `after` it
+  // swaps to the Trip recap (#206), and before/undated keep the planning view.
+  // `after` matches the Hero's own end-date check that drops the countdown badge.
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const phase = tripPhase(trip.start_date, trip.end_date, today)
 
   const progress = dash.data ? planningProgress(dash.data) : null
 
@@ -155,11 +160,15 @@ export default function DashboardPage() {
     <div className="space-y-5">
       <Hero />
 
-      {/* Progress + budget — or, once the trip is over, the recap (#206) */}
-      {ended ? (
+      {/* During the trip: the Today card (#281). After it: the recap (#206).
+          Before/undated: the planning-progress card. Budget stays alongside. */}
+      {phase === 'after' ? (
         <TripRecap />
       ) : (
       <div className="grid gap-5 md:grid-cols-2">
+        {phase === 'during' ? (
+          <Today today={today} />
+        ) : (
         <motion.div {...fadeUp} transition={{ duration: 0.3, delay: 0.05 }}>
           <Card className="h-full">
             <CardHeader>
@@ -194,6 +203,7 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         <motion.div {...fadeUp} transition={{ duration: 0.3, delay: 0.1 }}>
           <Link to="budget" className="block h-full">
