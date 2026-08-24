@@ -114,6 +114,25 @@ const SECOND_MEMBER = {
   joined_at: '2026-02-01T00:10:00Z',
 }
 
+// A just-joined friend (#291): an anonymous member session plus their own
+// `members` row (role 'member'), so the trip context resolves `me` to a member
+// — not the owner — and the first-visit orientation renders. Scoped to
+// `runJoinWelcome` via `joinWelcomeScenario`, so the roster the other scenarios
+// read stays untouched. FAR_FUTURE expiry keeps getSession() from refreshing
+// (which the stub would answer with the owner session).
+const MEMBER_USER_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+const MEMBER_SESSION = session(MEMBER_USER_ID, { anonymous: true })
+const JOINING_MEMBER = {
+  id: 'ab111111-1111-4111-8111-111111111111',
+  trip_id: TRIP_ID,
+  user_id: MEMBER_USER_ID,
+  display_name: 'Alex',
+  color: '#7c3aed',
+  role: 'member',
+  joined_at: '2026-02-01T00:20:00Z',
+}
+let joinWelcomeScenario = false
+
 // One unread item in the owner's inbox (#182), so the header bell shows a badge
 // and the dropdown has something to render + deep-link.
 const NOTIFICATION_ROW = {
@@ -709,10 +728,13 @@ async function routeSupabase(route) {
   }
   if (pathname.endsWith('/rest/v1/members')) {
     if (method !== 'GET') return json([])
-    // Trip page roster: two members only while the budget scenario runs, so
+    // Trip page roster: the just-joined friend (owner + member) while the
+    // welcome scenario runs; two members while the budget scenario runs, so
     // settle-up has someone to split with; one member everywhere else.
-    if (search.includes('order='))
+    if (search.includes('order=')) {
+      if (joinWelcomeScenario) return json([OWNER_MEMBER, JOINING_MEMBER])
       return json(twoMembers ? [OWNER_MEMBER, SECOND_MEMBER] : [OWNER_MEMBER])
+    }
     return json(OWNER_MEMBER) // .single() after create
   }
 
@@ -3001,6 +3023,70 @@ async function runSearch(browser) {
   }
 }
 
+async function runJoinWelcome(browser) {
+  console.log('\n▶ join welcome (a just-joined friend is oriented, once)')
+  const SEEN_KEY = `wander_welcome_seen:${TRIP_ID}:${JOINING_MEMBER.id}`
+  joinWelcomeScenario = true
+  // ── A member landing on the dashboard sees the one-time orientation ──
+  const context = await newContext(browser, MEMBER_SESSION)
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}`, { waitUntil: 'domcontentloaded' })
+
+    // The panel is a labelled region ("Welcome to Lisbon in Spring"); it points
+    // to the trip's collaborative surfaces and names who's already here.
+    const welcome = page.getByRole('region', { name: /Welcome to Lisbon in Spring/ })
+    await welcome.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a just-joined member sees the first-visit orientation')
+
+    await welcome.getByText(/planning this trip with planner/).waitFor({ state: 'visible', timeout: 10_000 })
+    for (const surface of ['Chat', 'Itinerary', 'Polls', 'Packing']) {
+      await welcome
+        .getByRole('link', { name: new RegExp(surface) })
+        .waitFor({ state: 'visible', timeout: 10_000 })
+    }
+    ok('the orientation points to the trip’s main surfaces')
+
+    // Dismissing it persists per (trip, member) and it does not reappear.
+    await welcome.getByRole('button', { name: 'Dismiss welcome' }).click()
+    await welcome.waitFor({ state: 'hidden', timeout: 10_000 })
+    const seen = await page.evaluate((k) => localStorage.getItem(k), SEEN_KEY)
+    if (seen !== '1') throw new Error('dismissing the welcome did not persist the seen flag')
+    ok('dismissing the welcome persists a per-membership seen flag')
+
+    // A reload must not resurrect a dismissed welcome.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.getByText('Lisbon in Spring').first().waitFor({ state: 'visible', timeout: 10_000 })
+    if (await welcome.isVisible()) throw new Error('a dismissed welcome reappeared after reload')
+    ok('a dismissed welcome stays dismissed on the next visit')
+
+    if (errors.length) throw new Error(`Uncaught page error on the welcome flow: ${errors[0]}`)
+    ok('the welcome flow raised no uncaught errors')
+  } finally {
+    await context.close()
+  }
+
+  // ── The owner's create-trip flow is not a join, so they never see it ──
+  const ownerContext = await newContext(browser, OWNER_SESSION)
+  const ownerPage = await ownerContext.newPage()
+  try {
+    await ownerPage.goto(`${BASE_URL}/#/trip/${TRIP_ID}`, { waitUntil: 'domcontentloaded' })
+    // Wait for the dashboard to actually render before asserting the absence,
+    // so this can't pass merely because the page hadn't painted yet.
+    await ownerPage.getByText('Lisbon in Spring').first().waitFor({ state: 'visible', timeout: 10_000 })
+    const ownerWelcome = ownerPage.getByRole('region', { name: /Welcome to Lisbon in Spring/ })
+    if (await ownerWelcome.isVisible()) {
+      throw new Error('the owner was shown the just-joined welcome')
+    }
+    ok('the owner never sees the just-joined welcome')
+  } finally {
+    joinWelcomeScenario = false
+    await ownerContext.close()
+  }
+}
+
 async function main() {
   console.log(`Smoke test against ${BASE_URL}`)
   // Honour a pre-installed browser when one is provided (e.g. sandboxes that
@@ -3010,6 +3096,7 @@ async function main() {
   try {
     await runSignIn(browser)
     await runJoin(browser)
+    await runJoinWelcome(browser)
     await runJoinDeadLink(browser)
     await runJoinTransientError(browser)
     await runCreateTrip(browser)

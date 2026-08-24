@@ -10,6 +10,7 @@ import { useInviteLink } from '@/lib/invite'
 import { useDestinations } from '@/features/destinations/api'
 import { routeText } from '@/features/destinations/route'
 import { useDashboard, planningProgress } from './api'
+import { JoinWelcome } from './JoinWelcome'
 import { TripRecap } from './TripRecap'
 import { Today } from './Today'
 import { tripPhase } from './today'
@@ -150,6 +151,7 @@ export default function DashboardPage() {
   if (dash.isError) {
     return (
       <div className="space-y-5">
+        <JoinWelcome />
         <Hero />
         <ErrorState onRetry={() => dash.refetch()} isRetrying={dash.isFetching} />
       </div>
@@ -158,6 +160,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5">
+      <JoinWelcome />
       <Hero />
 
       {/* During the trip: the Today card (#281). After it: the recap (#206).
