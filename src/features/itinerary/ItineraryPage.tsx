@@ -47,8 +47,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { AddToCalendarItems } from './AddToCalendar'
 import { cn, dateRange, formatTime, isMobileViewport, longDate, positionBetween } from '@/lib/utils'
 import { estimateLeg, formatLeg, toGeoPoint } from '@/lib/geo'
 import { useTripWeather } from '@/hooks/useWeather'
@@ -198,17 +200,21 @@ function SortableItemCard({
             <DropdownMenuItem onClick={() => setEditOpen(true)}>
               <Pencil /> Edit
             </DropdownMenuItem>
+            <AddToCalendarItems item={item} />
             {canDelete && (
-              <DropdownMenuItem
-                destructive
-                onClick={() =>
-                  deleteItem.mutate(item.id, {
-                    onSuccess: () => toast.success('Removed from itinerary'),
-                  })
-                }
-              >
-                <Trash2 /> Delete
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  destructive
+                  onClick={() =>
+                    deleteItem.mutate(item.id, {
+                      onSuccess: () => toast.success('Removed from itinerary'),
+                    })
+                  }
+                >
+                  <Trash2 /> Delete
+                </DropdownMenuItem>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -364,17 +370,21 @@ function SpanBandCard({
           <DropdownMenuItem onClick={() => setEditOpen(true)}>
             <Pencil /> Edit
           </DropdownMenuItem>
+          <AddToCalendarItems item={item} />
           {canDelete && (
-            <DropdownMenuItem
-              destructive
-              onClick={() =>
-                deleteItem.mutate(item.id, {
-                  onSuccess: () => toast.success('Removed from itinerary'),
-                })
-              }
-            >
-              <Trash2 /> Delete
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                destructive
+                onClick={() =>
+                  deleteItem.mutate(item.id, {
+                    onSuccess: () => toast.success('Removed from itinerary'),
+                  })
+                }
+              >
+                <Trash2 /> Delete
+              </DropdownMenuItem>
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>

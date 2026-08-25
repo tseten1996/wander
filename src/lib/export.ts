@@ -125,6 +125,40 @@ function buildIcsEvent(row: IcsItineraryRow, stamp: string): string | null {
   return lines.join('\r\n')
 }
 
+/** Wrap one or more VEVENT blocks in a VCALENDAR, folded per RFC 5545. */
+function buildCalendar(events: string[], calName: string): string {
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Wander//Trip Itinerary//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    `X-WR-CALNAME:${icsEscape(calName)}`,
+    ...events,
+    'END:VCALENDAR',
+  ]
+    .join('\r\n')
+    .split('\r\n')
+    .map(icsFold)
+    .join('\r\n')
+}
+
+/** 'A Nice Trip' → 'a-nice-trip'; empty/punctuation-only falls back. */
+function slugify(text: string, fallback: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || fallback
+}
+
+/** Offer a `.ics` string as a download. No network write. */
+function downloadIcs(filename: string, calendar: string): void {
+  const blob = new Blob([calendar + '\r\n'], { type: 'text/calendar;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 /**
  * Download the itinerary as a `.ics` calendar file, generated entirely
  * client-side. Returns the number of events written (unscheduled items are
@@ -145,30 +179,24 @@ export async function exportItineraryIcs(tripId: string, tripName: string): Prom
     .map((row) => buildIcsEvent(row, stamp))
     .filter((event): event is string => event !== null)
 
-  const calendar = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Wander//Trip Itinerary//EN',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    `X-WR-CALNAME:${icsEscape(tripName)}`,
-    ...events,
-    'END:VCALENDAR',
-  ]
-    .join('\r\n')
-    .split('\r\n')
-    .map(icsFold)
-    .join('\r\n')
-
-  const slug = tripName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'trip'
-  const blob = new Blob([calendar + '\r\n'], { type: 'text/calendar;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${slug}-itinerary.ics`
-  a.click()
-  URL.revokeObjectURL(url)
+  const calendar = buildCalendar(events, tripName)
+  downloadIcs(`${slugify(tripName, 'trip')}-itinerary.ics`, calendar)
   return events.length
+}
+
+/**
+ * Download a single itinerary item as a one-event `.ics` (#288) — the honest
+ * third option in the "Add to calendar" menu, since Apple has no prefilled-event
+ * URL scheme but Safari adds an opened `.ics` in one tap. It reuses the exact
+ * same VEVENT/VCALENDAR builder as the whole-itinerary export above (never a
+ * second ICS implementation). Returns false when the item has no day (a calendar
+ * event needs a date), true when a file was offered.
+ */
+export function downloadItemIcs(item: IcsItineraryRow): boolean {
+  const event = buildIcsEvent(item, icsStamp())
+  if (!event) return false
+  downloadIcs(`${slugify(item.title, 'event')}.ics`, buildCalendar([event], item.title))
+  return true
 }
 
 // Tables whose rows can be meaningfully re-imported into a fresh trip.
