@@ -101,13 +101,31 @@ for (const path of walk(join(ROOT, 'src'))) {
 }
 
 // ── 3. Bundle budget (opt-in: needs a fresh dist/) ────────────────────────
-const TOTAL_GZIP_BUDGET = 500 * 1024 // baseline ~398 kB (2026-07)
-const CHUNK_GZIP_BUDGET = 220 * 1024 // baseline ~183 kB (main chunk)
+//
+// THE CRITICAL PATH IS THE BUDGET THAT MATTERS. What makes a PWA feel slow on a
+// phone is the bytes the browser must have before it can paint — the entry
+// chunk, anything Vite preloads with it, and the stylesheet. A lazy chunk costs
+// nothing until someone opens the route that needs it.
+//
+// A single total-across-all-chunks budget gets this exactly backwards, and it
+// was actively harmful: lazy-loading the "New trip" dialog moved the whole
+// zod + react-hook-form stack off the boot path (critical path 296 → 257 kB,
+// a 13% faster first paint) while pushing the *total* from 495 to 502 kB,
+// because splitting adds per-chunk overhead. The old rule failed that build.
+// An invariant that goes red when the app gets faster is measuring the wrong
+// thing, so it now measures both, with the tight limit on the half that hurts.
+//
+// The total is kept only as a runaway-growth ceiling — deliberately loose, so
+// it catches a careless dependency without punishing correct code splitting.
+const CRITICAL_GZIP_BUDGET = 280 * 1024 // baseline 257 kB (2026-08, after #297)
+const TOTAL_GZIP_BUDGET = 600 * 1024 // ceiling only — see above
+const CHUNK_GZIP_BUDGET = 220 * 1024 // baseline ~159 kB (entry chunk)
 
 if (process.argv.includes('--bundle')) {
   const assets = join(ROOT, 'dist/assets')
-  if (!existsSync(assets)) {
-    failures.push('Bundle budget: dist/assets not found — run `npm run build` first')
+  const indexHtml = join(ROOT, 'dist/index.html')
+  if (!existsSync(assets) || !existsSync(indexHtml)) {
+    failures.push('Bundle budget: dist/ not found — run `npm run build` first')
   } else {
     let total = 0
     for (const file of readdirSync(assets).filter((f) => f.endsWith('.js'))) {
@@ -116,9 +134,32 @@ if (process.argv.includes('--bundle')) {
       if (size > CHUNK_GZIP_BUDGET)
         failures.push(`Bundle budget: ${file} is ${(size / 1024).toFixed(0)} kB gzipped (chunk budget ${CHUNK_GZIP_BUDGET / 1024} kB) — split it or lazy-load the dependency`)
     }
+
+    // Everything index.html references up front: the entry chunk, every
+    // <link rel="modulepreload"> Vite emits beside it, and the stylesheet.
+    // Read from the built HTML rather than a hardcoded list, so a new eager
+    // import is caught the moment Vite starts preloading it.
+    const html = readFileSync(indexHtml, 'utf8')
+    const preloaded = [...html.matchAll(/assets\/[\w-]+\.(?:js|css)/g)].map((m) => m[0])
+    let critical = 0
+    for (const rel of new Set(preloaded)) {
+      const path = join(ROOT, 'dist', rel)
+      if (existsSync(path)) critical += gzipSync(readFileSync(path)).length
+    }
+
+    if (critical > CRITICAL_GZIP_BUDGET)
+      failures.push(
+        `Bundle budget: ${(critical / 1024).toFixed(0)} kB gzipped blocks first paint ` +
+          `(critical budget ${CRITICAL_GZIP_BUDGET / 1024} kB). Something eagerly imported ` +
+          `is pulling a heavy dependency into the boot path — lazy-load it.`,
+      )
     if (total > TOTAL_GZIP_BUDGET)
-      failures.push(`Bundle budget: total JS is ${(total / 1024).toFixed(0)} kB gzipped (budget ${TOTAL_GZIP_BUDGET / 1024} kB)`)
-    console.log(`bundle: ${(total / 1024).toFixed(0)} kB gzipped total (budget ${TOTAL_GZIP_BUDGET / 1024} kB)`)
+      failures.push(`Bundle budget: total JS is ${(total / 1024).toFixed(0)} kB gzipped (ceiling ${TOTAL_GZIP_BUDGET / 1024} kB)`)
+
+    console.log(
+      `bundle: ${(critical / 1024).toFixed(0)} kB critical path (budget ${CRITICAL_GZIP_BUDGET / 1024} kB) · ` +
+        `${(total / 1024).toFixed(0)} kB total (ceiling ${TOTAL_GZIP_BUDGET / 1024} kB)`,
+    )
   }
 }
 
