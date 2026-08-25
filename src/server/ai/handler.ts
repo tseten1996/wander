@@ -257,15 +257,22 @@ async function parseBooking(
 ): Promise<HandlerResult> {
   const feature = 'parse_booking'
 
-  // No binding configured. Still not an error, and still not recorded — but
-  // deliberately NOT the same sentence as the kill switch above.
+  // No binding configured. Still not an error — but deliberately NOT the same
+  // sentence as the kill switch above.
   //
   // These are two different problems with two different fixes: one is a flag
   // someone chose to set, the other is a binding nobody attached. Saying
   // "switched off" for both sent a real debugging session looking at the flag
   // while the binding was the thing missing, which is the same failure the
   // client-side transport messages had.
+  //
+  // Recorded, under a distinct reason (#296): the user-facing message already
+  // distinguished "switched off" from "no model connected", but that
+  // distinction never reached the ledger, so a project whose binding was never
+  // attached looked identical to one where nobody used the feature. The row
+  // makes "no model is attached" answerable from SQL rather than a manual test.
   if (!deps.provider) {
+    await record(deps, { tripId, feature: `${feature}:no_provider`, outcome: 'refused' })
     return refuse(
       'disabled',
       'Wander AI is switched on, but no model is connected to it yet.',
@@ -276,6 +283,9 @@ async function parseBooking(
   const range = await tripRange(deps, tripId)
   const args = bookingParsePrompt({ text, tripStart: range.start, tripEnd: range.end })
   const model = MODELS[args.tier]
+  // A model was dispatched — the `:model` suffix keeps "has a model ever run"
+  // greppable across features regardless of how the call ended (#296).
+  const modelFeature = `${feature}:model`
 
   let completion
   try {
@@ -283,7 +293,7 @@ async function parseBooking(
   } catch {
     // The call itself failed, so there are no token counts to record — but the
     // attempt still gets a row, or an outage looks like nobody tried.
-    await record(deps, { tripId, feature, outcome: 'failed', model })
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
     return refuse(
       'unavailable',
       'Wander AI could not read that just now. Your text is still here.',
@@ -301,7 +311,7 @@ async function parseBooking(
   // provider; this decides whether what came back is usable.
   const parsed = ParsedBookingResult.safeParse(completion.json)
   if (!parsed.success) {
-    await record(deps, { tripId, feature, outcome: 'failed', ...usageRow })
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
     // Deliberately a 200 with an empty result rather than an error: the call
     // completed and cost tokens, it simply found nothing. The caller shows
     // today's raw-text create form either way, and reporting this as a failure
@@ -312,7 +322,7 @@ async function parseBooking(
     }
   }
 
-  await record(deps, { tripId, feature, outcome: 'ok', ...usageRow })
+  await record(deps, { tripId, feature: modelFeature, outcome: 'ok', ...usageRow })
   return {
     status: 200,
     body: { ok: true, intent: 'parse_booking', result: { booking: parsed.data }, usage },
@@ -413,7 +423,7 @@ async function improveDay(
   const free = { model: '', inputTokens: 0, outputTokens: 0 }
 
   if (plans.candidates.length === 0) {
-    await record(deps, { tripId, feature, outcome: 'ok', ...free })
+    await record(deps, { tripId, feature: `${feature}:no_candidates`, outcome: 'ok', ...free })
     return nothingToDo(
       plans.baseline.total < 2
         ? 'There is not enough in this day to rearrange yet.'
@@ -428,10 +438,17 @@ async function improveDay(
   // is only worth paying for judgement (§7). No plans is free; one plan is
   // free; the call happens when there is genuinely something to choose.
   //
-  // The same fallback covers a runtime with no binding: the plans are ours and
-  // cost nothing, so AI being off degrades the explanation, not the feature.
+  // The same computed fallback covers a runtime with no binding: the plans are
+  // ours and cost nothing, so AI being off degrades the explanation, not the
+  // feature. But the two are recorded under DIFFERENT reasons, because they are
+  // opposite situations (#296): `one_candidate` is the deterministic-first
+  // design working as intended, while `no_provider` means a judgement call was
+  // warranted but no model binding was attached — the model path is dead in
+  // production. A ledger that recorded both as a bare `improve_day` row could
+  // not tell "nothing to pay for" from "silently broken".
   if (plans.candidates.length === 1 || !deps.provider) {
-    await record(deps, { tripId, feature, outcome: 'ok', ...free })
+    const reason = plans.candidates.length === 1 ? 'one_candidate' : 'no_provider'
+    await record(deps, { tripId, feature: `${feature}:${reason}`, outcome: 'ok', ...free })
     return suggestion(plans, top, computedReason(top, plans), 'computed', {
       inputTokens: 0,
       outputTokens: 0,
@@ -456,12 +473,16 @@ async function improveDay(
     preferences: context?.preferences ?? null,
   })
   const model = MODELS[args.tier]
+  // A model was actually dispatched — the `:model` suffix is what makes "has a
+  // model ever run on this project" a single greppable query across every
+  // feature (#296), independent of whether the call then succeeded or failed.
+  const modelFeature = `${feature}:model`
 
   let completion
   try {
     completion = await deps.provider.complete(args)
   } catch {
-    await record(deps, { tripId, feature, outcome: 'failed', model })
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
     // Still a useful answer: the plans were never the model's to produce.
     return suggestion(plans, top, computedReason(top, plans), 'computed', {
       inputTokens: 0,
@@ -481,11 +502,11 @@ async function improveDay(
     : undefined
 
   if (!picked.success || !chosen) {
-    await record(deps, { tripId, feature, outcome: 'failed', ...usageRow })
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
     return suggestion(plans, top, computedReason(top, plans), 'computed', usage)
   }
 
-  await record(deps, { tripId, feature, outcome: 'ok', ...usageRow })
+  await record(deps, { tripId, feature: modelFeature, outcome: 'ok', ...usageRow })
   return suggestion(plans, chosen, picked.data.reason, 'model', usage)
 }
 
