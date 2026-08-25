@@ -275,11 +275,14 @@ test('an unreadable quota refuses — never fails open', async () => {
 /* ── the ledger ──────────────────────────────────────────────────────────── */
 
 test('a served call records the trip, member and feature', async () => {
+  // validBody is improve_day with no provider and a day that has several viable
+  // plans, so the recorded reason is `no_provider` (#296): a judgement call was
+  // warranted but no binding was attached — the row a broken deployment leaves.
   const db = fakeDb()
   await handleAiRequest(validBody, deps({ db }))
   assert.equal(db.rpcCalls[0].fn, 'record_ai_usage')
   assert.deepEqual(db.rpcCalls[0].args, {
-    p_trip_id: TRIP, p_feature: 'improve_day', p_outcome: 'ok',
+    p_trip_id: TRIP, p_feature: 'improve_day:no_provider', p_outcome: 'ok',
     p_model: '', p_input_tokens: 0, p_output_tokens: 0, p_estimated_cost_usd: 0,
   })
 })
@@ -413,7 +416,14 @@ test('a missing binding does not read as the kill switch', async () => {
   assert.equal(res.status, 503)
   assert.equal(res.body.reason, 'disabled', 'the UI should stop offering it either way')
   assert.match(res.body.message, /no model is connected/i)
-  assert.equal(db.rpcCalls.length, 0, 'no call was made, so nothing is recorded')
+  // No model call was made, but the attempt is recorded under a distinct reason
+  // (#296): the ledger must be able to say "a request arrived and no binding was
+  // attached", which is exactly the silent-breakage this issue is about. The row
+  // carries no model id and does not claim a model ran.
+  assert.equal(db.rpcCalls.length, 1, 'the no-binding attempt is recorded')
+  assert.equal(db.rpcCalls[0].args.p_feature, 'parse_booking:no_provider')
+  assert.equal(db.rpcCalls[0].args.p_outcome, 'refused')
+  assert.equal(db.rpcCalls[0].args.p_model, '', 'no model ran, so none is named')
 
   const off = await handleAiRequest(paste(), { db: fakeDb(), enabled: false })
   assert.notEqual(off.body.message, res.body.message, 'the two causes must be distinguishable')
@@ -500,6 +510,30 @@ const improve = { intent: 'improve_day', tripId: TRIP, day: '2026-09-04' }
 
 /** Only two of these days give the model anything to choose between. */
 const ONE_ITEM_DAY = { ...DEFAULT_DAY_CONTEXT, items: DEFAULT_DAY_CONTEXT.items.slice(0, 1) }
+
+/**
+ * A day whose geometry leaves `planDay` exactly ONE viable reordering — two
+ * movable stops and two fixed restaurants around them, with only one order that
+ * both fits and beats the baseline. That single-candidate case is a judgement a
+ * model would not be paid to make (there is nothing to choose between), so it
+ * takes the computed path and records the `one_candidate` reason (#296). The
+ * coordinates are load-bearing: they are what makes the candidate count exactly
+ * one rather than several.
+ */
+const ONE_CANDIDATE_DAY = {
+  ...DEFAULT_DAY_CONTEXT,
+  items: [
+    { id: 'a1', title: 'Morning walk', category: 'activity', startTime: '09:00', endTime: '10:15',
+      day: '2026-09-04', endDay: null, location: null, lat: 48.8267, lng: 2.6142, cost: null, position: 1 },
+    { id: 'a2', title: 'Free time', category: 'free', startTime: '10:30', endTime: '11:15',
+      day: '2026-09-04', endDay: null, location: null, lat: 48.8644, lng: 2.5764, cost: null, position: 2 },
+    { id: 'a3', title: 'Lunch', category: 'restaurant', startTime: '11:30', endTime: '12:45',
+      day: '2026-09-04', endDay: null, location: null, lat: 48.8268, lng: 2.7436, cost: null, position: 3 },
+    { id: 'a4', title: 'Dinner', category: 'restaurant', startTime: '13:00', endTime: '14:15',
+      day: '2026-09-04', endDay: null, location: null, lat: 48.8077, lng: 2.5096, cost: null, position: 4 },
+  ],
+}
+
 const TIDY_DAY = {
   ...DEFAULT_DAY_CONTEXT,
   items: [
@@ -696,4 +730,116 @@ test('improve_day is gated by membership and quota like everything else', async 
   )
   assert.equal(limited.status, 429)
   assert.equal(overQuota.calls.length, 0)
+})
+
+/* ── the ledger records WHY no model ran (#296) ──────────────────────────────
+ *
+ * A `model = ''` row with zero tokens used to mean two opposite things — "there
+ * was nothing to judge" (the deterministic-first design working) or "no binding
+ * is attached" (the model path dead in production) — and the table rendered them
+ * identically. Each dispatch branch now records a distinct reason as a suffix on
+ * the free-text `feature`, so the situations are told apart without a manual
+ * test and with no migration or RPC signature change.
+ */
+
+/** Every improve_day dispatch branch records the reason the model did or did not run. */
+const DISPATCH_REASONS = [
+  {
+    name: 'no candidates → improve_day:no_candidates',
+    day: TIDY_DAY,
+    provider: () => fakeProvider({ planId: 'plan-1', reason: 'ok' }),
+    feature: 'improve_day:no_candidates',
+    outcome: 'ok',
+    ranModel: false,
+  },
+  {
+    name: 'exactly one viable plan → improve_day:one_candidate',
+    day: ONE_CANDIDATE_DAY,
+    provider: () => fakeProvider({ planId: 'plan-1', reason: 'ok' }),
+    feature: 'improve_day:one_candidate',
+    outcome: 'ok',
+    ranModel: false,
+  },
+  {
+    name: 'a warranted call with no binding → improve_day:no_provider',
+    day: DEFAULT_DAY_CONTEXT,
+    provider: () => undefined,
+    feature: 'improve_day:no_provider',
+    outcome: 'ok',
+    ranModel: false,
+  },
+  {
+    name: 'the model chose → improve_day:model, ok',
+    day: DEFAULT_DAY_CONTEXT,
+    provider: () => fakeProvider({ planId: 'plan-1', reason: 'The museums are neighbours.' }),
+    feature: 'improve_day:model',
+    outcome: 'ok',
+    ranModel: true,
+  },
+  {
+    name: 'the model returned junk → improve_day:model, failed',
+    day: DEFAULT_DAY_CONTEXT,
+    provider: () => fakeProvider({ planId: 'plan-9', reason: 'trust me' }),
+    feature: 'improve_day:model',
+    outcome: 'failed',
+    ranModel: true,
+  },
+]
+
+for (const c of DISPATCH_REASONS) {
+  test(`improve_day records its dispatch reason: ${c.name}`, async () => {
+    const db = fakeDb({ dayContext: c.day })
+    await handleAiRequest(improve, deps({ db, provider: c.provider() }))
+    assert.equal(db.rpcCalls.length, 1, 'exactly one ledger row per request')
+    const row = db.rpcCalls[0].args
+    assert.equal(row.p_feature, c.feature)
+    assert.equal(row.p_outcome, c.outcome)
+    // The `:model` suffix is present exactly when a model was dispatched — it is
+    // the single greppable signal behind "has a model ever run".
+    assert.equal(
+      row.p_feature.endsWith(':model'),
+      c.ranModel,
+      'the :model suffix marks a real dispatch and nothing else',
+    )
+    if (!c.ranModel) assert.equal(row.p_model, '', 'no model ran, so none is named')
+  })
+}
+
+test('parse_booking records :model when a binding actually runs (#296)', async () => {
+  const db = fakeDb()
+  await handleAiRequest(paste(), deps({ db, provider: fakeProvider(GOOD) }))
+  assert.equal(db.rpcCalls[0].args.p_feature, 'parse_booking:model')
+  assert.ok(db.rpcCalls[0].args.p_model.length > 0)
+})
+
+test('“has a model ever run” is one query: only :model rows carry a model id (#296)', async () => {
+  // The acceptance criterion made mechanical: across every branch that writes a
+  // row, a model id appears if and only if the feature ends in `:model`. So a
+  // single `feature LIKE '%:model'` (or `model <> ''`) answers the question the
+  // flat ledger could not, with no per-feature knowledge required.
+  const rows = []
+  const collect = async (over) => {
+    const db = fakeDb(over.db)
+    await handleAiRequest(over.body, deps({ db, provider: over.provider }))
+    rows.push(...db.rpcCalls.map((c) => c.args))
+  }
+
+  await collect({ body: improve, db: { dayContext: TIDY_DAY } }) // no_candidates
+  await collect({ body: improve, db: { dayContext: ONE_CANDIDATE_DAY } }) // one_candidate
+  await collect({ body: improve }) // no_provider
+  await collect({ body: improve, provider: fakeProvider({ planId: 'plan-1', reason: 'ok' }) }) // model
+  await collect({ body: paste(), provider: undefined }) // parse_booking no_provider
+  await collect({ body: paste(), provider: fakeProvider(GOOD) }) // parse_booking model
+
+  assert.ok(rows.length >= 6)
+  for (const r of rows) {
+    const ranModel = r.p_feature.endsWith(':model')
+    assert.equal(
+      r.p_model.length > 0,
+      ranModel,
+      `feature ${r.p_feature}: a model id must appear iff the row is a :model row`,
+    )
+  }
+  const modelRows = rows.filter((r) => r.p_feature.endsWith(':model'))
+  assert.equal(modelRows.length, 2, 'exactly the two dispatched calls ran a model')
 })
