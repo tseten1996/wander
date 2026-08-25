@@ -100,9 +100,16 @@ function resolveTiming(input: CalendarEventInput): Timing | null {
 /** Strip the separators from an ISO date/time for the compact form Google wants. */
 const compact = (isoDateOrTime: string) => isoDateOrTime.replace(/[-:]/g, '')
 
-/** Combine the notes and link into one description body, matching the ICS export. */
-function eventBody(input: CalendarEventInput): string {
-  return [input.notes, input.url].filter(Boolean).join('\n\n')
+/**
+ * Set the two optional shared fields — the description body (notes + link,
+ * combined exactly as the ICS export does) and the location — on `params`,
+ * under whichever description key the target calendar uses (`details` for
+ * Google, `body` for Outlook). Absent fields are left off entirely.
+ */
+function addOptionalFields(params: URLSearchParams, input: CalendarEventInput, descriptionKey: string): void {
+  const body = [input.notes, input.url].filter(Boolean).join('\n\n')
+  if (body) params.set(descriptionKey, body)
+  if (input.location) params.set('location', input.location)
 }
 
 /**
@@ -120,9 +127,7 @@ export function googleCalendarUrl(input: CalendarEventInput): string | null {
     : `${compact(t.startDate)}T${compact(t.startTime)}/${compact(t.endDate)}T${compact(t.endTime)}`
 
   const params = new URLSearchParams({ action: 'TEMPLATE', text: input.title, dates })
-  const body = eventBody(input)
-  if (body) params.set('details', body)
-  if (input.location) params.set('location', input.location)
+  addOptionalFields(params, input, 'details')
   return `https://calendar.google.com/calendar/render?${params.toString()}`
 }
 
@@ -149,8 +154,6 @@ export function outlookCalendarUrl(input: CalendarEventInput): string | null {
     params.set('startdt', `${t.startDate}T${t.startTime}`)
     params.set('enddt', `${t.endDate}T${t.endTime}`)
   }
-  const body = eventBody(input)
-  if (body) params.set('body', body)
-  if (input.location) params.set('location', input.location)
+  addOptionalFields(params, input, 'body')
   return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`
 }
