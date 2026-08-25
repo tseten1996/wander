@@ -18,7 +18,7 @@ const TABLES = [
   'message_reactions', 'questions', 'checklist_items', 'itinerary_items',
   'budget_entries', 'repayments', 'packing_items', 'notes', 'inspiration_items',
   'activity', 'notifications', 'availability_polls', 'availability_candidates',
-  'availability_responses', 'destinations', 'trip_preferences',
+  'availability_responses', 'destinations', 'trip_preferences', 'trip_photos',
 ]
 
 /**
