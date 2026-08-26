@@ -23,3 +23,9 @@ dev-dist/
 # Logs
 npm-debug.log*
 *.log
+
+# Wrangler's scratch: bundle temp dirs and the local miniflare cache. Written
+# on every `wrangler pages dev` / `pages functions build`, so they are pure
+# machine state — 22 MB of them were committed by a `git add -A` before this
+# line existed.
+.wrangler/

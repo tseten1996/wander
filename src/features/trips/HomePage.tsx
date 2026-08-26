@@ -6,7 +6,24 @@ import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/hooks/useTheme'
 import { useTrips, type TripWithMembers } from './api'
-import { CreateTripDialog } from './CreateTripDialog'
+/*
+  Lazy, and mounted only once someone actually opens it.
+
+  This dialog is the single reason zod, react-hook-form and @hookform/resolvers
+  were on the critical path: HomePage is the `/` route and therefore eager, and
+  a static import of a form dialog drags the whole validation stack into the
+  entry chunk for everyone who opens the app — including the people who never
+  tap "New trip".
+
+  `React.lazy` alone is not enough. It suspends on first *render*, not on first
+  open, so rendering it unconditionally would suspend HomePage at mount and
+  replace the page with the route-level loader — a measured byte win hiding a
+  visible regression. `mounted` keeps it out of the tree until it is wanted, and
+  keeps it in afterwards so the close animation still plays.
+*/
+const CreateTripDialog = React.lazy(() =>
+  import('./CreateTripDialog').then((m) => ({ default: m.CreateTripDialog })),
+)
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -168,6 +185,10 @@ function TripsHome() {
   const { dark, toggle } = useTheme()
   const trips = useTrips(!!session)
   const [createOpen, setCreateOpen] = React.useState(false)
+  // Latches on the first open and never clears: mounting only while `createOpen`
+  // is true would skip the dialog's close animation every time.
+  const createMounted = React.useRef(false)
+  if (createOpen) createMounted.current = true
 
   const active = (trips.data ?? []).filter((t) => !t.archived)
   const archived = (trips.data ?? []).filter((t) => t.archived)
@@ -253,7 +274,11 @@ function TripsHome() {
         )}
       </main>
 
-      <CreateTripDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {createMounted.current && (
+        <React.Suspense fallback={null}>
+          <CreateTripDialog open={createOpen} onOpenChange={setCreateOpen} />
+        </React.Suspense>
+      )}
     </div>
   )
 }
