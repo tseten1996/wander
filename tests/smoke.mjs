@@ -1290,6 +1290,28 @@ async function runCreateTrip(browser) {
       .getByText('How should we introduce you?')
       .waitFor({ state: 'visible', timeout: 10_000 })
     ok('creating a trip reaches the welcome step')
+
+    // #289: the owner's welcome colour picker now carries the same 44px tap
+    // target and aria-pressed state as the friend-facing picker (#135). Exactly
+    // one swatch is pre-selected (the owner's member colour), and each hit
+    // target clears the 44px mobile floor.
+    const ownerSwatches = page.locator('button[aria-label^="Choose color"]')
+    await ownerSwatches.first().waitFor({ state: 'visible', timeout: 10_000 })
+    const pressed = await page
+      .locator('button[aria-pressed="true"][aria-label^="Choose color"]')
+      .count()
+    if (pressed !== 1) {
+      throw new Error(`expected exactly one pre-selected owner colour swatch, saw ${pressed}`)
+    }
+    ok('the owner colour picker marks the selected swatch with aria-pressed (#289)')
+
+    const swatchBox = await ownerSwatches.first().boundingBox()
+    if (!swatchBox || swatchBox.width < 44 || swatchBox.height < 44) {
+      throw new Error(
+        `owner colour swatch below the 44px tap floor: ${swatchBox?.width}×${swatchBox?.height}`
+      )
+    }
+    ok('each owner colour swatch clears the 44px mobile tap floor (#289)')
   } finally {
     await context.close()
   }
