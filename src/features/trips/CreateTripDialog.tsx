@@ -117,20 +117,32 @@ function WelcomeStep({ created, onDone }: { created: CreatedTrip; onDone: () => 
         </div>
         <div className="space-y-1.5">
           <Label>Pick your color</Label>
-          <div className="flex flex-wrap gap-2">
-            {MEMBER_COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={`Choose color ${c}`}
-                onClick={() => setColor(c)}
-                className={cn(
-                  'size-8 cursor-pointer rounded-full transition-transform hover:scale-110',
-                  color === c && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
-                )}
-                style={{ backgroundColor: c }}
-              />
-            ))}
+          <div className="flex flex-wrap gap-1">
+            {MEMBER_COLORS.map((c) => {
+              const selected = color === c
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Choose color ${c}`}
+                  aria-pressed={selected}
+                  onClick={() => setColor(c)}
+                  // 44px tap target (mobile floor) around a smaller visible
+                  // dot; the selection ring and focus ring live on the inner
+                  // dot so the hit area stays invisible but reachable. Mirrors
+                  // the friend-facing picker on JoinPage (#135).
+                  className="group flex size-11 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none"
+                >
+                  <span
+                    className={cn(
+                      'size-8 rounded-full transition-transform group-hover:scale-110 group-focus-visible:ring-2 group-focus-visible:ring-ink group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-surface',
+                      selected && 'ring-2 ring-ink ring-offset-2 ring-offset-surface'
+                    )}
+                    style={{ backgroundColor: c }}
+                  />
+                </button>
+              )
+            })}
           </div>
         </div>
         <div className="flex gap-2">
