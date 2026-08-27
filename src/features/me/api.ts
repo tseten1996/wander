@@ -1,19 +1,25 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { useChecklist } from '@/features/checklist/api'
 import { usePacking } from '@/features/packing/api'
 import { useBudget, useRepayments } from '@/features/budget/api'
 import { usePolls, isPollOpen, type PollWithVotes } from '@/features/polls/api'
 import { useQuestions } from '@/features/questions/api'
 import { computeBalances } from '@/features/budget/settlement'
+import { supabase } from '@/lib/supabase'
+import { friendlyError } from '@/lib/errors'
+import { logActivity } from '@/lib/activity'
 import { daysUntil } from '@/lib/utils'
 import type { ChecklistItem, Member, PackingItem, Question } from '@/types'
 
 /**
  * "My trip" — the personal cut of everything a signed-in member still has to do
  * or is owed, aggregated read-only over the same cached queries the feature
- * pages use (no new tables, no new writes; issue #177). This feature owns no
- * Supabase access of its own — it composes the other features' hooks — so the
- * "api.ts is the only place that touches Supabase for its feature" invariant is
- * preserved: `me` simply has nothing of its own to touch.
+ * pages use (no new tables; issue #177). The read side owns no Supabase access —
+ * it composes the other features' hooks. The one write it owns is a member's own
+ * presence dates (#286): a personal edit that belongs to the personal view, and
+ * the single place the `members` trip-date write lives — Settings reuses this
+ * same mutation for the owner-sets-anyone case.
  */
 
 /** Half a cent — matches settlement.ts so a near-zero net reads as settled. */
@@ -121,4 +127,58 @@ export function useMyTrip(tripId: string, meId: string, members: Member[]): UseM
     : null
 
   return { data, isLoading, isError, isFetching, refetch }
+}
+
+/** The dates a member is on the trip (`yyyy-MM-dd`, or null = whole trip). */
+export interface MemberDatesInput {
+  memberId: string
+  arrives_on: string | null
+  departs_on: string | null
+  /** Member id to attribute the activity entry to (the editor). */
+  actorId: string
+  /** Activity phrasing: `<actor> <verb> <subject?>`. */
+  verb: string
+  subject?: string
+}
+
+/**
+ * Set a member's arrival/departure dates (#286). Used by the Me page for a
+ * member's own dates and by Settings for the owner setting anyone's; the
+ * `members_update` RLS policy is what actually decides which of those is
+ * allowed. Optimistic on the shared `['members', tripId]` cache with rollback,
+ * so the calendar and header reflect the change instantly and realtime
+ * reconciles other devices.
+ */
+export function useUpdateMemberDates(tripId: string) {
+  const queryClient = useQueryClient()
+  const key = ['members', tripId]
+  return useMutation({
+    mutationFn: async ({ memberId, arrives_on, departs_on }: MemberDatesInput) => {
+      const { error } = await supabase
+        .from('members')
+        .update({ arrives_on, departs_on })
+        .eq('id', memberId)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<Member[]>(key)
+      queryClient.setQueryData<Member[]>(key, (old) =>
+        (old ?? []).map((m) =>
+          m.id === input.memberId
+            ? { ...m, arrives_on: input.arrives_on, departs_on: input.departs_on }
+            : m
+        )
+      )
+      return { previous }
+    },
+    onError: (err, _input, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+      toast.error(friendlyError(err, 'Could not save those dates'))
+    },
+    onSuccess: (_data, input) => {
+      logActivity(tripId, input.actorId, input.verb, input.subject)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  })
 }

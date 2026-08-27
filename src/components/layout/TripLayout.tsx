@@ -14,6 +14,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { useUnreadDots, type UnreadRoute } from '@/hooks/useUnreadDots'
 import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { LivePresence } from '@/components/layout/LivePresence'
+import { TripDayPresence } from '@/components/layout/TripDayPresence'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -156,8 +157,9 @@ function Shell() {
           <NotificationBell className="shrink-0" />
         </div>
 
-        <div className="px-5 pt-1">
+        <div className="space-y-1.5 px-5 pt-1">
           <LivePresence showLabel />
+          <TripDayPresence showLabel />
         </div>
 
         <button
@@ -237,6 +239,10 @@ function Shell() {
           <MemberAvatar name={me.display_name} color={me.color} size="sm" />
         </NavLink>
       </header>
+
+      {/* "Who's here today" on mobile — self-hides unless a member set dates and
+          someone is present today, so it never shows on a dateless trip. */}
+      <TripDayPresence className="justify-center border-b border-line bg-surface px-3 py-1.5 md:hidden" size="xs" max={5} />
 
       {/* ── Content ─────────────────────────────────────────────────── */}
       <main className="min-w-0 flex-1 pb-24 md:ml-60 md:pb-10">

@@ -5,8 +5,9 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  Archive, ArchiveRestore, Check, Copy, CopyPlus, Download, FileText, GitMerge,
-  Globe, Link2, RefreshCw, Sparkles, Trash2, Upload, UserMinus, LogOut,
+  Archive, ArchiveRestore, CalendarClock, Check, Copy, CopyPlus, Download,
+  FileText, GitMerge, Globe, Link2, RefreshCw, Sparkles, Trash2, Upload,
+  UserMinus, LogOut,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -19,13 +20,14 @@ import { friendlyError } from '@/lib/errors'
 import { useInviteLink } from '@/lib/invite'
 import { tripShareUrl, tripRecapUrl } from '@/lib/share'
 import { MEMBER_COLORS } from '@/lib/colors'
-import { cn, randomCode } from '@/lib/utils'
+import { cn, randomCode, shortDate } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
+import { MemberDatesForm } from '@/features/me/MemberDatesForm'
 import { DestinationsCard } from '@/features/destinations/DestinationsCard'
 import { TripPreferencesCard } from '@/features/preferences/TripPreferencesCard'
 import { CoverPicker } from '@/features/trips/CoverPicker'
@@ -557,6 +559,15 @@ function RecapShareCard() {
 
 /* ── Members ────────────────────────────────────────────────────────────── */
 
+/** Short "when this member is on the trip" label, or null when they're here the
+ *  whole trip (no dates set) — #286. */
+function memberDatesLabel(m: Member): string | null {
+  if (m.arrives_on && m.departs_on) return `${shortDate(m.arrives_on)} – ${shortDate(m.departs_on)}`
+  if (m.arrives_on) return `Arrives ${shortDate(m.arrives_on)}`
+  if (m.departs_on) return `Leaves ${shortDate(m.departs_on)}`
+  return null
+}
+
 function MembersCard() {
   const { trip, members, me, isOwner } = useTripContext()
   const { isAnonymous } = useAuth()
@@ -565,6 +576,8 @@ function MembersCard() {
   // The member the owner is about to merge away (the stale duplicate). null =
   // dialog closed.
   const [mergeDup, setMergeDup] = React.useState<Member | null>(null)
+  // The member whose trip dates the owner is editing inline. null = collapsed.
+  const [editingDates, setEditingDates] = React.useState<string | null>(null)
 
   async function remove(memberId: string, name: string) {
     const { error } = await supabase.from('members').delete().eq('id', memberId)
@@ -593,42 +606,64 @@ function MembersCard() {
         )}
       </CardHeader>
       <CardContent className="space-y-1">
-        {members.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-sunken/60">
-            <MemberAvatar name={m.display_name} color={m.color} size="md" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {m.display_name}
-                {m.id === me.id && <span className="text-muted"> (you)</span>}
-              </p>
-            </div>
-            {m.role === 'owner' ? (
-              <Badge variant="primary">Owner</Badge>
-            ) : (
-              isOwner && (
+        {members.map((m) => {
+          const datesLabel = memberDatesLabel(m)
+          const editing = editingDates === m.id
+          return (
+            <div key={m.id} className="rounded-xl px-2 py-2 hover:bg-sunken/60">
+              <div className="flex items-center gap-3">
+                <MemberAvatar name={m.display_name} color={m.color} size="md" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {m.display_name}
+                    {m.id === me.id && <span className="text-muted"> (you)</span>}
+                  </p>
+                  {datesLabel && (
+                    <p className="truncate text-xs text-muted">{datesLabel}</p>
+                  )}
+                </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  {members.length > 2 && (
+                  {isOwner && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setMergeDup(m)}
+                      aria-expanded={editing}
+                      onClick={() => setEditingDates(editing ? null : m.id)}
                     >
-                      <GitMerge /> Merge
+                      <CalendarClock /> Dates
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-danger"
-                    onClick={() => remove(m.id, m.display_name)}
-                  >
-                    <UserMinus /> Remove
-                  </Button>
+                  {m.role === 'owner' ? (
+                    <Badge variant="primary">Owner</Badge>
+                  ) : (
+                    isOwner && (
+                      <>
+                        {members.length > 2 && (
+                          <Button variant="ghost" size="sm" onClick={() => setMergeDup(m)}>
+                            <GitMerge /> Merge
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-danger"
+                          onClick={() => remove(m.id, m.display_name)}
+                        >
+                          <UserMinus /> Remove
+                        </Button>
+                      </>
+                    )
+                  )}
                 </div>
-              )
-            )}
-          </div>
-        ))}
+              </div>
+              {isOwner && editing && (
+                <div className="mt-3 border-t border-line pt-3">
+                  <MemberDatesForm trip={trip} member={m} actorId={me.id} isSelf={m.id === me.id} />
+                </div>
+              )}
+            </div>
+          )
+        })}
         {!isOwner && (
           <div className="pt-2">
             <Button variant="danger" size="sm" onClick={leave}>

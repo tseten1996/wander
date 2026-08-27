@@ -298,6 +298,34 @@ select pg_temp.expect_dml('members: owner can remove a member',               'a
 select pg_temp.expect_dml('members: owner cannot be deleted (owner row)',     'aaaa0000-0000-0000-0000-000000000001', false, $$delete from members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'$$, 0);
 
 -- ═════════════════════════════════════════════════════════════════════════════
+-- 7b. Member trip dates (#286) — a member sets ONLY their own arrival/departure
+--     dates; the owner may set anyone's; the values are bounded by the trip's
+--     own date range and by arrives_on ≤ departs_on. The security property under
+--     test is the same single-writer rule as the profile: `members_update` +
+--     the extended column grant let F write F's row and the owner write any
+--     row, and nothing lets F write G's.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Give Trip A a concrete date window so the range trigger has something to bound.
+update public.trips set start_date='2026-09-01', end_date='2026-09-10'
+  where id='bbbb0000-0000-0000-0000-000000000001';
+
+-- A member CAN set their own dates within the trip window (proves the column
+-- grant now covers arrives_on/departs_on — without it this would be denied).
+select pg_temp.expect_dml('member dates: member can set own dates in range',       'aaaa0000-0000-0000-0000-000000000002', false, $$update members set arrives_on='2026-09-03', departs_on='2026-09-08' where id='cccc0000-0000-0000-0000-000000000002'$$, 1);
+-- The trip-range trigger rejects a date before the trip start or after its end.
+select pg_temp.expect_dml('member dates: arrival before trip start is rejected',   'aaaa0000-0000-0000-0000-000000000002', false, $$update members set arrives_on='2026-08-20' where id='cccc0000-0000-0000-0000-000000000002'$$, -1);
+select pg_temp.expect_dml('member dates: departure after trip end is rejected',    'aaaa0000-0000-0000-0000-000000000002', false, $$update members set departs_on='2026-09-20' where id='cccc0000-0000-0000-0000-000000000002'$$, -1);
+-- The same-row CHECK rejects a departure before the arrival.
+select pg_temp.expect_dml('member dates: departure before arrival is rejected',    'aaaa0000-0000-0000-0000-000000000002', false, $$update members set departs_on='2026-09-02' where id='cccc0000-0000-0000-0000-000000000002'$$, -1);
+-- THE KEY CHECK: a member cannot write ANOTHER member's dates (row USING denies
+-- → zero rows), even though the column grant permits the columns.
+select pg_temp.expect_dml('member dates: member cannot set another member''s dates','aaaa0000-0000-0000-0000-000000000002', false, $$update members set arrives_on='2026-09-04' where id='cccc0000-0000-0000-0000-000000000003'$$, 0);
+-- The owner CAN set any member's dates (is_trip_owner branch of members_update).
+select pg_temp.expect_dml('member dates: owner can set a member''s dates',          'aaaa0000-0000-0000-0000-000000000001', false, $$update members set arrives_on='2026-09-05', departs_on='2026-09-09' where id='cccc0000-0000-0000-0000-000000000003'$$, 1);
+-- A member can clear their own dates back to "here the whole trip".
+select pg_temp.expect_dml('member dates: member can clear own dates',              'aaaa0000-0000-0000-0000-000000000002', false, $$update members set arrives_on=null, departs_on=null where id='cccc0000-0000-0000-0000-000000000002'$$, 1);
+
+-- ═════════════════════════════════════════════════════════════════════════════
 -- 8. Collaborative content — ANY member may UPDATE (mark done/answered, reorder,
 --    edit shared notes), but DELETE is creator-or-owner only. This asymmetry is
 --    a deliberate, regression-prone design choice; assert both halves.
