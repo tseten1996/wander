@@ -20,6 +20,7 @@ const Packing = React.lazy(() => import('@/features/packing/PackingPage'))
 const Calendar = React.lazy(() => import('@/features/calendar/CalendarPage'))
 const Notes = React.lazy(() => import('@/features/notes/NotesPage'))
 const Inspiration = React.lazy(() => import('@/features/inspiration/InspirationPage'))
+const Photos = React.lazy(() => import('@/features/photos/PhotosPage'))
 const Settings = React.lazy(() => import('@/features/settings/SettingsPage'))
 const PrintSummary = React.lazy(() => import('@/features/settings/PrintSummaryPage'))
 const PublicItinerary = React.lazy(() => import('@/features/share/PublicItineraryPage'))
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="calendar" element={<Calendar />} />
             <Route path="notes" element={<Notes />} />
             <Route path="ideas" element={<Inspiration />} />
+            <Route path="photos" element={<Photos />} />
             <Route path="settings" element={<Settings />} />
           </Route>
           <Route path="/trip/:tripId/print" element={<PrintSummary />} />

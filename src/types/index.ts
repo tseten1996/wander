@@ -286,6 +286,18 @@ export interface InspirationItem {
   created_at: string
 }
 
+/** A pointer to a photo a member uploaded straight into the trip gallery (#294),
+ *  stored in the private `chat-images` bucket like a chat image and rendered via a
+ *  short-lived signed URL. The gallery also aggregates chat images and inspiration
+ *  images, which live on their own rows — this row is only for direct uploads. */
+export interface TripPhoto {
+  id: string
+  trip_id: string
+  member_id: string | null
+  image_path: string
+  created_at: string
+}
+
 export interface Activity {
   id: string
   trip_id: string

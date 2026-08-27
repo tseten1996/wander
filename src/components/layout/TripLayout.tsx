@@ -2,7 +2,7 @@
 import * as React from 'react'
 import { NavLink, Outlet, Link, useLocation, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, CalendarClock, CalendarDays, Compass, Lightbulb, ListChecks,
+  ArrowLeft, CalendarClock, CalendarDays, Compass, Images, Lightbulb, ListChecks,
   Luggage, MapPin, MessageCircle, Moon, MoreHorizontal, NotebookPen, PiggyBank,
   Search, Settings, Sun, UserCheck, Vote, HelpCircle,
 } from 'lucide-react'
@@ -39,6 +39,7 @@ const NAV = [
   { to: 'questions', label: 'Questions', icon: HelpCircle },
   { to: 'notes', label: 'Notes', icon: NotebookPen },
   { to: 'ideas', label: 'Ideas', icon: Lightbulb },
+  { to: 'photos', label: 'Photos', icon: Images },
   { to: 'settings', label: 'Settings', icon: Settings },
 ] as const
 

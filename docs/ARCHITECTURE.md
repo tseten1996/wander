@@ -99,6 +99,7 @@ trips ────────────┬─ members            (person ↔ 
   │               ├─ packing_items       (category, packed)
   │               ├─ notes               (markdown)
   │               ├─ inspiration_items   (image / link board)
+  │               ├─ trip_photos         (pointers to directly-uploaded gallery photos)
   │               ├─ notifications       (per-recipient inbox: type, entity, read state)
   │               ├─ error_reports       (write-only client error telemetry)
   │               └─ activity            (lightweight event feed)
@@ -156,6 +157,16 @@ Notable decisions:
   (`public = false`) keyed `<trip_id>/<uuid>.<ext>`; Storage RLS scopes read
   and write to trip members, so no image leaks across trips and nothing is
   proxied or re-hosted (free-tier friendly).
+* **Trip photos** are a browsable gallery (#294, epic #205 slice 4) that *aggregates*
+  the images already in a trip — chat images (`messages.image_path`) and
+  inspiration-board images (`inspiration_items.image_url`) — into one date-grouped
+  grid with a lightbox, adding no new trust boundary. A member may also upload a
+  photo straight into the gallery: `trip_photos` is a thin pointer row (`trip_id`,
+  `member_id`, `image_path`), and the object itself reuses the same private
+  `chat-images` bucket, path convention, and Storage RLS as a chat image — no new
+  bucket and no new public-read surface. Read is member-scoped, insert is
+  self-attributed, delete is uploader-or-owner, and there is no update policy; the
+  table is in the `supabase_realtime` publication so an uploaded photo appears live.
 * **Public share link** (read-only): an owner mints an unguessable `share_token`
   on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
   read-only itinerary projection through the `get_public_itinerary` (SECURITY
@@ -219,6 +230,7 @@ src/
     ├── calendar/            # month view + daily weather forecast
     ├── notes/
     ├── inspiration/
+    ├── photos/              # browsable trip gallery: aggregates chat + inspiration images + direct uploads
     ├── search/              # ⌘/Ctrl-K command-palette over cached trip data
     ├── notifications/       # personal inbox bell (per-recipient, cross-device)
     ├── me/                  # cross-trip personal view ("my stuff")
