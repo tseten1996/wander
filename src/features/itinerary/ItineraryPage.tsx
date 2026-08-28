@@ -33,6 +33,7 @@ import { coveredDays, isSpanning, spanPosition } from './spans'
 import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
 import { aiParseDisabled, useAiParseBooking } from './aiParse'
 import { ImproveDayAction } from './ImproveDay'
+import { StarterPlanAction } from './StarterPlan'
 import { extractUrls, LinkChip, MapsChip } from './links'
 import { ItemBudgetLink } from './BudgetLink'
 import { searchAnchorId } from '@/features/search/anchor'
@@ -393,6 +394,52 @@ function SpanBandCard({
   )
 }
 
+/** Shift an ISO `YYYY-MM-DD` by whole days in UTC, so no DST/TZ drift. */
+function addDaysIso(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + n))
+  const pad = (x: number) => (x < 10 ? `0${x}` : String(x))
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`
+}
+
+/** Inclusive ISO days `[start..end]`, capped so a mistyped year cannot loop
+ *  unbounded — ISO strings compare lexically, so the `<=` is the normal exit
+ *  and the cap is the backstop. */
+function daysInRange(start: string, end: string, cap: number): string[] {
+  if (end < start) return []
+  const out: string[] = []
+  let cur = start
+  while (cur <= end && out.length < cap) {
+    out.push(cur)
+    cur = addDaysIso(cur, 1)
+  }
+  return out
+}
+
+/**
+ * The empty days worth offering a starting point on (#284): every day inside the
+ * trip's own `[start,end]` and inside each ranged leg, minus the days that
+ * already carry content. Bounded to a sane number of days so a mistyped range can
+ * never render hundreds of sections. Returns `[]` when the trip has no dates and
+ * no ranged legs, so a dateless trip's itinerary is unchanged.
+ */
+export function emptyTripDays(
+  tripStart: string | null,
+  tripEnd: string | null,
+  destinations: Destination[],
+  datedDays: Set<string>,
+): string[] {
+  const MAX_TRIP_DAYS = 120
+  const all = new Set<string>()
+  if (tripStart && tripEnd) for (const d of daysInRange(tripStart, tripEnd, MAX_TRIP_DAYS)) all.add(d)
+  for (const leg of destinations) {
+    if (leg.start_date && leg.end_date) {
+      for (const d of daysInRange(leg.start_date, leg.end_date, MAX_TRIP_DAYS)) all.add(d)
+    }
+  }
+  return [...all].filter((d) => !datedDays.has(d))
+}
+
 function DaySection({
   day,
   items,
@@ -505,6 +552,12 @@ function DaySection({
           purpose: the overlap badges and leg hints above already say what is
           wrong with a day at no cost, and this only offers what to do about it. */}
       {day && <ImproveDayAction day={day} dayLabel={longDate(day)} items={items} />}
+      {/* The blank day gets a starting point instead (#284) — offered only when
+          the day has nothing in it, so it and "Improve this day" are never both
+          shown. A day covered by a spanning stay is not blank, so it is excluded. */}
+      {day && items.length === 0 && spanning.length === 0 && (
+        <StarterPlanAction day={day} dayLabel={longDate(day)} />
+      )}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
@@ -818,14 +871,22 @@ export default function ItineraryPage() {
   const datedDays = new Set<string>()
   for (const key of byDay.keys()) if (key) datedDays.add(key)
   for (const s of spanItems) for (const d of coveredDays(s)) datedDays.add(d)
-  const sortedDatedDays = [...datedDays].sort((a, b) => a.localeCompare(b))
   const hasUndated = byDay.has(null) // undated bucket always sinks to the end
-  // Group the dated days under their destination leg (#197). With no dated
-  // legs this is a single headerless group of every day, so the list renders
-  // exactly as before; with legs, days outside every range fall under an
-  // "Unassigned" group. The undated bucket stays separate, below the legs.
+  // Empty trip days (#284): days inside the trip's own range or a ranged leg
+  // that have nothing on them yet. Surfacing them is what gives the blank day a
+  // place to offer "Suggest a starting point" — a day that never renders can
+  // never make the offer. Days that already have items or a spanning stay are
+  // excluded (they are not blank), and the whole set is only ever computed from
+  // dates the trip actually has, so a legless, dateless trip is untouched.
+  const emptyDays = emptyTripDays(trip.start_date, trip.end_date, destinations, datedDays)
+  const renderDays = new Set([...datedDays, ...emptyDays])
+  const sortedRenderDays = [...renderDays].sort((a, b) => a.localeCompare(b))
+  // Group the days under their destination leg (#197). With no dated legs this
+  // is a single headerless group of every day, so the list renders exactly as
+  // before; with legs, days outside every range fall under an "Unassigned"
+  // group. The undated bucket stays separate, below the legs.
   const legged = hasLegs(destinations)
-  const legGroups = groupDaysByLeg(sortedDatedDays, destinations)
+  const legGroups = groupDaysByLeg(sortedRenderDays, destinations)
   // Which spans cover each day, precomputed once so DaySection stays a pure view.
   const spansByDay = new Map<string, ItineraryItem[]>()
   for (const s of spanItems) for (const d of coveredDays(s)) {
@@ -894,7 +955,10 @@ export default function ItineraryPage() {
         </div>
       ) : itinerary.isError ? (
         <ErrorState onRetry={() => itinerary.refetch()} isRetrying={itinerary.isFetching} />
-      ) : items.length === 0 ? (
+      ) : sortedRenderDays.length === 0 && !hasUndated ? (
+        // Nothing to show and no trip days to offer a starting point on — a
+        // dateless, legless, itemless trip. A trip WITH dates but no items falls
+        // through to the day list below, where each empty day offers a start (#284).
         <EmptyState
           icon={MapPin}
           title="The itinerary is empty"
