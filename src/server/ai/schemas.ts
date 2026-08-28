@@ -16,7 +16,7 @@
 import { z } from 'zod'
 
 /** Every capability the endpoint will serve. Closed by construction. */
-export const INTENTS = ['parse_booking', 'improve_day'] as const
+export const INTENTS = ['parse_booking', 'improve_day', 'suggest_starter'] as const
 export type Intent = (typeof INTENTS)[number]
 
 /**
@@ -39,6 +39,15 @@ export const AiRequest = z.discriminatedUnion('intent', [
   }),
   z.object({
     intent: z.literal('improve_day'),
+    tripId: z.string().uuid(),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+  }),
+  // suggest_starter (#284) carries the same ids-only payload as improve_day: a
+  // trip and a day. Everything the model sees — the leg, the nearby places, the
+  // stated preferences — is retrieved server-side from what the caller may
+  // already read, never supplied in the request. Same rule, no exception.
+  z.object({
+    intent: z.literal('suggest_starter'),
     tripId: z.string().uuid(),
     day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
   }),
@@ -188,3 +197,37 @@ export type DayPickResult = z.infer<typeof DayPickResult>
 /** How the explanation was produced — shown to the member, not just logged. */
 export const REASON_SOURCES = ['model', 'computed'] as const
 export type ReasonSource = (typeof REASON_SOURCES)[number]
+
+/* ── the suggest_starter result contract (#284) ──────────────────────────── */
+
+/**
+ * How many places a starter plan proposes. Four-to-six is the shape a blank day
+ * wants — enough to read as "a day", few enough to still be a starting point the
+ * group edits rather than a fixed schedule. The floor is two, because a candidate
+ * set that small still beats an empty day, and the ceiling bounds output tokens
+ * the same way `improve_day`'s suggestion cap does.
+ */
+export const STARTER_MIN_PICKS = 2
+export const STARTER_MAX_PICKS = 6
+
+/**
+ * What the model is allowed to hand back for `suggest_starter`.
+ *
+ * `placeIds` is the load-bearing field, and it is the same containment
+ * `improve_day` uses: every id must name a candidate this server assembled and
+ * validated (src/server/ai/starter.ts), so the model *selects and orders* from a
+ * closed set — it never invents a place, an address or a coordinate. An id the
+ * server did not offer is dropped by the handler, exactly as a `planId` outside
+ * the plan set is. The model's judgement is which of our candidates make a
+ * coherent first day, and why — nothing it returns reaches a write path
+ * unexamined.
+ *
+ * `reason` is the part worth paying for: a group looking at a blank day needs to
+ * know *why* these places, in this order. Capped because output tokens are the
+ * expensive side and a paragraph is not a reason.
+ */
+export const StarterPickResult = z.object({
+  placeIds: z.array(z.string().min(1).max(64)).min(STARTER_MIN_PICKS).max(STARTER_MAX_PICKS),
+  reason: z.string().trim().min(1).max(400),
+})
+export type StarterPickResult = z.infer<typeof StarterPickResult>
