@@ -21,6 +21,7 @@ import {
   CURRENCIES, conversionRate, isSupportedCurrency, seededExpenseRate, toCents, type RateTable,
 } from '@/lib/rates'
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
+import { suggestedParticipants } from '@/lib/presence'
 import { useRedenominateTrip, useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -246,6 +247,14 @@ function EntryDialog({
   // currency re-seeds correctly (#145).
   const [rateEdited, setRateEdited] = React.useState(false)
 
+  // Whether the member has taken manual control of the split — toggled a
+  // participant, hit "Everyone", or chosen a weighted mode. Until then the
+  // participant selection is just the presence suggestion (#304), which a later
+  // `entry_date` change is free to re-derive. Once true, changing the date never
+  // silently reverts their choice. A ref, not state: nothing renders from it and
+  // it must read current inside the DateInput's onChange handler.
+  const participantsEdited = React.useRef(false)
+
   const allMemberIds = React.useMemo(() => members.map((m) => m.id), [members])
   const empty = React.useMemo<BudgetFormValues>(
     () => ({
@@ -278,6 +287,16 @@ function EntryDialog({
       // currency's rate in place after a currency change and wrote a wrong
       // converted amount into settle-up (#145).
       setRateEdited(false)
+      // A saved entry that already carries a deliberate split — a real
+      // participant subset or a weighted `shares` map — is treated as
+      // user-owned from the start, so re-opening it and nudging the date never
+      // overwrites a split the member previously chose (#304). A plain
+      // shared-by-everyone entry (participants null/empty, no shares) stays open
+      // to the presence suggestion, like a fresh create.
+      participantsEdited.current = !!entry && (
+        ((entry.participants?.length ?? 0) > 0) ||
+        Object.values(entry.shares ?? {}).some((w) => typeof w === 'number' && w > 0)
+      )
       form.reset(
         entry
           ? {
@@ -354,6 +373,22 @@ function EntryDialog({
   const hasRate = isForeign && Number.isFinite(rateNum) && rateNum > 0
   const previewEst = hasRate && estNum > 0 ? toCents(estNum * rateNum) : null
   const previewAct = hasRate && actNum > 0 ? toCents(actNum * rateNum) : null
+
+  // Re-derive the presence suggestion whenever the member sets or changes the
+  // entry date (#304). A no-op once the member has taken manual control of the
+  // split, so an explicit choice is never silently reverted. Only ever reached in the
+  // default equal split (any weighted mode marks the split user-owned), so it
+  // seeds `participants` alone and never touches the `shares`/`weights` path —
+  // settlement math stays exactly as it was.
+  const applyPresenceSuggestion = React.useCallback(
+    (day: string) => {
+      if (participantsEdited.current) return
+      form.setValue('participants', suggestedParticipants(members, day, trip), {
+        shouldValidate: true,
+      })
+    },
+    [members, trip, form]
+  )
 
   async function onSubmit(values: BudgetFormValues) {
     const currency = (values.currency || tripCurrency).toUpperCase()
@@ -459,7 +494,10 @@ function EntryDialog({
                   <DateInput
                     id="b-date"
                     value={field.value ?? ''}
-                    onChange={field.onChange}
+                    onChange={(v) => {
+                      field.onChange(v)
+                      applyPresenceSuggestion(v)
+                    }}
                     onBlur={field.onBlur}
                   />
                 )}
@@ -600,14 +638,20 @@ function EntryDialog({
                 if (m !== 'equal') setWeights(seedWeights(m, ids, exactTotal))
               }
               const setMode = (m: SplitMode) => {
+                // Choosing a weighted split is deliberate configuration of who /
+                // how much shares — from here the presence suggestion (#304) must
+                // not re-derive over it on a later date change.
+                if (m !== 'equal') participantsEdited.current = true
                 form.setValue('split_mode', m, { shouldValidate: true })
                 reseed(m, value)
               }
               const selectEveryone = () => {
+                participantsEdited.current = true
                 field.onChange(allMemberIds)
                 reseed(mode, allMemberIds)
               }
               const toggle = (id: string) => {
+                participantsEdited.current = true
                 const next = new Set(selected)
                 const adding = !next.has(id)
                 if (adding) next.add(id)

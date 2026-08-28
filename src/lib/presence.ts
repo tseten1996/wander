@@ -31,6 +31,33 @@ export function presentOn(members: Member[], day: string, trip: TripRange): Memb
   })
 }
 
+/**
+ * The participants to pre-select for an expense dated `day` (#304, epic #285
+ * slice 2). Returns the ids — in member order — of the members present on that
+ * date, so a cost logged on a staggered day defaults to whoever was actually
+ * there instead of the whole group.
+ *
+ * Falls back to *all* members — the historic "shared by everyone" default
+ * (`participants: null` in `settlement.ts`) — whenever the answer isn't
+ * knowable or wouldn't narrow anything: no `day`, no member has set dates, or
+ * the date lands outside every member's window (an empty split would be an
+ * invalid, un-saveable selection). This keeps a trip that never uses presence
+ * dates behaving exactly as before.
+ *
+ * Purely a suggestion: the caller seeds an overridable picker with it and writes
+ * nothing until the user saves.
+ */
+export function suggestedParticipants(
+  members: Member[],
+  day: string | null | undefined,
+  trip: TripRange,
+): string[] {
+  const all = members.map((m) => m.id)
+  if (!day || !hasPresenceDates(members)) return all
+  const present = presentOn(members, day, trip).map((m) => m.id)
+  return present.length > 0 ? present : all
+}
+
 /** Members whose explicit arrival is exactly `day` (undated members excluded —
  *  an arrival is only shown when someone actually stated it). */
 export function arrivalsOn(members: Member[], day: string): Member[] {
