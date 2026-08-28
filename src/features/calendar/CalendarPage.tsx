@@ -5,7 +5,10 @@ import {
   addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay,
   isSameMonth, isToday, parseISO, startOfMonth, startOfWeek,
 } from 'date-fns'
-import { CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane } from 'lucide-react'
+import {
+  CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane,
+  PlaneLanding, PlaneTakeoff,
+} from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useTripContext } from '@/hooks/useTrip'
 import { useDestinations } from '@/features/destinations/api'
@@ -14,8 +17,11 @@ import { legColor, legHeading } from '@/features/destinations/route'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { MemberAvatar } from '@/components/ui/avatar'
 import { ErrorState, Skeleton } from '@/components/ui/misc'
+import { arrivalsOn, departuresOn } from '@/lib/presence'
 import { cn, formatTime, longDate } from '@/lib/utils'
+import type { Member } from '@/types'
 import { useTripWeather } from '@/hooks/useWeather'
 import { useTempUnit } from '@/hooks/useTempUnit'
 import { describeWeather } from '@/lib/weather'
@@ -95,8 +101,50 @@ const KIND_ICON = {
   payment: CreditCard,
 }
 
+/** A member arriving or leaving on a day cell: their colour, ringed green for
+ *  an arrival and amber for a departure. Kept tiny so the cell stays tap-sized
+ *  on mobile; the full "who" is in the day's detail panel below (#286). */
+function PresenceDot({ member, kind }: { member: Member; kind: 'arrive' | 'depart' }) {
+  return (
+    <span
+      className={cn(
+        'size-3 rounded-full ring-1 ring-inset',
+        kind === 'arrive' ? 'ring-success' : 'ring-accent'
+      )}
+      style={{ backgroundColor: member.color }}
+    />
+  )
+}
+
+/** Presence markers for one day cell — arrivals then departures, capped so a
+ *  busy day never overflows the cell; the detail panel lists everyone. */
+function DayPresence({ arrivals, departures }: { arrivals: Member[]; departures: Member[] }) {
+  if (arrivals.length === 0 && departures.length === 0) return null
+  const dots = [
+    ...arrivals.map((m) => ({ m, kind: 'arrive' as const })),
+    ...departures.map((m) => ({ m, kind: 'depart' as const })),
+  ]
+  const shown = dots.slice(0, 4)
+  const extra = dots.length - shown.length
+  const title = [
+    arrivals.length && `Arriving: ${arrivals.map((m) => m.display_name).join(', ')}`,
+    departures.length && `Leaving: ${departures.map((m) => m.display_name).join(', ')}`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <span className="flex flex-wrap items-center justify-center gap-0.5 px-1" title={title}>
+      {shown.map(({ m, kind }) => (
+        <PresenceDot key={`${kind}-${m.id}`} member={m} kind={kind} />
+      ))}
+      {extra > 0 && <span className="text-[9px] leading-none text-faint">+{extra}</span>}
+      <span className="sr-only">{title}</span>
+    </span>
+  )
+}
+
 export default function CalendarPage() {
-  const { trip } = useTripContext()
+  const { trip, members } = useTripContext()
   const events = useCalendarEvents(trip.id)
   const destinations = useDestinations(trip.id).data ?? []
   const weather = useTripWeather(trip, destinations)
@@ -117,6 +165,9 @@ export default function CalendarPage() {
     end: endOfWeek(endOfMonth(month), { weekStartsOn: 1 }),
   })
   const selectedEvents = (events.data ?? []).filter((e) => isSameDay(e.date, selected))
+  const selectedIso = format(selected, 'yyyy-MM-dd')
+  const selectedArrivals = arrivalsOn(members, selectedIso)
+  const selectedDepartures = departuresOn(members, selectedIso)
   const selectedLeg = rangedLegs.length
     ? legForDay(format(selected, 'yyyy-MM-dd'), rangedLegs)
     : null
@@ -173,8 +224,11 @@ export default function CalendarPage() {
         ) : (
           <div className="grid grid-cols-7 gap-1">
             {days.map((day) => {
+              const iso = format(day, 'yyyy-MM-dd')
               const dayEvents = (events.data ?? []).filter((e) => isSameDay(e.date, day))
-              const dayWeather = weather.data?.get(format(day, 'yyyy-MM-dd'))
+              const dayArrivals = arrivalsOn(members, iso)
+              const dayDepartures = departuresOn(members, iso)
+              const dayWeather = weather.data?.get(iso)
               const inTrip =
                 trip.start_date && trip.end_date &&
                 day >= parseISO(trip.start_date) && day <= parseISO(trip.end_date)
@@ -216,6 +270,7 @@ export default function CalendarPage() {
                       <span key={e.id} className={cn('size-1.5 rounded-full', e.color)} />
                     ))}
                   </span>
+                  <DayPresence arrivals={dayArrivals} departures={dayDepartures} />
                   {dayWeather && (() => {
                     const { label, Icon } = describeWeather(dayWeather.code)
                     const hi = formatTemp(dayWeather.tempMax, unit)
@@ -254,8 +309,38 @@ export default function CalendarPage() {
             {legHeading(selectedLeg)}
           </p>
         )}
+        {(selectedArrivals.length > 0 || selectedDepartures.length > 0) && (
+          <Card className="mb-3 divide-y divide-line/60">
+            {selectedArrivals.map((m) => (
+              <div key={`arr-${m.id}`} className="flex items-center gap-3 px-4 py-3">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-success text-white">
+                  <PlaneTakeoff className="size-4" />
+                </span>
+                <MemberAvatar name={m.display_name} color={m.color} size="sm" />
+                <p className="min-w-0 truncate text-sm">
+                  <span className="font-medium">{m.display_name}</span>
+                  <span className="text-muted"> arrives</span>
+                </p>
+              </div>
+            ))}
+            {selectedDepartures.map((m) => (
+              <div key={`dep-${m.id}`} className="flex items-center gap-3 px-4 py-3">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-accent text-white">
+                  <PlaneLanding className="size-4" />
+                </span>
+                <MemberAvatar name={m.display_name} color={m.color} size="sm" />
+                <p className="min-w-0 truncate text-sm">
+                  <span className="font-medium">{m.display_name}</span>
+                  <span className="text-muted"> leaves</span>
+                </p>
+              </div>
+            ))}
+          </Card>
+        )}
         {selectedEvents.length === 0 ? (
-          <p className="text-sm text-muted">Nothing on this day.</p>
+          selectedArrivals.length === 0 && selectedDepartures.length === 0 && (
+            <p className="text-sm text-muted">Nothing on this day.</p>
+          )
         ) : (
           <Card className="divide-y divide-line/60">
             {selectedEvents.map((e) => {
@@ -281,6 +366,8 @@ export default function CalendarPage() {
         <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-sky-500" /> Itinerary</span>
         <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-accent" /> Checklist due</span>
         <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-violet-500" /> Payments</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-success" /> Arrivals</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-accent" /> Departures</span>
       </div>
     </div>
   )

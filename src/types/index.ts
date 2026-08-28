@@ -71,6 +71,12 @@ export interface Member {
   color: string
   role: Role
   joined_at: string
+  /** Day this member arrives (`yyyy-MM-dd`), or null = present from the trip
+   *  start. Constrained server-side to the trip's own date range (#286). */
+  arrives_on: string | null
+  /** Day this member departs (`yyyy-MM-dd`), or null = present to the trip end.
+   *  On or after `arrives_on`, and within the trip's date range (#286). */
+  departs_on: string | null
 }
 
 /** How the group likes to travel — the pace of a day. */

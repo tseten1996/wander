@@ -71,8 +71,12 @@ non-members, so the URL is the only capability.
 
 **Roles** are exactly two: `owner` and `member`, stored on the `members` row.
 Policies grant members write access to their own rows and the owner write
-access to everything in their trip. Only the owner can delete the trip,
-remove members, and regenerate/disable invite links. Closing or reopening a
+access to everything in their trip. A member edits their own profile (name,
+colour) and their own **arrival/departure dates** (#286); the owner may edit
+any member's — both cases are the *same* `members_update` policy
+(`user_id = auth.uid() OR is_trip_owner`), so the dates added no new policy,
+only two columns to the column-level UPDATE grant. Only the owner can delete
+the trip, remove members, and regenerate/disable invite links. Closing or reopening a
 poll is **not** owner-exclusive: a poll's creator (any member) can close or
 reopen their own poll, as can the owner (`polls_update`: `created_by =
 my_member_id(trip_id) OR is_trip_owner(trip_id)`).
@@ -86,7 +90,7 @@ All tables live in `public`, keyed by `uuid`. Every content table carries a
 * `is_trip_owner(trip_id)` — the caller owns the trip
 
 ```
-trips ────────────┬─ members            (person ↔ trip, role, name, color)
+trips ────────────┬─ members            (person ↔ trip, role, name, color, arrival/departure dates)
   │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
   │               ├─ availability_polls ─ availability_candidates ─ availability_responses  (owner-run date poll; one response per member per candidate)
@@ -110,6 +114,15 @@ Notable decisions:
 * **`activity`** is a plain append-only table written by the client helpers on
   meaningful mutations. It powers "Recent activity" on the dashboard without
   expensive cross-table queries.
+* **Member trip dates.** A `members` row carries optional `arrives_on` /
+  `departs_on` dates (#286, epic #285): null means "here for the whole trip",
+  so a trip that never sets them is unchanged. Two guards enforce them
+  server-side, not just in the client — a same-row `CHECK`
+  (`departs_on >= arrives_on`) and a validate-only trigger
+  (`members_validate_trip_dates`) that rejects a date outside the trip's own
+  `[start_date, end_date]` (a CHECK can't reach the parent `trips` row). The
+  calendar day cells and the header's "who's here today" read these; nothing in
+  the join flow touches them.
 * **Votes** enforce *one vote per member per poll* with a unique index; voting
   again switches your vote (upsert).
 * **Ordering** (itinerary, checklist) uses a float `position` column —

@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, daysUntil, formatMoney, shortDate } from '@/lib/utils'
 import { useMyTrip, type MyTripSummary } from './api'
+import { MemberDatesForm } from './MemberDatesForm'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -181,6 +182,22 @@ export default function MePage() {
   return (
     <div>
       <PageHeader title="My trip" description={description} />
+
+      <motion.div {...fadeUp} transition={{ duration: 0.3 }} className="mb-4">
+        <Card>
+          <div className="flex items-center gap-2 border-b border-line px-5 py-3.5">
+            <CalendarClock className="size-4.5 text-primary" />
+            <h2 className="font-display text-sm font-semibold">Your trip dates</h2>
+          </div>
+          <CardContent className="py-4">
+            <p className="mb-4 text-sm text-muted">
+              Arriving late or leaving early? Set your dates so the group sees who’s
+              around each day. Leave them blank if you’re here for the whole trip.
+            </p>
+            <MemberDatesForm trip={trip} member={me} actorId={me.id} isSelf />
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {d.outstandingCount === 0 ? (
         <motion.div {...fadeUp} transition={{ duration: 0.3 }}>
