@@ -491,6 +491,170 @@ select pg_temp.expect_count('get_ai_day_context: anonymous member may read',   '
 select pg_temp.expect_count('get_ai_day_context: carries no person or notes',  'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from jsonb_array_elements(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'items') e where e ?| array['created_by','notes','createdBy','paidBy']$$, 0);
 
 -- ═════════════════════════════════════════════════════════════════════════════
+-- POST-INIT TABLES (#300) — the eight RLS-protected tables shipped after
+-- *_init.sql that had no regression assertion until now:
+--   availability_polls · availability_candidates · availability_responses ·
+--   destinations · repayments · trip_preferences · notifications · error_reports
+--
+-- Each block asserts the same three properties the init-era tables above prove,
+-- against each table's own policy shape:
+--   • member-allowed / non-member-denied — a trip member may do what the policy
+--     grants; a signed-in outsider (uX) may do nothing
+--   • the table's SPECIFIC asymmetry — self-attributed authorship can't be
+--     forged, owner/creator-only writes reject a plain member, per-recipient
+--     reads don't leak across members
+--   • cross-trip isolation — an attacker holding a VALID session for another
+--     trip (uB, owner/member of trip B) can neither read nor write trip A's rows
+--
+-- Fixtures are seeded here as the superuser (RLS bypassed for seeding only,
+-- exactly like the init-era fixtures at the top of this file). uuids use the
+-- ab1x prefix to stay clear of the dddd/eeee/fada content ids above. The trip A
+-- roster at this point is owner uA, member F (cccc..02), member G (cccc..03),
+-- and the invite-joined uJ; trip A's date window is 2026-09-01…2026-09-10.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- ── availability_polls / _candidates / _responses (#176) ─────────────────────
+-- Owner runs the poll: owner-only create/update/delete of polls and candidates,
+-- candidates immutable (no update path); every member reads; a member writes
+-- ONLY their own response (member_id = my_member_id), one row per candidate.
+insert into public.availability_polls (id, trip_id, created_by, title) values
+  ('ab110000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', (select id from public.members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'), 'When can we go?'),
+  ('ab110000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', (select id from public.members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'), 'Throwaway poll');
+insert into public.availability_candidates (id, trip_id, poll_id, start_date, end_date, position) values
+  ('ab120000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'ab110000-0000-4000-8000-000000000001', '2026-09-02', '2026-09-05', 0),
+  ('ab120000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'ab110000-0000-4000-8000-000000000001', '2026-09-06', '2026-09-09', 1),
+  ('ab120000-0000-4000-8000-000000000003', 'bbbb0000-0000-0000-0000-000000000001', 'ab110000-0000-4000-8000-000000000001', '2026-09-03', '2026-09-07', 2);
+insert into public.availability_responses (id, trip_id, poll_id, candidate_id, member_id, status) values
+  ('ab130000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'ab110000-0000-4000-8000-000000000001', 'ab120000-0000-4000-8000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'yes');
+
+-- polls: reads
+select pg_temp.expect_count('availability_polls: member sees the poll',        'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from availability_polls where id='ab110000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('availability_polls: outsider sees none',          'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from availability_polls where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('availability_polls: cross-trip attacker sees none','aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from availability_polls where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- polls: writes are owner-only, and the owner cannot forge created_by
+select pg_temp.expect_dml('availability_polls: outsider cannot insert',        'aaaa0000-0000-0000-0000-000000000005', false, $$insert into availability_polls(trip_id, created_by, title) values('bbbb0000-0000-0000-0000-000000000001', null, 'x')$$, -1);
+select pg_temp.expect_dml('availability_polls: plain member cannot insert',    'aaaa0000-0000-0000-0000-000000000002', false, $$insert into availability_polls(trip_id, created_by, title) values('bbbb0000-0000-0000-0000-000000000001', my_member_id('bbbb0000-0000-0000-0000-000000000001'), 'x')$$, -1);
+select pg_temp.expect_dml('availability_polls: cross-trip attacker cannot insert','aaaa0000-0000-0000-0000-000000000004', false, $$insert into availability_polls(trip_id, created_by, title) values('bbbb0000-0000-0000-0000-000000000001', null, 'x')$$, -1);
+select pg_temp.expect_dml('availability_polls: owner cannot forge created_by',  'aaaa0000-0000-0000-0000-000000000001', false, $$insert into availability_polls(trip_id, created_by, title) values('bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'forged')$$, -1);
+select pg_temp.expect_dml('availability_polls: owner can create',              'aaaa0000-0000-0000-0000-000000000001', false, $$insert into availability_polls(trip_id, created_by, title) values('bbbb0000-0000-0000-0000-000000000001', my_member_id('bbbb0000-0000-0000-0000-000000000001'), 'owner poll')$$, 1);
+select pg_temp.expect_dml('availability_polls: plain member cannot update',    'aaaa0000-0000-0000-0000-000000000002', false, $$update availability_polls set title='hijack' where id='ab110000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('availability_polls: owner can update',              'aaaa0000-0000-0000-0000-000000000001', false, $$update availability_polls set closed=true where id='ab110000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('availability_polls: plain member cannot delete',    'aaaa0000-0000-0000-0000-000000000002', false, $$delete from availability_polls where id='ab110000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_dml('availability_polls: owner can delete',              'aaaa0000-0000-0000-0000-000000000001', false, $$delete from availability_polls where id='ab110000-0000-4000-8000-000000000002'$$, 1);
+
+-- candidates: reads, owner-only writes, and NO update path (immutable once proposed)
+select pg_temp.expect_count('availability_candidates: member sees candidate',  'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from availability_candidates where id='ab120000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('availability_candidates: outsider sees none',     'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from availability_candidates where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('availability_candidates: cross-trip sees none',   'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from availability_candidates where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('availability_candidates: plain member cannot insert','aaaa0000-0000-0000-0000-000000000002', false, $$insert into availability_candidates(trip_id, poll_id, start_date, end_date) values('bbbb0000-0000-0000-0000-000000000001','ab110000-0000-4000-8000-000000000001','2026-09-04','2026-09-06')$$, -1);
+select pg_temp.expect_dml('availability_candidates: owner can insert',         'aaaa0000-0000-0000-0000-000000000001', false, $$insert into availability_candidates(trip_id, poll_id, start_date, end_date) values('bbbb0000-0000-0000-0000-000000000001','ab110000-0000-4000-8000-000000000001','2026-09-04','2026-09-06')$$, 1);
+select pg_temp.expect_dml('availability_candidates: no update path even for owner','aaaa0000-0000-0000-0000-000000000001', false, $$update availability_candidates set position=9 where id='ab120000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('availability_candidates: plain member cannot delete','aaaa0000-0000-0000-0000-000000000002', false, $$delete from availability_candidates where id='ab120000-0000-4000-8000-000000000003'$$, 0);
+select pg_temp.expect_dml('availability_candidates: owner can delete',         'aaaa0000-0000-0000-0000-000000000001', false, $$delete from availability_candidates where id='ab120000-0000-4000-8000-000000000003'$$, 1);
+
+-- responses: every member reads; a member writes ONLY their own (self-attributed)
+select pg_temp.expect_count('availability_responses: member sees a response',  'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from availability_responses where id='ab130000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('availability_responses: other member sees it too', 'aaaa0000-0000-0000-0000-000000000003', false, $$select count(*) from availability_responses where id='ab130000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('availability_responses: outsider sees none',      'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from availability_responses where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('availability_responses: cross-trip sees none',    'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from availability_responses where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('availability_responses: member can respond as self', 'aaaa0000-0000-0000-0000-000000000003', false, $$insert into availability_responses(trip_id, poll_id, candidate_id, member_id, status) values('bbbb0000-0000-0000-0000-000000000001','ab110000-0000-4000-8000-000000000001','ab120000-0000-4000-8000-000000000002','cccc0000-0000-0000-0000-000000000003','maybe')$$, 1);
+select pg_temp.expect_dml('availability_responses: member cannot forge another''s', 'aaaa0000-0000-0000-0000-000000000003', false, $$insert into availability_responses(trip_id, poll_id, candidate_id, member_id, status) values('bbbb0000-0000-0000-0000-000000000001','ab110000-0000-4000-8000-000000000001','ab120000-0000-4000-8000-000000000002','cccc0000-0000-0000-0000-000000000002','no')$$, -1);
+select pg_temp.expect_dml('availability_responses: outsider cannot insert',    'aaaa0000-0000-0000-0000-000000000005', false, $$insert into availability_responses(trip_id, poll_id, candidate_id, member_id, status) values('bbbb0000-0000-0000-0000-000000000001','ab110000-0000-4000-8000-000000000001','ab120000-0000-4000-8000-000000000002','cccc0000-0000-0000-0000-000000000002','yes')$$, -1);
+select pg_temp.expect_dml('availability_responses: member cannot edit another''s', 'aaaa0000-0000-0000-0000-000000000003', false, $$update availability_responses set status='no' where id='ab130000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('availability_responses: member can edit own',       'aaaa0000-0000-0000-0000-000000000002', false, $$update availability_responses set status='maybe' where id='ab130000-0000-4000-8000-000000000001'$$, 1);
+
+-- ── destinations (#197) — owner-only trip structure ──────────────────────────
+insert into public.destinations (id, trip_id, name, position) values
+  ('ab140000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'Kyoto', 0),
+  ('ab140000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'Osaka', 1);
+select pg_temp.expect_count('destinations: member sees the leg',               'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from destinations where id='ab140000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('destinations: outsider sees none',                'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from destinations where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('destinations: cross-trip attacker sees none',     'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from destinations where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('destinations: plain member cannot insert',          'aaaa0000-0000-0000-0000-000000000002', false, $$insert into destinations(trip_id, name) values('bbbb0000-0000-0000-0000-000000000001','Nara')$$, -1);
+select pg_temp.expect_dml('destinations: outsider cannot insert',              'aaaa0000-0000-0000-0000-000000000005', false, $$insert into destinations(trip_id, name) values('bbbb0000-0000-0000-0000-000000000001','Nara')$$, -1);
+select pg_temp.expect_dml('destinations: cross-trip attacker cannot insert',   'aaaa0000-0000-0000-0000-000000000004', false, $$insert into destinations(trip_id, name) values('bbbb0000-0000-0000-0000-000000000001','Nara')$$, -1);
+select pg_temp.expect_dml('destinations: owner can insert',                    'aaaa0000-0000-0000-0000-000000000001', false, $$insert into destinations(trip_id, name) values('bbbb0000-0000-0000-0000-000000000001','Nara')$$, 1);
+select pg_temp.expect_dml('destinations: plain member cannot update',          'aaaa0000-0000-0000-0000-000000000002', false, $$update destinations set name='hijack' where id='ab140000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('destinations: owner can update',                    'aaaa0000-0000-0000-0000-000000000001', false, $$update destinations set name='Kyoto ✔' where id='ab140000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('destinations: plain member cannot delete',          'aaaa0000-0000-0000-0000-000000000002', false, $$delete from destinations where id='ab140000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_dml('destinations: owner can delete',                    'aaaa0000-0000-0000-0000-000000000001', false, $$delete from destinations where id='ab140000-0000-4000-8000-000000000002'$$, 1);
+
+-- ── repayments (#125) — any member records as self; creator-or-owner delete;
+--    NO update path (an immutable record of a payment that happened) ──────────
+insert into public.repayments (id, trip_id, from_member, to_member, amount, created_by) values
+  ('ab150000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'cccc0000-0000-0000-0000-000000000003', 20.00, 'cccc0000-0000-0000-0000-000000000002');
+select pg_temp.expect_count('repayments: member sees the repayment',           'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from repayments where id='ab150000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('repayments: outsider sees none',                  'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from repayments where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('repayments: cross-trip attacker sees none',       'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from repayments where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('repayments: member can record as self',             'aaaa0000-0000-0000-0000-000000000003', false, $$insert into repayments(trip_id, from_member, to_member, amount, created_by) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','cccc0000-0000-0000-0000-000000000002',5.00,'cccc0000-0000-0000-0000-000000000003')$$, 1);
+select pg_temp.expect_dml('repayments: member cannot forge created_by',        'aaaa0000-0000-0000-0000-000000000003', false, $$insert into repayments(trip_id, from_member, to_member, amount, created_by) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','cccc0000-0000-0000-0000-000000000002',5.00,'cccc0000-0000-0000-0000-000000000002')$$, -1);
+select pg_temp.expect_dml('repayments: outsider cannot insert',                'aaaa0000-0000-0000-0000-000000000005', false, $$insert into repayments(trip_id, from_member, to_member, amount, created_by) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','cccc0000-0000-0000-0000-000000000003',5.00,'cccc0000-0000-0000-0000-000000000002')$$, -1);
+select pg_temp.expect_dml('repayments: cross-trip attacker cannot insert',     'aaaa0000-0000-0000-0000-000000000004', false, $$insert into repayments(trip_id, from_member, to_member, amount, created_by) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','cccc0000-0000-0000-0000-000000000003',5.00,'cccc0000-0000-0000-0000-000000000002')$$, -1);
+select pg_temp.expect_dml('repayments: no update path even for owner',         'aaaa0000-0000-0000-0000-000000000001', false, $$update repayments set amount=999 where id='ab150000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('repayments: non-creator member cannot delete',      'aaaa0000-0000-0000-0000-000000000003', false, $$delete from repayments where id='ab150000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('repayments: creator can delete own',                'aaaa0000-0000-0000-0000-000000000002', false, $$delete from repayments where id='ab150000-0000-4000-8000-000000000001'$$, 1);
+
+-- ── trip_preferences (#268) — group-owned, one row per trip, editable by any
+--    member, self-attributed via updated_by; NO delete path ─────────────────
+select pg_temp.expect_dml('trip_preferences: outsider cannot insert',          'aaaa0000-0000-0000-0000-000000000005', false, $$insert into trip_preferences(trip_id, pace) values('bbbb0000-0000-0000-0000-000000000001','relaxed')$$, -1);
+select pg_temp.expect_dml('trip_preferences: cross-trip attacker cannot insert','aaaa0000-0000-0000-0000-000000000004', false, $$insert into trip_preferences(trip_id, pace) values('bbbb0000-0000-0000-0000-000000000001','relaxed')$$, -1);
+select pg_temp.expect_dml('trip_preferences: member cannot forge updated_by',  'aaaa0000-0000-0000-0000-000000000002', false, $$insert into trip_preferences(trip_id, pace, updated_by) values('bbbb0000-0000-0000-0000-000000000001','relaxed','cccc0000-0000-0000-0000-000000000003')$$, -1);
+select pg_temp.expect_dml('trip_preferences: member can create as self',       'aaaa0000-0000-0000-0000-000000000002', false, $$insert into trip_preferences(trip_id, pace, updated_by) values('bbbb0000-0000-0000-0000-000000000001','relaxed', my_member_id('bbbb0000-0000-0000-0000-000000000001'))$$, 1);
+select pg_temp.expect_count('trip_preferences: member sees the row',           'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from trip_preferences where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 1);
+select pg_temp.expect_count('trip_preferences: outsider sees none',            'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from trip_preferences where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('trip_preferences: cross-trip attacker sees none', 'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from trip_preferences where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('trip_preferences: another member can edit as self', 'aaaa0000-0000-0000-0000-000000000003', false, $$update trip_preferences set pace='packed', updated_by=my_member_id('bbbb0000-0000-0000-0000-000000000001') where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 1);
+select pg_temp.expect_dml('trip_preferences: member cannot forge editor',      'aaaa0000-0000-0000-0000-000000000003', false, $$update trip_preferences set pace='balanced', updated_by='cccc0000-0000-0000-0000-000000000002' where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, -1);
+select pg_temp.expect_dml('trip_preferences: no delete path',                  'aaaa0000-0000-0000-0000-000000000002', false, $$delete from trip_preferences where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+
+-- ── notifications (#182/#193) — a PER-RECIPIENT inbox: a member reads only
+--    their own rows, inserts are self-attributed (actor = self), and the only
+--    field a recipient may change is read_at (column grant) ──────────────────
+insert into public.notifications (id, trip_id, recipient_id, actor_id, type, title) values
+  ('ab170000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'cccc0000-0000-0000-0000-000000000003', 'poll_opened', 'For F'),
+  ('ab170000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'cccc0000-0000-0000-0000-000000000002', 'poll_opened', 'For G');
+select pg_temp.expect_count('notifications: recipient sees own row',           'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from notifications where id='ab170000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('notifications: a member cannot read another''s',   'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from notifications where id='ab170000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_count('notifications: the other recipient sees theirs',  'aaaa0000-0000-0000-0000-000000000003', false, $$select count(*) from notifications where id='ab170000-0000-4000-8000-000000000002'$$, 1);
+select pg_temp.expect_count('notifications: outsider sees none',               'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from notifications where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('notifications: cross-trip attacker sees none',    'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from notifications where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('notifications: member can notify as self',          'aaaa0000-0000-0000-0000-000000000002', false, $$insert into notifications(trip_id, recipient_id, actor_id, type, title) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','cccc0000-0000-0000-0000-000000000002','mention','hi')$$, 1);
+select pg_temp.expect_dml('notifications: member cannot forge the actor',      'aaaa0000-0000-0000-0000-000000000002', false, $$insert into notifications(trip_id, recipient_id, actor_id, type, title) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','cccc0000-0000-0000-0000-000000000003','mention','forged')$$, -1);
+select pg_temp.expect_dml('notifications: outsider cannot insert',             'aaaa0000-0000-0000-0000-000000000005', false, $$insert into notifications(trip_id, recipient_id, actor_id, type, title) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','cccc0000-0000-0000-0000-000000000002','mention','x')$$, -1);
+select pg_temp.expect_dml('notifications: cross-trip attacker cannot insert',  'aaaa0000-0000-0000-0000-000000000004', false, $$insert into notifications(trip_id, recipient_id, actor_id, type, title) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','cccc0000-0000-0000-0000-000000000002','mention','x')$$, -1);
+select pg_temp.expect_dml('notifications: recipient can mark own read',        'aaaa0000-0000-0000-0000-000000000002', false, $$update notifications set read_at=now() where id='ab170000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('notifications: non-recipient cannot mark read',     'aaaa0000-0000-0000-0000-000000000003', false, $$update notifications set read_at=now() where id='ab170000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('notifications: recipient cannot rewrite title',     'aaaa0000-0000-0000-0000-000000000002', false, $$update notifications set title='tampered' where id='ab170000-0000-4000-8000-000000000001'$$, -1);
+select pg_temp.expect_dml('notifications: non-recipient member cannot delete', 'aaaa0000-0000-0000-0000-000000000003', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000001'$$, 0);
+-- The delete policy also names the owner (`... or is_trip_owner`), but the
+-- recipient-only SELECT policy is applied to the DELETE's row lookup too
+-- (Postgres ANDs SELECT quals into UPDATE/DELETE), so the owner can only ever
+-- remove notifications addressed to them — a row for another member is invisible
+-- to the delete and matches zero rows. This pins that interaction: broadening
+-- the SELECT policy would flip this to 1 and this assertion would catch it.
+select pg_temp.expect_dml('notifications: owner cannot delete another''s (SELECT-narrowed)', 'aaaa0000-0000-0000-0000-000000000001', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_dml('notifications: recipient can delete own',           'aaaa0000-0000-0000-0000-000000000002', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('notifications: the other recipient can delete own', 'aaaa0000-0000-0000-0000-000000000003', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000002'$$, 1);
+
+-- ── error_reports (#57/#170) — write-only telemetry: OWNER-only read of
+--    trip-scoped rows, deploy-level (trip_id NULL) rows readable by no one via
+--    RLS; self-attributed insert; append-only (no update/delete) ────────────
+insert into public.error_reports (id, user_id, trip_id, message) values
+  ('ab190000-0000-4000-8000-000000000001', 'aaaa0000-0000-0000-0000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'boom'),
+  ('ab190000-0000-4000-8000-000000000002', 'aaaa0000-0000-0000-0000-000000000002', null, 'deploy-level boom');
+select pg_temp.expect_count('error_reports: owner reads own trip errors',      'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from error_reports where id='ab190000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('error_reports: plain member cannot read',         'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from error_reports where id='ab190000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_count('error_reports: outsider cannot read',             'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from error_reports where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('error_reports: cross-trip attacker cannot read',  'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from error_reports where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('error_reports: deploy-level rows read by no one',  'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from error_reports where trip_id is null$$, 0);
+select pg_temp.expect_dml('error_reports: member can log as self',             'aaaa0000-0000-0000-0000-000000000002', false, $$insert into error_reports(trip_id, message) values('bbbb0000-0000-0000-0000-000000000001','crash')$$, 1);
+select pg_temp.expect_dml('error_reports: member cannot forge user_id',        'aaaa0000-0000-0000-0000-000000000002', false, $$insert into error_reports(user_id, trip_id, message) values('aaaa0000-0000-0000-0000-000000000003','bbbb0000-0000-0000-0000-000000000001','crash')$$, -1);
+select pg_temp.expect_dml('error_reports: member cannot attribute to other trip','aaaa0000-0000-0000-0000-000000000002', false, $$insert into error_reports(trip_id, message) values('bbbb0000-0000-0000-0000-000000000002','crash')$$, -1);
+select pg_temp.expect_dml('error_reports: outsider cannot log to a trip',      'aaaa0000-0000-0000-0000-000000000005', false, $$insert into error_reports(trip_id, message) values('bbbb0000-0000-0000-0000-000000000001','crash')$$, -1);
+select pg_temp.expect_dml('error_reports: append-only (owner cannot update)',  'aaaa0000-0000-0000-0000-000000000001', false, $$update error_reports set message='x' where id='ab190000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('error_reports: append-only (owner cannot delete)',  'aaaa0000-0000-0000-0000-000000000001', false, $$delete from error_reports where id='ab190000-0000-4000-8000-000000000001'$$, 0);
+
+-- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
 -- ═════════════════════════════════════════════════════════════════════════════
