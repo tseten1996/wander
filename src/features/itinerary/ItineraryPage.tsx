@@ -12,7 +12,7 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
   Map as MapIcon, MapPin, MoreHorizontal, Navigation, Pencil, Plus, Sparkles,
-  TriangleAlert, Trash2,
+  TriangleAlert, Trash2, UserMinus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -38,6 +38,8 @@ import { extractUrls, LinkChip, MapsChip } from './links'
 import { ItemBudgetLink } from './BudgetLink'
 import { searchAnchorId } from '@/features/search/anchor'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { AvatarStack } from '@/components/ui/avatar'
+import { absentOn, describeAbsence, hasPresenceDates, presentOn } from '@/lib/presence'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/input'
@@ -65,6 +67,23 @@ import type { Destination, ItineraryCategory, ItineraryItem } from '@/types'
 // map library out of the itinerary page's initial chunk (bundle budget).
 const ItineraryMap = React.lazy(() => import('./ItineraryMap'))
 
+/**
+ * The quiet "someone will miss this" flag on an item scheduled for a day a
+ * member is absent (#303, epic #285 slice 3). Deliberately informational, not an
+ * error: muted colour, never `text-danger`, and it never blocks a save or edit —
+ * it only makes the conflict visible while it is still cheap to move. Rendered
+ * for both single-day rows and each day a multi-day span covers.
+ */
+function MissFlag({ note }: { note: string | null }) {
+  if (!note) return null
+  return (
+    <p className="mt-1.5 flex items-start gap-1 text-xs text-faint" role="note">
+      <UserMinus className="mt-px size-3.5 shrink-0" aria-hidden />
+      <span>{note}</span>
+    </p>
+  )
+}
+
 /** "Lunch (3:00 PM – 4:00 PM)" — names a conflicting item with its time. */
 function conflictLabel(item: ItineraryItem): string {
   const range = item.end_time
@@ -76,11 +95,14 @@ function conflictLabel(item: ItineraryItem): string {
 function SortableItemCard({
   item,
   conflicts,
+  absenceNote,
   selected,
   onSelect,
 }: {
   item: ItineraryItem
   conflicts?: ItineraryItem[]
+  /** "Sam isn't here yet" — who is absent on this item's day, or null. */
+  absenceNote?: string | null
   /** True when this item is the shared list↔map selection. */
   selected: boolean
   /** Toggle this item as the shared selection (used to sync with the map). */
@@ -184,6 +206,7 @@ function SortableItemCard({
               </span>
             </p>
           )}
+          <MissFlag note={absenceNote ?? null} />
           <ItemBudgetLink item={item} />
         </div>
         <DropdownMenu>
@@ -308,6 +331,7 @@ function SpanBandCard({
   item,
   day,
   anchored,
+  absenceNote,
 }: {
   item: ItineraryItem
   day: string
@@ -315,6 +339,9 @@ function SpanBandCard({
    *  single scroll target — the band repeats across every day it spans, and a
    *  duplicate DOM id would be invalid. */
   anchored: boolean
+  /** Who is absent on *this* covered day, or null — a span is evaluated per day
+   *  it covers (#166 × #303), so each day's band names who would miss it here. */
+  absenceNote?: string | null
 }) {
   const { trip, me, isOwner } = useTripContext()
   const deleteItem = useDeleteItineraryItem(trip.id)
@@ -360,6 +387,7 @@ function SpanBandCard({
       >
         <p className="truncate text-sm font-semibold">{item.title}</p>
         <p className="truncate text-xs text-muted">{detail}</p>
+        <MissFlag note={absenceNote ?? null} />
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -462,7 +490,7 @@ function DaySection({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
-  const { trip } = useTripContext()
+  const { trip, members } = useTripContext()
   const reorder = useReorderItinerary(trip.id)
   const { unit } = useTempUnit()
   // Same-day timed items whose intervals intersect are flagged inline. Skipped
@@ -470,6 +498,19 @@ function DaySection({
   const conflicts = React.useMemo(
     () => (day ? overlapsByItem(items) : new Map<string, ItineraryItem[]>()),
     [day, items]
+  )
+  // Member presence for this day (#303, epic #285 slice 3): who is here, and a
+  // quiet flag naming who is not. Both gate on at least one member having set
+  // dates, so a trip that never uses presence renders exactly as before — no
+  // cluster, no flag, no empty affordance. All read from members already loaded.
+  const showPresence = hasPresenceDates(members)
+  const present = React.useMemo(
+    () => (day && showPresence ? presentOn(members, day, trip) : []),
+    [day, showPresence, members, trip]
+  )
+  const absenceNote = React.useMemo(
+    () => (day && showPresence ? describeAbsence(absentOn(members, day)) : null),
+    [day, showPresence, members]
   )
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -536,12 +577,34 @@ function DaySection({
           )
         })()}
       </h2>
+      {/* Who is physically here on this day (#303) — an avatar cluster derived
+          from each member's arrival/departure window. Shown only when someone
+          has set dates and at least one member is present, so a dateless trip
+          shows nothing. */}
+      {present.length > 0 && (
+        <div
+          className="mb-2.5 flex items-center gap-2 text-xs text-muted"
+          role="group"
+          aria-label={`Here on this day: ${present.map((m) => m.display_name).join(', ')}`}
+        >
+          <AvatarStack members={present} max={5} size="xs" />
+          <span>
+            {present.length === members.length ? 'Everyone here' : `${present.length} here`}
+          </span>
+        </div>
+      )}
       {/* Multi-day spans (#166) sit at the top of every day they cover, pinned
           above the day's own rows and outside the drag list. */}
       {day && spanning.length > 0 && (
         <div className="mb-3 space-y-2">
           {spanning.map((s) => (
-            <SpanBandCard key={s.id} item={s} day={day} anchored={spanAnchorDays.get(s.id) === day} />
+            <SpanBandCard
+              key={s.id}
+              item={s}
+              day={day}
+              anchored={spanAnchorDays.get(s.id) === day}
+              absenceNote={absenceNote}
+            />
           ))}
         </div>
       )}
@@ -568,6 +631,7 @@ function DaySection({
                   <SortableItemCard
                     item={item}
                     conflicts={conflicts.get(item.id)}
+                    absenceNote={absenceNote}
                     selected={item.id === selectedId}
                     onSelect={onSelect}
                   />
