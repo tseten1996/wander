@@ -25,6 +25,8 @@ import { handleAiRequest } from '../../src/server/ai/handler'
 import type { Db } from '../../src/server/ai/handler'
 import { workersAiProvider } from '../../src/server/ai/provider'
 import type { AiBinding } from '../../src/server/ai/provider'
+import { buildPlacesUrl, parseGeoapifyPlaces } from '../../src/server/geo/geoapify'
+import type { NearbyPlace } from '../../src/lib/places'
 
 interface Env {
   /** Optional overrides; the public defaults are used when unset. */
@@ -43,6 +45,49 @@ interface Env {
    * this file has to check, not a type it can assume.
    */
   AI?: unknown
+  /**
+   * The SAME Geoapify key #256 already uses for /api/nearby — reused here to
+   * ground suggest_starter's candidate places, adding no new credential. Absent
+   * or disabled simply means the starter feature has no places to work from and
+   * degrades to "nothing to suggest", exactly as /api/nearby falls back.
+   */
+  GEOAPIFY_KEY?: string
+  GEOAPIFY_ENABLED?: string
+}
+
+/** How far around the leg centre to look, and how many places to weigh. Wider
+ *  and larger than a map tap (this feeds a ranked candidate set, not a pin
+ *  cluster), but still bounded — an unbounded lookup is a way to make one
+ *  request expensive. */
+const STARTER_RADIUS_M = 2500
+const STARTER_LIMIT = 40
+
+/**
+ * A nearby-places lookup bound to this deployment's Geoapify key, or undefined
+ * when there is no key. Kept here — not in the handler — because it is the one
+ * piece that needs a provider credential and a network, exactly like the model
+ * binding: the handler stays a pure, testable rule engine that is *given* a way
+ * to fetch places rather than reaching for one.
+ */
+function nearbyLookup(
+  env: Env,
+): ((center: { lat: number; lon: number }) => Promise<NearbyPlace[]>) | undefined {
+  const key = env.GEOAPIFY_ENABLED === 'false' ? '' : (env.GEOAPIFY_KEY ?? '').trim()
+  if (!key) return undefined
+  return async (center) => {
+    try {
+      const url = buildPlacesUrl(center, { radiusMeters: STARTER_RADIUS_M, limit: STARTER_LIMIT }, key)
+      const res = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) return []
+      return parseGeoapifyPlaces(await res.json(), STARTER_LIMIT)
+    } catch {
+      // Every caller's contract is to degrade; a thrown lookup is an empty one.
+      return []
+    }
+  }
 }
 
 /**
@@ -104,6 +149,9 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     // allowed here", the binding says "there is a model to call". Losing the
     // binding degrades to "switched off" instead of throwing on first use.
     provider: isAiBinding(env.AI) ? workersAiProvider(env.AI) : undefined,
+    // Places for suggest_starter (#284). Undefined when no key is configured,
+    // which degrades the feature to "nothing to suggest" rather than erroring.
+    nearby: nearbyLookup(env),
   })
 
   return json(result, status)

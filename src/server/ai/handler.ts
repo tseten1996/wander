@@ -29,14 +29,25 @@ import {
   ParsedBookingResult,
   QUOTA_PER_TRIP,
   QUOTA_WINDOW_HOURS,
+  STARTER_MIN_PICKS,
+  StarterPickResult,
 } from './schemas'
 import type { AiResponse, Intent, ReasonSource, RefusalReason } from './schemas'
-import { bookingParsePrompt, improveDayPrompt } from './prompts'
-import type { PromptPreferences } from './prompts'
+import { bookingParsePrompt, improveDayPrompt, suggestStarterPrompt } from './prompts'
+import type { PromptPreferences, PromptStarterCandidate } from './prompts'
 import { MODELS } from './provider'
 import type { ModelProvider } from './provider'
 import { planDay } from './day'
 import type { Candidate, DayItem, DayPlans } from './day'
+import {
+  assembleStarterCandidates,
+  buildStarterPlan,
+  computedStarterReason,
+  pickTopStarter,
+  resolveStarterPicks,
+  TARGET_STARTER_PLACES,
+} from './starter'
+import type { NearbyPlace, PoiCategory } from '../../lib/places'
 
 /** The slice of a Supabase client this module needs — so tests can pass a fake. */
 export interface Db {
@@ -49,6 +60,13 @@ export interface Db {
         gte: (column: string, value: string) => Promise<{ count: number | null; error: unknown }>
         limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown; error: unknown }> }
         maybeSingle: () => Promise<{ data: unknown; error: unknown }>
+        // A whole-set read, ordered — used only by the destinations lookup for
+        // suggest_starter (#284). Supabase's `.order()` returns the awaitable
+        // filter builder, so this resolves to every matching row.
+        order: (
+          column: string,
+          opts?: { ascending?: boolean },
+        ) => Promise<{ data: unknown; error: unknown }>
       }
     }
   }
@@ -66,6 +84,15 @@ export interface HandlerDeps {
    * a crash on the first request.
    */
   provider?: ModelProvider
+  /**
+   * Nearby places around a point, for suggest_starter (#284). Injected because
+   * the lookup needs a provider key the runtime holds (the same Geoapify key
+   * #256 already uses — this adds no new credential), and because a test must be
+   * able to supply a fixture instead of a network. Absent means no place lookup
+   * is available here, which degrades a starter suggestion to "nothing to
+   * suggest" — never a crash, and never a widened prompt.
+   */
+  nearby?: (center: { lat: number; lon: number }) => Promise<NearbyPlace[]>
   /** Injected so tests are not clock-dependent. */
   now?: () => Date
 }
@@ -234,6 +261,10 @@ export async function handleAiRequest(
   // 5. Dispatch.
   if (request.intent === 'parse_booking') {
     return parseBooking(deps, request.tripId, request.text)
+  }
+
+  if (request.intent === 'suggest_starter') {
+    return suggestStarter(deps, request.tripId, request.day)
   }
 
   return improveDay(deps, request.tripId, request.day)
@@ -543,6 +574,238 @@ function suggestion(
         baseline: plans.baseline,
         notes: plans.notes,
         excluded: plans.excluded,
+      },
+      usage,
+    },
+  }
+}
+
+/* ── suggest_starter (#284) ──────────────────────────────────────────────── */
+
+/** The day context this intent reads: the leg it falls in, its items (which
+ *  must be empty for the day to be "blank"), and the group's preferences. */
+interface StarterContext {
+  items?: unknown[]
+  leg?: { name?: string | null } | null
+  preferences?: PromptPreferences | null
+}
+
+/** One destinations row, as the caller-scoped read returns it. */
+interface DestinationRow {
+  name?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  start_date?: string | null
+  end_date?: string | null
+  position?: number | null
+}
+
+/** A found place's bucket → a human word for the prompt's candidate list. */
+const KIND_LABEL: Record<PoiCategory, string> = { see: 'sight', eat: 'food', drink: 'drinks' }
+
+const nothingStarter = (message: string): HandlerResult => ({
+  status: 200,
+  body: {
+    ok: true,
+    intent: 'suggest_starter',
+    result: { status: 'nothing', message },
+    usage: { inputTokens: 0, outputTokens: 0 },
+  },
+})
+
+/**
+ * The coordinates to look for places around: the leg (#197) containing the day.
+ *
+ * Read as the caller, so RLS is the boundary exactly as everywhere else. Prefers
+ * the leg whose date range contains the day and that carries geocoded
+ * coordinates; falls back to any destination with coordinates, so a
+ * single-destination trip whose one leg is undated still grounds a suggestion in
+ * the right city. Returns null — and the feature degrades to "add where you'll
+ * be" — when nothing has coordinates, which is the honest answer: without a place
+ * to search around, there is nothing to suggest. Never throws.
+ */
+async function legCenter(
+  deps: HandlerDeps,
+  tripId: string,
+  day: string,
+): Promise<{ name: string | null; lat: number; lon: number } | null> {
+  try {
+    const { data, error } = await deps.db
+      .from('destinations')
+      .select('name, latitude, longitude, start_date, end_date, position')
+      .eq('trip_id', tripId)
+      .order('position')
+    if (error || !Array.isArray(data)) return null
+    const rows = (data as DestinationRow[]).filter(
+      (r) => typeof r.latitude === 'number' && typeof r.longitude === 'number',
+    )
+    const covering = rows.find(
+      (r) => r.start_date && r.start_date <= day && (r.end_date ?? r.start_date)! >= day,
+    )
+    const chosen = covering ?? rows[0]
+    if (!chosen) return null
+    return { name: chosen.name ?? null, lat: chosen.latitude as number, lon: chosen.longitude as number }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * suggest_starter (#284): propose a first day for a day that has nothing in it.
+ *
+ * The whole expensive half runs before any model is considered, exactly as
+ * improve_day does. The day context is read as the caller, the leg gives a place
+ * to search around, the nearby lookup returns real places, and `starter.ts`
+ * ranks them against the group's stated preferences into a closed candidate set.
+ * Only then — if there is genuinely a set worth choosing from — is a model asked
+ * which four to six make a coherent day, and why.
+ *
+ * Every path records a usage row, including the free ones: reading a day is an
+ * authenticated round trip whether or not a model runs, and the per-trip quota is
+ * the only bound on what a leaked invite link can drive. The `:reason` suffixes
+ * tell the branches apart in the ledger (#296), the same as improve_day.
+ *
+ * AUTHORIZATION is a property of where the candidates came from. Every place was
+ * fetched from the leg's own coordinates and every applied item goes through the
+ * ordinary itinerary create the caller could perform by hand — so, like
+ * improve_day, there is no proposed action the caller was not already entitled to
+ * take. The model only ever narrows and orders that set.
+ */
+async function suggestStarter(
+  deps: HandlerDeps,
+  tripId: string,
+  day: string,
+): Promise<HandlerResult> {
+  const feature = 'suggest_starter'
+  const free = { model: '', inputTokens: 0, outputTokens: 0 }
+
+  let context: StarterContext | null
+  try {
+    const { data, error } = await deps.db.rpc('get_ai_day_context', { p_trip_id: tripId, p_day: day })
+    if (error || !data) {
+      return refuse('unavailable', 'Could not read that day just now. Please try again.', 503)
+    }
+    context = data as StarterContext
+  } catch {
+    return refuse('unavailable', 'Could not read that day just now. Please try again.', 503)
+  }
+
+  // A day that already has items is improve_day's territory, not this one. The
+  // client only offers this on an empty day, but the server does not take that on
+  // trust — a suggestion for a day that is not actually blank would be wrong.
+  const items = Array.isArray(context?.items) ? context.items : []
+  if (items.length > 0) {
+    await record(deps, { tripId, feature: `${feature}:not_empty`, outcome: 'ok', ...free })
+    return nothingStarter('This day already has plans — use “Improve this day” instead.')
+  }
+
+  // No coordinates to search around: the honest answer is that we cannot suggest
+  // a day without knowing where it is. Deliberately not a refusal — it is a
+  // useful, free result that points the group at what to add (a destination).
+  const center = await legCenter(deps, tripId, day)
+  if (!center) {
+    await record(deps, { tripId, feature: `${feature}:no_location`, outcome: 'ok', ...free })
+    return nothingStarter('Add where you’ll be on this day (a trip destination) to get suggestions.')
+  }
+  const placeName = context?.leg?.name ?? center.name
+
+  // No place lookup available (no key / disabled), or it found nothing. Either
+  // way there is nothing to build a day from, and the prompt is never widened to
+  // compensate — a retrieval failure narrows, per §6.
+  let places: NearbyPlace[] = []
+  if (deps.nearby) {
+    try {
+      places = await deps.nearby({ lat: center.lat, lon: center.lon })
+    } catch {
+      places = []
+    }
+  }
+  const candidates = assembleStarterCandidates(places, context?.preferences ?? null)
+  if (candidates.length < STARTER_MIN_PICKS) {
+    await record(deps, { tripId, feature: `${feature}:no_places`, outcome: 'ok', ...free })
+    return nothingStarter('Couldn’t find enough places nearby to suggest a day just now.')
+  }
+
+  // Exactly as improve_day: no binding degrades the explanation, not the feature.
+  // The candidates are ours and cost nothing, so a runtime with no model still
+  // proposes a coherent default day — recorded under a distinct reason so a dead
+  // model path is not confused with the deterministic-first design working.
+  if (!deps.provider) {
+    const chosen = pickTopStarter(candidates, TARGET_STARTER_PLACES)
+    await record(deps, { tripId, feature: `${feature}:no_provider`, outcome: 'ok', ...free })
+    return starterSuggestion(chosen, computedStarterReason(chosen, placeName), 'computed', placeName, candidates.length, {
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+  }
+
+  const promptCandidates: PromptStarterCandidate[] = candidates.map((c) => ({
+    id: c.id,
+    name: c.name,
+    kind: KIND_LABEL[c.category] ?? c.category,
+  }))
+  const args = suggestStarterPrompt({
+    day,
+    placeName,
+    candidates: promptCandidates,
+    preferences: context?.preferences ?? null,
+  })
+  const model = MODELS[args.tier]
+  const modelFeature = `${feature}:model`
+
+  let completion
+  try {
+    completion = await deps.provider.complete(args)
+  } catch {
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
+    const chosen = pickTopStarter(candidates, TARGET_STARTER_PLACES)
+    return starterSuggestion(chosen, computedStarterReason(chosen, placeName), 'computed', placeName, candidates.length, {
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+  }
+
+  const usage = { inputTokens: completion.inputTokens, outputTokens: completion.outputTokens }
+  const usageRow = { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
+
+  const picked = StarterPickResult.safeParse(completion.json)
+  // Only ids we offered survive; an invented one is dropped. If too few remain to
+  // make a day, the model's pick is treated as a failure and the computed default
+  // ships instead — the same fall-through improve_day uses for a bad plan id.
+  const chosen = picked.success ? resolveStarterPicks(picked.data.placeIds, candidates) : []
+  if (!picked.success || chosen.length < STARTER_MIN_PICKS) {
+    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
+    const fallback = pickTopStarter(candidates, TARGET_STARTER_PLACES)
+    return starterSuggestion(fallback, computedStarterReason(fallback, placeName), 'computed', placeName, candidates.length, usage)
+  }
+
+  await record(deps, { tripId, feature: modelFeature, outcome: 'ok', ...usageRow })
+  return starterSuggestion(chosen, picked.data.reason, 'model', placeName, candidates.length, usage)
+}
+
+/** Shape a chosen, ordered set of places into the starter preview card. */
+function starterSuggestion(
+  chosen: NearbyPlace[],
+  reason: string,
+  reasonSource: ReasonSource,
+  placeName: string | null,
+  considered: number,
+  usage: { inputTokens: number; outputTokens: number },
+): HandlerResult {
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      intent: 'suggest_starter',
+      result: {
+        status: 'suggested',
+        reason,
+        reasonSource,
+        placeName,
+        // How many candidates were weighed, so the card can say "chosen from 10
+        // nearby places" — a suggestion that hides its pool reads as an oracle.
+        considered,
+        items: buildStarterPlan(chosen),
       },
       usage,
     },
