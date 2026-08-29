@@ -17,6 +17,8 @@ import {
   suggestedParticipants,
   presentOn,
   hasPresenceDates,
+  absentOn,
+  describeAbsence,
 } from '../src/lib/presence.ts'
 
 // Minimal member rows: the helpers read only id / arrives_on / departs_on.
@@ -71,4 +73,75 @@ test('null trip bounds leave a dated member unbounded on that side', () => {
   assert.deepEqual(suggestedParticipants(members, '2026-06-04', openTrip), ['ana'])
   // On/after: both.
   assert.deepEqual(suggestedParticipants(members, '2026-06-05', openTrip), ['ana', 'ben'])
+})
+
+// --- absentOn / describeAbsence: the itinerary miss-flag (#303) ---
+
+// Named members so the flag wording can be asserted. arrives_on / departs_on
+// mirror the `member` helper positions.
+function named(id, name, arrives_on = null, departs_on = null) {
+  return { id, display_name: name, arrives_on, departs_on }
+}
+
+test('an undated member is never absent — no flag on a dateless trip', () => {
+  const members = [named('a', 'Ana'), named('b', 'Ben')]
+  const absence = absentOn(members, '2026-06-05')
+  assert.deepEqual(absence, { arriving: [], departed: [] })
+  assert.equal(describeAbsence(absence), null)
+})
+
+test('absentOn splits by reason using only the member’s own dates', () => {
+  const members = [
+    named('ana', 'Ana'), // undated → present, never flagged
+    named('ben', 'Ben', '2026-06-06'), // arrives Saturday
+    named('pri', 'Priya', null, '2026-06-05'), // leaves after Friday
+  ]
+  // Thursday: Ben not here yet; Priya still present (leaves Fri).
+  const thu = absentOn(members, '2026-06-04')
+  assert.deepEqual(thu.arriving.map((m) => m.id), ['ben'])
+  assert.deepEqual(thu.departed.map((m) => m.id), [])
+  // Sunday: Ben has arrived; Priya has left.
+  const sun = absentOn(members, '2026-06-07')
+  assert.deepEqual(sun.arriving.map((m) => m.id), [])
+  assert.deepEqual(sun.departed.map((m) => m.id), ['pri'])
+})
+
+test('a member set to arrive only is never "left" after the trip window', () => {
+  // departs_on null = present to the end, so a late day flags nobody as gone.
+  const members = [named('ben', 'Ben', '2026-06-05')]
+  assert.deepEqual(absentOn(members, '2026-12-31'), { arriving: [], departed: [] })
+})
+
+test('describeAbsence reads like a person, singular and plural', () => {
+  assert.equal(
+    describeAbsence({ arriving: [named('s', 'Sam', '2026-06-06')], departed: [] }),
+    "Sam isn't here yet",
+  )
+  assert.equal(
+    describeAbsence({ arriving: [], departed: [named('p', 'Priya', null, '2026-06-04')] }),
+    'Priya has left',
+  )
+  assert.equal(
+    describeAbsence({
+      arriving: [named('s', 'Sam'), named('a', 'Alex')],
+      departed: [],
+    }),
+    "Sam and Alex aren't here yet",
+  )
+  // Both reasons on one day are joined into a single quiet line.
+  assert.equal(
+    describeAbsence({
+      arriving: [named('s', 'Sam')],
+      departed: [named('p', 'Priya'), named('j', 'Jo')],
+    }),
+    "Sam isn't here yet · Priya and Jo have left",
+  )
+  // Three names use the Oxford-free "a, b and c" form.
+  assert.equal(
+    describeAbsence({
+      arriving: [named('s', 'Sam'), named('a', 'Alex'), named('k', 'Kai')],
+      departed: [],
+    }),
+    "Sam, Alex and Kai aren't here yet",
+  )
 })

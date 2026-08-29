@@ -58,6 +58,63 @@ export function suggestedParticipants(
   return present.length > 0 ? present : all
 }
 
+/** The members absent on `day`, split by why — some have not arrived yet, some
+ *  have already left. Used by the itinerary miss-flag (#303, epic #285 slice 3)
+ *  to name who would miss an item scheduled that day. */
+export interface DayAbsence {
+  /** Members whose stated arrival is after `day` — "not here yet". */
+  arriving: Member[]
+  /** Members whose stated departure is before `day` — "already left". */
+  departed: Member[]
+}
+
+/**
+ * Who is absent on `day` and why, driven **only** by a member's own explicitly
+ * stated dates — never by the trip's range. A member with no `arrives_on` and no
+ * `departs_on` is present every day and is never returned, so an item on a trip
+ * where nobody set dates produces no flag (the epic's "unset = present" rule).
+ *
+ * A member with only one bound set is unbounded on the other side: an
+ * `arrives_on` with null `departs_on` can be "not here yet" but never "left".
+ * Roster order is preserved so a flag's names don't reshuffle between renders.
+ */
+export function absentOn(members: Member[], day: string): DayAbsence {
+  const arriving: Member[] = []
+  const departed: Member[] = []
+  for (const m of members) {
+    if (m.arrives_on && day < m.arrives_on) arriving.push(m)
+    else if (m.departs_on && day > m.departs_on) departed.push(m)
+  }
+  return { arriving, departed }
+}
+
+/** Join names the way a person would: "Sam", "Sam and Priya", "Sam, Priya and
+ *  Alex". Empty in → empty string. */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/**
+ * A quiet, human sentence for a day's absence — "Sam isn't here yet",
+ * "Priya has left", or both joined ("Sam isn't here yet · Priya has left").
+ * Returns null when nobody is absent, so the caller renders no flag at all.
+ * Informational only: it never blocks a save (#303).
+ */
+export function describeAbsence(absence: DayAbsence): string | null {
+  const parts: string[] = []
+  if (absence.arriving.length > 0) {
+    const names = joinNames(absence.arriving.map((m) => m.display_name))
+    parts.push(`${names} ${absence.arriving.length > 1 ? "aren't" : "isn't"} here yet`)
+  }
+  if (absence.departed.length > 0) {
+    const names = joinNames(absence.departed.map((m) => m.display_name))
+    parts.push(`${names} ${absence.departed.length > 1 ? 'have' : 'has'} left`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 /** Members whose explicit arrival is exactly `day` (undated members excluded —
  *  an arrival is only shown when someone actually stated it). */
 export function arrivalsOn(members: Member[], day: string): Member[] {
