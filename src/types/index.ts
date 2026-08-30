@@ -368,6 +368,23 @@ export interface Notification {
   read_at: string | null
 }
 
+/**
+ * A device a member has opted into Web Push on (#267). Trip-scoped and
+ * self-owned: RLS lets a member see and write only their own rows. `p256dh`/
+ * `auth` are the RFC 8291 encryption inputs — public by design (they encrypt
+ * *to* the device; only its in-browser private key decrypts).
+ */
+export interface PushSubscriptionRow {
+  id: string
+  trip_id: string
+  member_id: string
+  endpoint: string
+  p256dh: string
+  auth: string
+  created_at: string
+  updated_at: string
+}
+
 export interface InvitePreview {
   trip_name: string
   destination: string | null
