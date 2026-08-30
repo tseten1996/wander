@@ -237,7 +237,7 @@ function TripsHome() {
             onRetry={() => trips.refetch()}
             isRetrying={trips.isFetching}
           />
-        ) : active.length === 0 ? (
+        ) : active.length === 0 && archived.length === 0 ? (
           <Card className="p-10 text-center">
             <Compass className="mx-auto size-10 text-primary" />
             <p className="mt-4 font-display text-lg font-semibold">
@@ -254,6 +254,10 @@ function TripsHome() {
               </Button>
             )}
           </Card>
+        ) : active.length === 0 ? (
+          // Only archived trips remain — skip the empty-state card (it would
+          // contradict the Archived grid below) and note the empty active list.
+          <p className="text-sm text-muted">No active trips.</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {active.map((t, i) => (
