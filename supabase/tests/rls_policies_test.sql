@@ -636,6 +636,27 @@ select pg_temp.expect_dml('notifications: owner cannot delete another''s (SELECT
 select pg_temp.expect_dml('notifications: recipient can delete own',           'aaaa0000-0000-0000-0000-000000000002', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000001'$$, 1);
 select pg_temp.expect_dml('notifications: the other recipient can delete own', 'aaaa0000-0000-0000-0000-000000000003', false, $$delete from notifications where id='ab170000-0000-4000-8000-000000000002'$$, 1);
 
+-- ── push_subscriptions (#267, epic #181 closed-app slice) — device-private
+--    opt-in store: a member reads/writes ONLY their own rows, and only in a
+--    trip they belong to. No member (owner included) can enumerate another
+--    member's devices, and no one can plant a subscription as someone else. ──
+insert into public.push_subscriptions (id, trip_id, member_id, endpoint, p256dh, auth) values
+  ('ab200000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'https://push.test/f', 'p256dh-f', 'auth-f'),
+  ('ab200000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'https://push.test/g', 'p256dh-g', 'auth-g');
+select pg_temp.expect_count('push_subscriptions: member sees own device',       'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from push_subscriptions where id='ab200000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_count('push_subscriptions: member cannot see another''s',  'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from push_subscriptions where id='ab200000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_count('push_subscriptions: owner cannot see a member''s',  'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from push_subscriptions where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('push_subscriptions: outsider sees none',            'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from push_subscriptions where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('push_subscriptions: cross-trip attacker sees none', 'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from push_subscriptions where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('push_subscriptions: member can opt in as self',       'aaaa0000-0000-0000-0000-000000000002', false, $$insert into push_subscriptions(trip_id, member_id, endpoint, p256dh, auth) values('bbbb0000-0000-0000-0000-000000000001', my_member_id('bbbb0000-0000-0000-0000-000000000001'), 'https://push.test/f2', 'k', 'a')$$, 1);
+select pg_temp.expect_dml('push_subscriptions: member cannot plant on another',  'aaaa0000-0000-0000-0000-000000000002', false, $$insert into push_subscriptions(trip_id, member_id, endpoint, p256dh, auth) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003', 'https://push.test/x', 'k', 'a')$$, -1);
+select pg_temp.expect_dml('push_subscriptions: outsider cannot insert',          'aaaa0000-0000-0000-0000-000000000005', false, $$insert into push_subscriptions(trip_id, member_id, endpoint, p256dh, auth) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002', 'https://push.test/x', 'k', 'a')$$, -1);
+select pg_temp.expect_dml('push_subscriptions: cross-trip attacker cannot insert','aaaa0000-0000-0000-0000-000000000004', false, $$insert into push_subscriptions(trip_id, member_id, endpoint, p256dh, auth) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002', 'https://push.test/x', 'k', 'a')$$, -1);
+select pg_temp.expect_dml('push_subscriptions: member can refresh own',          'aaaa0000-0000-0000-0000-000000000002', false, $$update push_subscriptions set updated_at=now() where id='ab200000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('push_subscriptions: member cannot touch another''s',  'aaaa0000-0000-0000-0000-000000000002', false, $$update push_subscriptions set updated_at=now() where id='ab200000-0000-4000-8000-000000000002'$$, 0);
+select pg_temp.expect_dml('push_subscriptions: non-owner cannot delete another''s','aaaa0000-0000-0000-0000-000000000003', false, $$delete from push_subscriptions where id='ab200000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('push_subscriptions: member can opt out (delete own)', 'aaaa0000-0000-0000-0000-000000000002', false, $$delete from push_subscriptions where id='ab200000-0000-4000-8000-000000000001'$$, 1);
+
 -- ── error_reports (#57/#170) — write-only telemetry: OWNER-only read of
 --    trip-scoped rows, deploy-level (trip_id NULL) rows readable by no one via
 --    RLS; self-attributed insert; append-only (no update/delete) ────────────

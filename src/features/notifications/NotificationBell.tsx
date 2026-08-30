@@ -3,10 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   AtSign,
   Bell,
+  BellOff,
+  BellRing,
   CalendarClock,
   CheckCheck,
   Inbox,
   ListChecks,
+  Loader2,
   Luggage,
   PiggyBank,
   Timer,
@@ -23,10 +26,14 @@ import { searchAnchorId } from '@/features/search/anchor'
 import { cn, timeAgo } from '@/lib/utils'
 import type { Notification, NotificationType } from '@/types'
 import {
+  PUSH_AVAILABLE,
   unreadCount,
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotifications,
+  usePushDeviceState,
+  usePushOptIn,
+  usePushOptOut,
 } from './api'
 import type { Reminder, ReminderKind } from './reminders'
 import { useReminders } from './useReminders'
@@ -178,6 +185,86 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * "Notify me when the app's closed" — the Web Push opt-in (#267), a footer on
+ * the inbox. Renders only where push is actually available (a supporting
+ * browser AND a configured VAPID key), so by default — no key — it is absent
+ * and the inbox is unchanged. Denied permission shows an explanatory,
+ * non-interactive line rather than a dead toggle, so the app stays fully
+ * functional either way (acceptance criterion 1).
+ *
+ * The control is a single `role="switch"` button (a 44px-tall tap target) with
+ * a token-styled visual toggle inside it — not the Radix Switch, which renders
+ * its own <button> and cannot nest inside this one.
+ */
+function PushOptInRow({ tripId, meId }: { tripId: string; meId: string }) {
+  const state = usePushDeviceState(tripId)
+  const optIn = usePushOptIn(tripId, meId)
+  const optOut = usePushOptOut(tripId, meId)
+
+  const s = state.data
+  if (!PUSH_AVAILABLE || !s) return null
+
+  const denied = s.permission === 'denied'
+  const busy = optIn.isPending || optOut.isPending
+  const checked = s.subscribed
+  const Icon = denied ? BellOff : BellRing
+
+  return (
+    <div className="border-t border-line p-2">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label="Notify me when the app is closed"
+        disabled={busy || denied}
+        onClick={() => (checked ? optOut.mutate() : optIn.mutate())}
+        className={cn(
+          'flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left',
+          'transition-colors hover:bg-sunken focus-visible:bg-sunken focus-visible:outline-none',
+          'disabled:cursor-not-allowed'
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sunken text-muted">
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Icon className="size-4" aria-hidden />
+            )}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-ink">
+              Notify me when the app’s closed
+            </span>
+            <span className="block text-xs text-muted">
+              {denied
+                ? 'Blocked in your browser settings'
+                : 'A push when someone’s waiting on you'}
+            </span>
+          </span>
+        </span>
+        {/* Visual only — the button above is the actual switch. */}
+        <span
+          aria-hidden
+          className={cn(
+            'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+            checked ? 'bg-primary' : 'bg-line-strong',
+            (busy || denied) && 'opacity-50'
+          )}
+        >
+          <span
+            className={cn(
+              'block size-5 rounded-full bg-white shadow-sm transition-transform',
+              checked ? 'translate-x-5' : 'translate-x-0'
+            )}
+          />
+        </span>
+      </button>
+    </div>
+  )
+}
+
+/**
  * The personal inbox in the app shell header: a bell with a badge and a
  * dropdown. It surfaces two kinds of "things that need me":
  *  - **Reminders (#195)** — time-based, derived on the client from cached data
@@ -307,6 +394,8 @@ export function NotificationBell({ className }: { className?: string }) {
             )}
           </div>
         )}
+
+        <PushOptInRow tripId={trip.id} meId={me.id} />
       </PopoverContent>
     </Popover>
   )
