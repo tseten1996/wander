@@ -31,6 +31,7 @@ import {
 import type { Reminder, ReminderKind } from './reminders'
 import { useReminders } from './useReminders'
 import { dismissReminder } from './reminderDismissal'
+import { PushOptIn } from './PushOptIn'
 
 /** Which tab (and icon) each event type deep-links to. */
 const TYPE_META: Record<NotificationType, { tab: string; icon: LucideIcon; verb: string }> = {
@@ -307,6 +308,10 @@ export function NotificationBell({ className }: { className?: string }) {
             )}
           </div>
         )}
+
+        {/* Closed-app delivery opt-in (#267) — self-hides unless Web Push is
+            actually available, so it never shows on an unconfigured build. */}
+        <PushOptIn tripId={trip.id} memberId={me.id} />
       </PopoverContent>
     </Popover>
   )
