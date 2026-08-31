@@ -81,3 +81,50 @@ export interface PersistableMutation {
 export function shouldPersistMutation(mutation: PersistableMutation): boolean {
   return mutation.state.isPaused && isReplayableMutationKey(mutation.options.mutationKey)
 }
+
+/** What the offline banner renders, derived by {@link deriveSyncQueueState}. */
+export interface SyncQueueState {
+  /** How many changes the banner reports as offline-originated. */
+  queued: number
+  /** True while a reconnect flush is in progress — drives the "syncing…" pill. */
+  syncing: boolean
+  /** Latched drain flag to thread back on the next derivation (opaque to callers
+   *  except that the previous value is passed in as `wasDraining`). */
+  draining: boolean
+}
+
+/**
+ * Pure derivation of the offline-sync banner state (#283), split out of the hook
+ * so its one subtle property is pinned by a unit test rather than only
+ * reproducible in a browser: a **normal online toggle is never counted**.
+ *
+ * The bug this fixes (bounced on the first cut): counting every allow-listed
+ * toggle whose `status === 'pending'` also caught an ordinary online tap, which
+ * is `pending` (but *not paused*) for its Supabase round-trip — so every wifi
+ * tap briefly flashed the "syncing…" pill.
+ *
+ * `pausedFlags` is `isPaused` for each in-flight allow-listed toggle:
+ * - **Offline queue depth** = the paused ones. A live online tap is never
+ *   paused, so it never counts here.
+ * - **`draining`** latches the reconnect flush: it arms while anything sits
+ *   paused and clears only once the device is online with nothing allow-listed
+ *   in flight — so "syncing N…" tracks the queue draining, not raw pending. A
+ *   fresh online tap after the queue has drained can't re-arm it (nothing was
+ *   paused), so it leaves the banner hidden.
+ */
+export function deriveSyncQueueState(
+  pausedFlags: readonly boolean[],
+  online: boolean,
+  wasDraining: boolean,
+): SyncQueueState {
+  const inFlight = pausedFlags.length
+  const pausedCount = pausedFlags.reduce((n, paused) => (paused ? n + 1 : n), 0)
+
+  const draining =
+    pausedCount > 0 ? true : online && inFlight === 0 ? false : wasDraining
+
+  const syncing = online && draining && inFlight > 0
+  const queued = syncing ? inFlight : pausedCount
+
+  return { queued, syncing, draining }
+}

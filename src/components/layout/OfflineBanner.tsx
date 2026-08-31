@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from '@/lib/motion'
 import { CloudOff, RefreshCw } from 'lucide-react'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
-import { useSyncQueueCount } from '@/hooks/useSyncQueue'
+import { useSyncQueue } from '@/hooks/useSyncQueue'
 
 /**
  * A read-only/offline indicator (issue #55) that also reports the offline sync
@@ -20,12 +20,13 @@ import { useSyncQueueCount } from '@/hooks/useSyncQueue'
  */
 export function OfflineBanner() {
   const online = useOnlineStatus()
-  const queued = useSyncQueueCount()
+  const { queued, syncing } = useSyncQueue()
   const reduce = useReducedMotion()
 
-  const visible = !online || queued > 0
-  // Online with a draining queue = actively syncing what was queued offline.
-  const syncing = online && queued > 0
+  // `syncing` is the reconnect flush (online, queue draining); offline we show
+  // the paused-queue depth. A normal online tap is neither, so the banner stays
+  // hidden for it. See deriveSyncQueueState (#283).
+  const visible = !online || syncing
   const countLabel = `${queued} ${queued === 1 ? 'change' : 'changes'}`
 
   return (
