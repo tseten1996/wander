@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { sendPushForNotifications } from '@/features/notifications/pushSend'
 import type { NotificationType } from '@/types'
 
 interface NotifyParams {
@@ -39,19 +40,29 @@ export function notify({
   ]
   if (recipients.length === 0) return
 
+  // Ids are minted here rather than read back: the actor is not the recipient of
+  // any of these rows, so RLS would (correctly) return nothing from a
+  // `.select()` on them. Knowing the ids up front is what lets the push send path
+  // address the rows it just wrote without ever reading another member's inbox.
+  const rows = recipients.map((recipient_id) => ({
+    id: crypto.randomUUID(),
+    trip_id: tripId,
+    recipient_id,
+    actor_id: actorId,
+    type,
+    entity_id: entityId,
+    title,
+  }))
+
   void supabase
     .from('notifications')
-    .insert(
-      recipients.map((recipient_id) => ({
-        trip_id: tripId,
-        recipient_id,
-        actor_id: actorId,
-        type,
-        entity_id: entityId,
-        title,
-      }))
-    )
+    .insert(rows)
     .then(({ error }) => {
-      if (error) console.warn('notify failed:', error.message)
+      if (error) {
+        console.warn('notify failed:', error.message)
+        return
+      }
+      // Fire-and-forget closed-app delivery (#309); a no-op when unconfigured.
+      sendPushForNotifications(rows.map((r) => r.id))
     })
 }

@@ -16,6 +16,7 @@ import { AvatarStack, MemberAvatar } from '@/components/ui/avatar'
 import { LivePresence } from '@/components/layout/LivePresence'
 import { TripDayPresence } from '@/components/layout/TripDayPresence'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
+import { useConsumePushNotification } from '@/features/notifications/useConsumePush'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PageLoader, EmptyState } from '@/components/ui/misc'
@@ -120,6 +121,8 @@ function Shell() {
   const [searchOpen, setSearchOpen] = React.useState(false)
   const openSearch = React.useCallback(() => setSearchOpen(true), [])
   useSearchHotkey(openSearch)
+  // If the app was opened from a Web Push (#309), mark that inbox row read.
+  useConsumePushNotification(trip.id)
 
   const mobileItems = NAV.filter((n) => MOBILE_NAV.includes(n.to))
   const overflowItems = NAV.filter((n) => !MOBILE_NAV.includes(n.to))
