@@ -51,7 +51,7 @@ type ChecklistFormValues = z.input<typeof checklistSchema>
 
 function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
   const { trip, me, isOwner, membersById } = useTripContext()
-  const toggleDone = useToggleDone(trip.id, me.id)
+  const toggleDone = useToggleDone()
   const deleteItem = useDeleteChecklistItem(trip.id)
   const [editOpen, setEditOpen] = React.useState(false)
 
@@ -73,7 +73,15 @@ function ItemRow({ item, index }: { item: ChecklistItem; index: number }) {
     >
       <Checkbox
         checked={item.done}
-        onCheckedChange={() => toggleDone.mutate(item)}
+        onCheckedChange={() =>
+          toggleDone.mutate({
+            tripId: trip.id,
+            id: item.id,
+            done: !item.done,
+            memberId: me.id,
+            title: item.title,
+          })
+        }
         aria-label={`Mark "${item.title}" ${item.done ? 'not done' : 'done'}`}
         className="mt-0.5"
       />

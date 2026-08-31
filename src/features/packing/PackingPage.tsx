@@ -37,7 +37,7 @@ function CategorySection({
 }) {
   const { trip, me, isOwner } = useTripContext()
   const addItem = useAddPackingItem(trip.id, me.id)
-  const togglePacked = useTogglePacked(trip.id)
+  const togglePacked = useTogglePacked()
   const deleteItem = useDeletePackingItem(trip.id)
   const [draft, setDraft] = React.useState('')
   const [draftError, setDraftError] = React.useState<string | null>(null)
@@ -98,7 +98,9 @@ function CategorySection({
               >
                 <Checkbox
                   checked={item.packed}
-                  onCheckedChange={() => togglePacked.mutate(item)}
+                  onCheckedChange={() =>
+                    togglePacked.mutate({ tripId: trip.id, id: item.id, packed: !item.packed })
+                  }
                   aria-label={`Mark ${item.name} ${item.packed ? 'unpacked' : 'packed'}`}
                 />
                 <span

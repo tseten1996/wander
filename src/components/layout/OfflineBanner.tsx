@@ -1,23 +1,37 @@
 import { AnimatePresence, motion, useReducedMotion } from '@/lib/motion'
-import { CloudOff } from 'lucide-react'
+import { CloudOff, RefreshCw } from 'lucide-react'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
+import { useSyncQueue } from '@/hooks/useSyncQueue'
 
 /**
- * A read-only/offline indicator (issue #55). When the device drops offline the
- * persisted TanStack Query cache still renders the last-fetched trip data, but
- * nothing can be saved — this pill makes that state explicit.
+ * A read-only/offline indicator (issue #55) that also reports the offline sync
+ * queue (issue #283). The persisted TanStack Query cache renders the last
+ * trip data while offline; most writes still can't be saved, but a packing or
+ * checklist toggle is queued and flushed on reconnect. This pill distinguishes
+ * "showing saved data" from "N changes waiting to sync".
  *
  * Rendered once at the app root so it covers the home list and every trip
  * page. It sits above the mobile tab bar and is announced politely for screen
  * readers; `no-print` keeps it out of the print-to-PDF summary.
+ *
+ * It shows whenever the device is offline OR the sync queue is non-empty — so
+ * it stays visible after reconnect just long enough to flush, then clears when
+ * the queue drains.
  */
 export function OfflineBanner() {
   const online = useOnlineStatus()
+  const { queued, syncing } = useSyncQueue()
   const reduce = useReducedMotion()
+
+  // `syncing` is the reconnect flush (online, queue draining); offline we show
+  // the paused-queue depth. A normal online tap is neither, so the banner stays
+  // hidden for it. See deriveSyncQueueState (#283).
+  const visible = !online || syncing
+  const countLabel = `${queued} ${queued === 1 ? 'change' : 'changes'}`
 
   return (
     <AnimatePresence>
-      {!online && (
+      {visible && (
         <motion.div
           role="status"
           aria-live="polite"
@@ -28,11 +42,27 @@ export function OfflineBanner() {
           className="no-print pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-50 flex justify-center px-4 md:bottom-5"
         >
           <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-line bg-elevated px-4 py-2 text-sm font-medium text-ink shadow-lift">
-            <CloudOff className="size-4 shrink-0 text-accent" aria-hidden />
-            <span>
-              Offline — showing saved data.{' '}
-              <span className="text-muted">Changes can’t be saved until you reconnect.</span>
-            </span>
+            {syncing ? (
+              <>
+                <RefreshCw
+                  className={reduce ? 'size-4 shrink-0 text-accent' : 'size-4 shrink-0 animate-spin text-accent'}
+                  aria-hidden
+                />
+                <span>Back online — syncing {countLabel}…</span>
+              </>
+            ) : (
+              <>
+                <CloudOff className="size-4 shrink-0 text-accent" aria-hidden />
+                <span>
+                  Offline — showing saved data.{' '}
+                  {queued > 0 ? (
+                    <span className="text-muted">{countLabel} waiting to sync.</span>
+                  ) : (
+                    <span className="text-muted">Most changes can’t be saved until you reconnect.</span>
+                  )}
+                </span>
+              </>
+            )}
           </div>
         </motion.div>
       )}
