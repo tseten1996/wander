@@ -31,6 +31,11 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // Never cache Supabase API calls — data must stay live
         navigateFallbackDenylist: [/supabase\.co/],
+        // Web Push handlers (#309). Imported into the generated worker so they
+        // ride along with autoUpdate untouched; the path is relative to the
+        // worker's own URL, so it resolves under any static-host subpath. The
+        // matching /api/push endpoint and VAPID keys are what actually send.
+        importScripts: ['push-sw.js'],
       },
     }),
   ],
