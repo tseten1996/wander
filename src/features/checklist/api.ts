@@ -1,9 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
+import {
+  CHECKLIST_TOGGLE_MUTATION_KEY,
+  type ToggleDoneVars,
+} from '@/lib/offlineSync'
 import type { ChecklistItem } from '@/types'
 
 /** The trip's checklist rows, position- then age-ordered. Exported as a plain
@@ -105,32 +109,60 @@ export function useUpdateChecklistItem(tripId: string, memberId: string) {
   })
 }
 
-export function useToggleDone(tripId: string, memberId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (item: ChecklistItem) => {
-      const { error } = await supabase
-        .from('checklist_items')
-        .update({ done: !item.done })
-        .eq('id', item.id)
+/** Rollback context: the checklist rows as they were before the optimistic flip. */
+interface ToggleDoneContext {
+  previous?: ChecklistItem[]
+}
+
+/**
+ * Register the checklist-toggle mutation as offline-replayable (#283). Called
+ * once at startup (src/main.tsx) **before** the persisted cache hydrates, so a
+ * toggle queued offline in a previous session — restored paused from disk — has
+ * a `mutationFn`, optimistic apply, and rollback to resume with even though no
+ * ChecklistPage is mounted. `memberId`/`title` ride in the variables (not a
+ * React closure) because that is all a resumed mutation has. The write lives
+ * here so this api.ts stays the only module that touches `checklist_items`.
+ */
+export function registerChecklistMutationDefaults(queryClient: QueryClient): void {
+  queryClient.setMutationDefaults(CHECKLIST_TOGGLE_MUTATION_KEY, {
+    // 'online' (not the app-wide 'always') so this write PAUSES offline and is
+    // queued, persisted, and resumed on reconnect instead of erroring.
+    networkMode: 'online',
+    mutationFn: async ({ id, done, tripId, memberId, title }: ToggleDoneVars) => {
+      const { error } = await supabase.from('checklist_items').update({ done }).eq('id', id)
       if (error) throw error
-      if (!item.done) logActivity(tripId, memberId, 'completed', item.title)
+      // Log the completion only when the write actually lands (on reconnect, for
+      // a queued toggle) and only for done→true, matching the pre-#283 behaviour.
+      if (done) logActivity(tripId, memberId, 'completed', title)
     },
     // Optimistic toggle — checkboxes must feel instant
-    onMutate: async (item) => {
+    onMutate: async ({ tripId, id, done }: ToggleDoneVars): Promise<ToggleDoneContext> => {
       await queryClient.cancelQueries({ queryKey: ['checklist_items', tripId] })
       const previous = queryClient.getQueryData<ChecklistItem[]>(['checklist_items', tripId])
+      // Absolute target, not a flip: idempotent on resume / double queue.
       queryClient.setQueryData<ChecklistItem[]>(['checklist_items', tripId], (old) =>
-        (old ?? []).map((i) => (i.id === item.id ? { ...i, done: !i.done } : i))
+        (old ?? []).map((i) => (i.id === id ? { ...i, done } : i))
       )
       return { previous }
     },
-    onError: (err, _item, ctx) => {
-      if (ctx?.previous) queryClient.setQueryData(['checklist_items', tripId], ctx.previous)
+    onError: (err, { tripId }: ToggleDoneVars, ctx) => {
+      const context = ctx as ToggleDoneContext | undefined
+      if (context?.previous) queryClient.setQueryData(['checklist_items', tripId], context.previous)
       toast.error(friendlyError(err, 'Could not update that task'))
     },
-    onSettled: () =>
+    onSettled: (_data, _err, { tripId }: ToggleDoneVars) =>
       queryClient.invalidateQueries({ queryKey: ['checklist_items', tripId] }),
+  })
+}
+
+/**
+ * Toggle a checklist item's `done` flag. Behaviour lives in the defaults above
+ * so a resumed offline write and a live tap share one path. Pass the **target**
+ * value, not the item, so the queued write is idempotent on replay.
+ */
+export function useToggleDone() {
+  return useMutation<void, Error, ToggleDoneVars, ToggleDoneContext>({
+    mutationKey: CHECKLIST_TOGGLE_MUTATION_KEY,
   })
 }
 

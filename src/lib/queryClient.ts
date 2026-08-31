@@ -29,6 +29,17 @@ export const queryClient = new QueryClient({
       gcTime: PERSIST_MAX_AGE, // keep cached rows long enough to persist for offline
       retry: 1,
       refetchOnWindowFocus: true,
+      // Default networkMode ('online') would *pause* every read offline; that is
+      // fine — the persisted cache renders the last snapshot instead of erroring.
+    },
+    mutations: {
+      // Mutations, by contrast, must FAIL visibly offline (a friendlyError
+      // toast) rather than silently pause and auto-fire on reconnect — the only
+      // offline writes we deliberately queue are the two toggles in
+      // src/lib/offlineSync.ts, which opt back into the pausing 'online' mode
+      // per-mutation. 'always' here means every other mutation attempts the
+      // write, throws while offline, and surfaces through onError. (#283)
+      networkMode: 'always',
     },
   },
 })
@@ -62,6 +73,11 @@ export const persister = createSyncStoragePersister({
  * subscription re-persist one more (now-empty) snapshot up to PERSIST_THROTTLE
  * later, so we remove the client immediately AND once more past that window —
  * leaving not even an empty snapshot at rest.
+ *
+ * `queryClient.clear()` empties the mutation cache too, so any packing/checklist
+ * toggles queued offline (#283) are dropped here alongside the query data — one
+ * account's unsynced writes can never replay under the next account that signs
+ * in on a shared browser.
  */
 /** Handle for the trailing purge timer, so a new session can cancel it. */
 let pendingPurgeTimer: number | undefined

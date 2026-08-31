@@ -1,7 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
+import {
+  PACKING_TOGGLE_MUTATION_KEY,
+  type TogglePackedVars,
+} from '@/lib/offlineSync'
 import type { PackingCategory, PackingItem } from '@/types'
 
 export function usePacking(tripId: string) {
@@ -43,30 +47,57 @@ export function useAddPackingItem(tripId: string, memberId: string) {
   })
 }
 
-export function useTogglePacked(tripId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (item: PackingItem) => {
-      const { error } = await supabase
-        .from('packing_items')
-        .update({ packed: !item.packed })
-        .eq('id', item.id)
+/** Rollback context: the packing rows as they were before the optimistic flip. */
+interface TogglePackedContext {
+  previous?: PackingItem[]
+}
+
+/**
+ * Register the packing-toggle mutation as offline-replayable (#283). Called once
+ * at startup (src/main.tsx) **before** the persisted cache hydrates, so a toggle
+ * that was queued offline in a previous session — restored paused from disk —
+ * has a `mutationFn`, optimistic apply, and rollback to resume with even though
+ * no PackingPage is mounted. The whole write lives here so this api.ts stays the
+ * only module that touches `packing_items` in Supabase.
+ */
+export function registerPackingMutationDefaults(queryClient: QueryClient): void {
+  queryClient.setMutationDefaults(PACKING_TOGGLE_MUTATION_KEY, {
+    // 'online' (not the app-wide 'always') so this write PAUSES offline and is
+    // queued, persisted, and resumed on reconnect instead of erroring.
+    networkMode: 'online',
+    mutationFn: async ({ id, packed }: TogglePackedVars) => {
+      const { error } = await supabase.from('packing_items').update({ packed }).eq('id', id)
       if (error) throw error
     },
-    onMutate: async (item) => {
+    onMutate: async ({ tripId, id, packed }: TogglePackedVars): Promise<TogglePackedContext> => {
       await queryClient.cancelQueries({ queryKey: ['packing_items', tripId] })
       const previous = queryClient.getQueryData<PackingItem[]>(['packing_items', tripId])
+      // Absolute target, not a flip: re-running onMutate on resume (or a double
+      // queue) is idempotent and converges even if the row changed meanwhile.
       queryClient.setQueryData<PackingItem[]>(['packing_items', tripId], (old) =>
-        (old ?? []).map((i) => (i.id === item.id ? { ...i, packed: !i.packed } : i))
+        (old ?? []).map((i) => (i.id === id ? { ...i, packed } : i))
       )
       return { previous }
     },
-    onError: (err, _v, ctx) => {
-      if (ctx?.previous) queryClient.setQueryData(['packing_items', tripId], ctx.previous)
+    onError: (err, { tripId }: TogglePackedVars, ctx) => {
+      const context = ctx as TogglePackedContext | undefined
+      if (context?.previous) queryClient.setQueryData(['packing_items', tripId], context.previous)
       toast.error(friendlyError(err, 'Could not update that item'))
     },
-    onSettled: () =>
+    onSettled: (_data, _err, { tripId }: TogglePackedVars) =>
       queryClient.invalidateQueries({ queryKey: ['packing_items', tripId] }),
+  })
+}
+
+/**
+ * Toggle a packing item's `packed` flag. The behaviour lives entirely in the
+ * defaults registered above (so a resumed offline write and a live tap share one
+ * code path); the hook just binds the key. Pass the **target** value, not the
+ * item, so the queued write is idempotent on replay.
+ */
+export function useTogglePacked() {
+  return useMutation<void, Error, TogglePackedVars, TogglePackedContext>({
+    mutationKey: PACKING_TOGGLE_MUTATION_KEY,
   })
 }
 

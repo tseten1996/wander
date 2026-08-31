@@ -10,6 +10,9 @@ import { ScrollToTop } from '@/components/layout/ScrollToTop'
 import { InstallNudge } from '@/components/layout/InstallNudge'
 import { UpdateNudge } from '@/components/layout/UpdateNudge'
 import { queryClient, persister, PERSIST_MAX_AGE, PERSIST_BUSTER } from '@/lib/queryClient'
+import { shouldPersistMutation } from '@/lib/offlineSync'
+import { registerPackingMutationDefaults } from '@/features/packing/api'
+import { registerChecklistMutationDefaults } from '@/features/checklist/api'
 import { initErrorReporting } from '@/lib/errorReporting'
 import App from './App'
 import './index.css'
@@ -17,6 +20,15 @@ import './index.css'
 // Register global error telemetry (#57) before the app mounts so a crash during
 // the very first render still gets a chance to be reported.
 initErrorReporting()
+
+// Register the offline-replayable toggle defaults (#283) BEFORE the persisted
+// cache hydrates below. A packing/checklist toggle queued offline in a previous
+// session is restored as a paused mutation keyed by its mutationKey; it can only
+// resume if a matching setMutationDefaults (with the mutationFn) already exists.
+// These api modules are tiny and eagerly imported here on purpose — the heavy,
+// lazy-loaded part of each feature is its page component, not its api.ts.
+registerPackingMutationDefaults(queryClient)
+registerChecklistMutationDefaults(queryClient)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -26,11 +38,21 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         persister,
         maxAge: PERSIST_MAX_AGE,
         buster: PERSIST_BUSTER,
-        // Only persist settled, successful reads — never in-flight or errored
-        // queries, so a failed offline fetch can't overwrite good cached data.
         dehydrateOptions: {
+          // Only persist settled, successful reads — never in-flight or errored
+          // queries, so a failed offline fetch can't overwrite good cached data.
           shouldDehydrateQuery: (query) => query.state.status === 'success',
+          // Persist only the two allow-listed toggles, and only while paused
+          // (never sent) — so a queued offline tap survives a reload, and no
+          // other mutation is ever silently written to disk (#283).
+          shouldDehydrateMutation: shouldPersistMutation,
         },
+      }}
+      // After the cache is restored, flush any toggles that were queued offline
+      // and persisted. If still offline they stay paused; onlineManager resumes
+      // them automatically on reconnect (#283).
+      onSuccess={() => {
+        void queryClient.resumePausedMutations()
       }}
     >
       <AuthProvider>
