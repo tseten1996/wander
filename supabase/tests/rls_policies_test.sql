@@ -701,6 +701,35 @@ select pg_temp.expect_dml('comments: non-author member cannot delete another''s'
 select pg_temp.expect_dml('comments: author can delete own',                   'aaaa0000-0000-0000-0000-000000000003', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000002'$$, 1);
 select pg_temp.expect_dml('comments: owner can delete a member comment',       'aaaa0000-0000-0000-0000-000000000001', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000001'$$, 1);
 
+-- ── trip_photos (#294, epic #205 slice 4) — direct-upload gallery pointer into
+--    the private chat-images bucket. Trust shape (20260825142200_trip_photos.sql):
+--    member-read, self-attributed insert (member_id = my_member_id), uploader-OR-
+--    OWNER delete, and NO update policy (a photo pointer is immutable — Postgres
+--    denies every UPDATE by default, so no member can re-point another's photo via
+--    a direct PostgREST call). This is the one content table that shipped without a
+--    regression assertion (#321): trip_photos landed Aug 25, the #300 post-init
+--    extension merged Aug 29 without it. Seeded on trip A: one photo by F, one by
+--    G, so the delete asymmetry has concrete targets. ─────────────────────────
+insert into public.trip_photos (id, trip_id, member_id, image_path) values
+  ('ab220000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'bbbb0000-0000-0000-0000-000000000001/photo-f.jpg'),
+  ('ab220000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'bbbb0000-0000-0000-0000-000000000001/photo-g.jpg');
+-- reads: any member sees the trip's photos; outsider and cross-trip attacker see none
+select pg_temp.expect_count('trip_photos: member sees the trip gallery',        'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from trip_photos where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 2);
+select pg_temp.expect_count('trip_photos: outsider sees none',                  'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from trip_photos where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('trip_photos: cross-trip attacker sees none',       'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from trip_photos where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- inserts: self-attributed only — no forged authorship, no outsider, no cross-trip
+select pg_temp.expect_dml('trip_photos: member can add a photo as self',        'aaaa0000-0000-0000-0000-000000000002', false, $$insert into trip_photos(trip_id, member_id, image_path) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bbbb0000-0000-0000-0000-000000000001/mine.jpg')$$, 1);
+select pg_temp.expect_dml('trip_photos: member cannot forge another''s authorship','aaaa0000-0000-0000-0000-000000000002', false, $$insert into trip_photos(trip_id, member_id, image_path) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','bbbb0000-0000-0000-0000-000000000001/forged.jpg')$$, -1);
+select pg_temp.expect_dml('trip_photos: outsider cannot insert',                'aaaa0000-0000-0000-0000-000000000005', false, $$insert into trip_photos(trip_id, member_id, image_path) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bbbb0000-0000-0000-0000-000000000001/x.jpg')$$, -1);
+select pg_temp.expect_dml('trip_photos: cross-trip attacker cannot insert',     'aaaa0000-0000-0000-0000-000000000004', false, $$insert into trip_photos(trip_id, member_id, image_path) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bbbb0000-0000-0000-0000-000000000001/x.jpg')$$, -1);
+-- no update path — even the uploader cannot re-point their own photo (immutable)
+select pg_temp.expect_dml('trip_photos: no update path even for the uploader',  'aaaa0000-0000-0000-0000-000000000002', false, $$update trip_photos set image_path='bbbb0000-0000-0000-0000-000000000001/swapped.jpg' where id='ab220000-0000-4000-8000-000000000001'$$, 0);
+-- delete asymmetry: a third member cannot delete a photo they didn't upload;
+-- the uploader and the trip owner can (the highest-value assertion for this table)
+select pg_temp.expect_dml('trip_photos: non-uploader member cannot delete another''s','aaaa0000-0000-0000-0000-000000000003', false, $$delete from trip_photos where id='ab220000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('trip_photos: uploader can delete own',               'aaaa0000-0000-0000-0000-000000000002', false, $$delete from trip_photos where id='ab220000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('trip_photos: owner can delete a member photo',       'aaaa0000-0000-0000-0000-000000000001', false, $$delete from trip_photos where id='ab220000-0000-4000-8000-000000000002'$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
