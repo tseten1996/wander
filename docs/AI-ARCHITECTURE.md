@@ -775,6 +775,43 @@ Two repo-specific notes:
   version into the remote history, desynchronizing local and remote — the
   failure that silently blocked six migrations for eleven days in August 2026.
 
+### Reading the ledger: did a model actually run?
+
+`feature` is free text, and the handler uses it to record *how far a request
+got*. That is what makes "are we actually using Workers AI" answerable from SQL
+rather than from a live log tail.
+
+| `feature` | What it means |
+|---|---|
+| `<intent>` | Pre-#296 rows. No sub-reason was recorded. |
+| `<intent>:no_provider` | The kill switch was on but no `AI` binding was attached — the model path is dead in this deployment. |
+| `<intent>:one_candidate`, `:no_candidates`, `:no_location` | The deterministic layer answered. No model was warranted, by design. |
+| `<intent>:model` | A model ran and its answer was used. |
+| `<intent>:model:call_failed` | The dispatch threw. The binding, the request shape, or the platform — see the log line below. |
+| `<intent>:model:bad_output` | The model answered and the schema refused it. Tokens were still spent. |
+
+The `:model` infix is present on exactly the rows where `provider.complete()`
+was called, whatever happened next:
+
+```sql
+-- Has a model ever run on this project, and did any run succeed?
+select feature, outcome, model, count(*), max(created_at)
+from ai_usage where feature like '%:model%'
+group by 1, 2, 3 order by max(created_at) desc;
+```
+
+**The failure class is in the ledger; the failure *message* is not.** A thrown
+dispatch writes one line to the platform log —
+
+```
+[ai] improve_day:model dispatch failed (@cf/meta/llama-3.1-8b-instruct-fp8): <message>
+```
+
+— and deliberately nowhere else: `ai_usage` is readable by every member of the
+trip, and an upstream error string of unknown provenance does not belong in a
+member-readable table. Read it in the Cloudflare dashboard under the Pages
+project's Functions logs, or with `npx wrangler pages deployment tail`.
+
 ### Two controls that live outside the code
 
 **A hard spend cap at the provider, configured before the first line is written.**
