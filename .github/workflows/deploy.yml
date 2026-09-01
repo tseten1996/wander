@@ -26,10 +26,21 @@ jobs:
       - run: npm ci
       # Optional overrides — without these, the defaults in src/lib/config.ts
       # are used (the Supabase URL + publishable key are public values).
+      #
+      # VITE_VAPID_PUBLIC_KEY (#267) is not an override but a switch. Vite
+      # inlines it at build time, and config.ts leaves it empty when unset,
+      # which keeps the push opt-in hidden — so an origin whose build misses it
+      # ships a bundle with push dark, and only that origin. It must therefore
+      # be set on BOTH deploy workflows, not just the Cloudflare one. A repo
+      # *variable*, not a secret: the key identifies the sender and seals
+      # nothing, it already ships inside the bundle, and masking it in logs
+      # would only make CI output harder to read. The matching private key is
+      # the real secret and lives in the Pages secret store — never here.
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
