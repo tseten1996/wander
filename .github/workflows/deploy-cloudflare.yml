@@ -46,11 +46,22 @@ jobs:
           cache: npm
       - run: npm ci
       # Same public values as deploy.yml — RLS is the security boundary, not the
-      # key, so these are safe to bake into the bundle.
+      # key, so these are safe to bake into the bundle. So is the VAPID *public*
+      # key (#267): it is the applicationServerKey the browser subscribes with,
+      # it identifies the sender and seals nothing, and the matching private key
+      # never comes near a build — it is a Pages secret read only by
+      # /api/push. Kept in step with deploy.yml deliberately: the two origins
+      # must not disagree about whether push exists.
+      #
+      # NOTE the direction this flows. Cloudflare never builds this project (see
+      # the direct-upload step below), so a VITE_* variable set in the Pages
+      # dashboard would be silently ignored — build-time config belongs here,
+      # runtime config belongs there.
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
 
       # A PR from a fork cannot read secrets, and the secrets may not be set yet.
       # Skip rather than fail: a red X on every PR would train everyone to ignore
