@@ -928,3 +928,100 @@ test('the thrown error reaches the log and never the ledger', async () => {
   const recorded = JSON.stringify(db.rpcCalls[0].args)
   assert.doesNotMatch(recorded, /binding down/, 'the message must not be written to a member-readable table')
 })
+
+/* ── the "clears N overlapping items" claim (must describe the plan) ─────── */
+
+const P = {
+  cartier: [48.873372, 2.2974278],
+  frog: [48.8646895, 2.2880988],
+  scossa: [48.8699373, 2.2847393],
+  diep: [48.8695267, 2.3030036],
+  starbucks: [48.8714631, 2.3044258],
+  eiffel: [48.8582599, 2.2945006],
+}
+
+const dayItem = (id, title, category, startTime, endTime, place, over = {}) => ({
+  id, title, category, startTime, endTime,
+  day: '2026-09-04', endDay: null, location: title,
+  lat: P[place][0], lng: P[place][1], cost: null, position: 1, ...over,
+})
+
+/**
+ * The real shape from a live trip: two restaurants booked over each other, with
+ * two activities either side that are worth reordering. Both restaurants are
+ * anchors, so the overlap survives every possible plan — but the day does have
+ * ~1.4 km of travel to save, so a suggestion is still made.
+ */
+const CLASHING_ANCHORS_DAY = {
+  trip: { currency: 'EUR' },
+  leg: { name: 'Paris' },
+  day: '2026-09-04',
+  daySpend: 0,
+  items: [
+    dayItem('a1', 'Cartier watch appt', 'activity', '10:10', '12:10', 'cartier'),
+    dayItem('r0', 'Frog XVI', 'restaurant', '12:30', '13:00', 'frog'),
+    dayItem('r1', 'Le Scossa', 'restaurant', '13:00', '14:00', 'scossa'),
+    dayItem('r2', 'Diep', 'restaurant', '13:00', '15:33', 'diep'),
+    dayItem('r3', 'Starbucks', 'restaurant', '16:09', '17:00', 'starbucks'),
+    dayItem('a2', 'Eiffel Tower', 'activity', '17:00', '18:50', 'eiffel'),
+  ],
+}
+
+test('a plan never claims to clear an overlap it leaves in place', async () => {
+  const db = fakeDb({ dayContext: CLASHING_ANCHORS_DAY })
+  const res = await handleAiRequest(improve, deps({ db }))
+  assert.equal(res.body.result.status, 'suggested')
+  assert.equal(res.body.result.baseline.conflicts, 1, 'the day does have an overlap')
+  assert.equal(res.body.result.plan.conflicts, 1, 'and the plan does not resolve it')
+  assert.doesNotMatch(
+    res.body.result.reason,
+    /clears?\s+\d+\s+overlapping/i,
+    'the reason must not take credit for an overlap that survives the plan',
+  )
+})
+
+test('an unresolved overlap is named rather than passed over in silence', async () => {
+  const res = await handleAiRequest(improve, deps({ db: fakeDb({ dayContext: CLASHING_ANCHORS_DAY }) }))
+  assert.match(
+    res.body.result.reason,
+    /overlap/i,
+    'a member looking at a red overlap badge needs the card to acknowledge it',
+  )
+})
+
+test('an overlap the plan really does clear is still claimed', async () => {
+  // Two movable activities in the same slot: placement separates them, so the
+  // claim is true and must survive the fix.
+  const clearable = {
+    ...CLASHING_ANCHORS_DAY,
+    items: [
+      dayItem('a1', 'Louvre', 'activity', '10:00', '12:00', 'cartier'),
+      dayItem('a2', 'Orsay', 'activity', '10:00', '12:00', 'diep'),
+      dayItem('a3', 'Eiffel Tower', 'activity', '15:00', '16:00', 'eiffel'),
+    ],
+  }
+  const res = await handleAiRequest(improve, deps({ db: fakeDb({ dayContext: clearable }) }))
+  assert.equal(res.body.result.status, 'suggested')
+  assert.ok(res.body.result.baseline.conflicts > 0)
+  assert.equal(res.body.result.plan.conflicts, 0)
+  assert.match(res.body.result.reason, /clears 1 overlapping item/)
+})
+
+test('a day nothing can fix is not called well ordered', async () => {
+  // No candidate survives the filter — nothing to save, nothing to resolve. The
+  // old message said the day "already looks well ordered" while two items sat
+  // visibly overlapping in the list above it.
+  const unfixable = {
+    ...CLASHING_ANCHORS_DAY,
+    items: [
+      dayItem('a1', 'Walk', 'activity', '10:00', '11:00', 'cartier'),
+      dayItem('a2', 'Sit', 'activity', '11:30', '12:30', 'cartier'),
+      dayItem('r1', 'Le Scossa', 'restaurant', '13:00', '14:00', 'diep'),
+      dayItem('r2', 'Diep', 'restaurant', '13:00', '15:00', 'diep'),
+    ],
+  }
+  const res = await handleAiRequest(improve, deps({ db: fakeDb({ dayContext: unfixable }) }))
+  assert.equal(res.body.result.status, 'nothing')
+  assert.doesNotMatch(res.body.result.message, /well ordered/i)
+  assert.match(res.body.result.message, /overlap/i)
+})

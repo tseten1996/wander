@@ -53,8 +53,8 @@ const BASE_ARGS = {
   placeName: 'Paris',
   baseline: { travelKm: 9.2, conflicts: 0 },
   candidates: [
-    { id: 'plan-1', order: ['Louvre', 'Orsay', 'Père Lachaise'], travelKm: 6.1, moved: 2, endsAt: '17:00' },
-    { id: 'plan-2', order: ['Louvre', 'Père Lachaise', 'Orsay'], travelKm: 7.4, moved: 1, endsAt: '17:30' },
+    { id: 'plan-1', order: ['Louvre', 'Orsay', 'Père Lachaise'], travelKm: 6.1, moved: 2, endsAt: '17:00', conflicts: 0 },
+    { id: 'plan-2', order: ['Louvre', 'Père Lachaise', 'Orsay'], travelKm: 7.4, moved: 1, endsAt: '17:30', conflicts: 0 },
   ],
   notes: [],
 }
@@ -171,4 +171,27 @@ test('a kept field is never cut mid-value', () => {
     block.includes('Severe shellfish allergy — please avoid all crustaceans and molluscs'),
     'the dietary constraint is present in full, not truncated',
   )
+})
+
+/* ── what a plan cannot fix reaches the model as a fact ──────────────────── */
+
+test('a plan that leaves an overlap says so in the prompt, and the rules forbid claiming otherwise', () => {
+  // The baseline line already tells the model the day has a clash. Without a
+  // per-plan count the only reasonable reading is that the plan it picks
+  // resolves it — which is false when the clash is between two anchors.
+  const args = improveDayPrompt({
+    ...BASE_ARGS,
+    baseline: { travelKm: 9.2, conflicts: 1 },
+    candidates: [
+      { ...BASE_ARGS.candidates[0], conflicts: 1 },
+      { ...BASE_ARGS.candidates[1], conflicts: 1 },
+    ],
+  })
+  assert.match(args.user, /still leaves 1 overlapping pair it cannot fix/)
+  assert.match(args.system, /Never say a plan clears an overlap it is still carrying/i)
+})
+
+test('a plan with nothing left to fix says nothing about overlaps', () => {
+  const args = improveDayPrompt({ ...BASE_ARGS, baseline: { travelKm: 9.2, conflicts: 1 } })
+  assert.doesNotMatch(args.user, /still leaves/, 'silence is the honest signal for a clean plan')
 })
