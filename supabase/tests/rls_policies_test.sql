@@ -675,6 +675,32 @@ select pg_temp.expect_dml('error_reports: outsider cannot log to a trip',      '
 select pg_temp.expect_dml('error_reports: append-only (owner cannot update)',  'aaaa0000-0000-0000-0000-000000000001', false, $$update error_reports set message='x' where id='ab190000-0000-4000-8000-000000000001'$$, 0);
 select pg_temp.expect_dml('error_reports: append-only (owner cannot delete)',  'aaaa0000-0000-0000-0000-000000000001', false, $$delete from error_reports where id='ab190000-0000-4000-8000-000000000001'$$, 0);
 
+-- ── comments (#314, epic #313 slice 1) — discussion pinned to an itinerary
+--    item. Trust shape COPIED from `messages`: member-read, self-attributed
+--    insert, author-or-owner delete, and NO update path. entity_id is a soft
+--    pointer (no FK to itinerary_items), so these assertions gate the same
+--    authorship + cross-trip properties the chat table proves, on the new
+--    table. Seeded on item dddd..0a ("Itinerary by F"): one comment by F, one
+--    by G. ──────────────────────────────────────────────────────────────────
+insert into public.comments (id, trip_id, entity_type, entity_id, member_id, body) values
+  ('ab210000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'itinerary_item', 'dddd0000-0000-0000-0000-00000000000a', 'cccc0000-0000-0000-0000-000000000002', 'Comment by F'),
+  ('ab210000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'itinerary_item', 'dddd0000-0000-0000-0000-00000000000a', 'cccc0000-0000-0000-0000-000000000003', 'Comment by G');
+-- reads: member sees the item's thread; outsider and cross-trip attacker see none
+select pg_temp.expect_count('comments: member sees the item thread',           'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from comments where entity_type='itinerary_item' and entity_id='dddd0000-0000-0000-0000-00000000000a'$$, 2);
+select pg_temp.expect_count('comments: outsider sees none',                    'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from comments where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('comments: cross-trip attacker sees none',         'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from comments where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- inserts: self-attributed only — no forged authorship, no outsider, no cross-trip
+select pg_temp.expect_dml('comments: member can comment as self',              'aaaa0000-0000-0000-0000-000000000002', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','itinerary_item','dddd0000-0000-0000-0000-00000000000a','cccc0000-0000-0000-0000-000000000002','mine')$$, 1);
+select pg_temp.expect_dml('comments: member cannot forge another''s authorship','aaaa0000-0000-0000-0000-000000000002', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','itinerary_item','dddd0000-0000-0000-0000-00000000000a','cccc0000-0000-0000-0000-000000000003','forged')$$, -1);
+select pg_temp.expect_dml('comments: outsider cannot insert',                  'aaaa0000-0000-0000-0000-000000000005', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','itinerary_item','dddd0000-0000-0000-0000-00000000000a','cccc0000-0000-0000-0000-000000000002','x')$$, -1);
+select pg_temp.expect_dml('comments: cross-trip attacker cannot insert',       'aaaa0000-0000-0000-0000-000000000004', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','itinerary_item','dddd0000-0000-0000-0000-00000000000a','cccc0000-0000-0000-0000-000000000002','x')$$, -1);
+-- no update path — even the author cannot rewrite a comment (immutable this slice)
+select pg_temp.expect_dml('comments: no update path even for the author',      'aaaa0000-0000-0000-0000-000000000002', false, $$update comments set body='edited' where id='ab210000-0000-4000-8000-000000000001'$$, 0);
+-- delete asymmetry: a third member cannot delete another's; author and owner can
+select pg_temp.expect_dml('comments: non-author member cannot delete another''s','aaaa0000-0000-0000-0000-000000000003', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('comments: author can delete own',                   'aaaa0000-0000-0000-0000-000000000003', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000002'$$, 1);
+select pg_temp.expect_dml('comments: owner can delete a member comment',       'aaaa0000-0000-0000-0000-000000000001', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000001'$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.

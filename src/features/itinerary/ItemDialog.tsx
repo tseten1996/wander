@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { isMobileViewport } from '@/lib/utils'
 import { geocodeFirst } from '@/lib/geocode'
+import { CommentsSection } from './comments/CommentsSection'
 import { optionalAmount } from '@/lib/forms'
 import type { ItineraryCategory, ItineraryItem } from '@/types'
 
@@ -390,6 +391,14 @@ export function ItemDialog({
             {item ? 'Save changes' : 'Add item'}
           </Button>
         </form>
+        {/* Discussion pinned to the plan (#314). Only an already-saved item has
+            an id to attach comments to, so the thread appears when editing, never
+            in the create flow. */}
+        {item && (
+          <div className="mt-5">
+            <CommentsSection entityType="itinerary_item" entityId={item.id} />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )

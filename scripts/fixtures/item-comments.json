@@ -1,0 +1,39 @@
+{
+  "auth": { "as": "owner", "userId": "22222222-2222-4222-8222-222222222222", "email": "planner@example.com", "tripId": "de300000-0000-4000-8000-000000000001" },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      { "id": "44444444-4444-4444-8444-444444444401", "trip_id": "de300000-0000-4000-8000-000000000001", "user_id": "22222222-2222-4222-8222-222222222222", "display_name": "Mika", "color": "#0e7490", "role": "owner", "joined_at": "2026-07-01T00:00:00Z" },
+      { "id": "44444444-4444-4444-8444-444444444402", "trip_id": "de300000-0000-4000-8000-000000000001", "user_id": "55555555-5555-4555-8555-555555555502", "display_name": "Sam", "color": "#b45309", "role": "member", "joined_at": "2026-07-02T00:00:00Z" }
+    ],
+    "itinerary_items": [
+      { "id": "1abc0000-0000-4000-8000-0000000000a1", "trip_id": "de300000-0000-4000-8000-000000000001", "title": "Kiyomizu-dera Temple", "category": "activity", "day": "2026-11-15", "end_day": null, "start_time": "09:30", "end_time": "11:00", "location": "Kiyomizu-dera, Kyoto", "latitude": 34.9949, "longitude": 135.7851, "url": null, "notes": null, "cost": null, "created_by": "44444444-4444-4444-8444-444444444401", "position": 1, "created_at": "2026-07-10T00:00:00Z" },
+      { "id": "1abc0000-0000-4000-8000-0000000000a2", "trip_id": "de300000-0000-4000-8000-000000000001", "title": "Nishiki Market lunch", "category": "restaurant", "day": "2026-11-15", "end_day": null, "start_time": "12:30", "end_time": null, "location": "Nishiki Market, Kyoto", "latitude": 35.0050, "longitude": 135.7649, "url": null, "notes": null, "cost": null, "created_by": "44444444-4444-4444-8444-444444444401", "position": 2, "created_at": "2026-07-10T00:00:00Z" }
+    ],
+    "comments": [
+      { "id": "c0mm0000-0000-4000-8000-0000000000c1", "trip_id": "de300000-0000-4000-8000-000000000001", "entity_type": "itinerary_item", "entity_id": "1abc0000-0000-4000-8000-0000000000a1", "member_id": "44444444-4444-4444-8444-444444444402", "body": "Should we do this before or after the market?", "created_at": "2026-07-11T09:00:00Z" },
+      { "id": "c0mm0000-0000-4000-8000-0000000000c2", "trip_id": "de300000-0000-4000-8000-000000000001", "entity_type": "itinerary_item", "entity_id": "1abc0000-0000-4000-8000-0000000000a1", "member_id": "44444444-4444-4444-8444-444444444401", "body": "Before — the light is better in the morning.", "created_at": "2026-07-11T09:05:00Z" }
+    ]
+  },
+  "routes": ["/trip/{trip}/itinerary"],
+  "breakpoints": [{ "name": "mobile", "width": 375 }, { "name": "desktop", "width": 1280 }],
+  "colorScheme": "light"
+}

@@ -10,6 +10,10 @@ const INVALIDATION_ALIASES: Record<string, string[]> = {
   // Availability poll children roll up into the parent poll query (#176).
   availability_candidates: ['availability_polls'],
   availability_responses: ['availability_polls'],
+  // A comment change refreshes both the open thread and the itinerary count
+  // badges (#314). Both keys are prefixes: TanStack invalidates every query
+  // whose key starts with `['comments', tripId]` / `['comment_counts', tripId]`.
+  comments: ['comments', 'comment_counts'],
 }
 
 // (trips is handled separately below — it filters on `id`, not `trip_id`)
@@ -19,6 +23,7 @@ const TABLES = [
   'budget_entries', 'repayments', 'packing_items', 'notes', 'inspiration_items',
   'activity', 'notifications', 'availability_polls', 'availability_candidates',
   'availability_responses', 'destinations', 'trip_preferences', 'trip_photos',
+  'comments',
 ]
 
 /**
