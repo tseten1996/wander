@@ -368,3 +368,82 @@ test('travel time between stops is left in the schedule, not assumed away', () =
   }
   assert.ok(plans.notes.some((s) => s.includes('straight-line estimate')) || plans.candidates.length === 0)
 })
+
+/* ── what a plan actually resolves ───────────────────────────────────────── */
+
+/**
+ * Two restaurants booked on top of each other, either side of two activities
+ * worth reordering.
+ *
+ * This is the shape that produced a false promise in production: both
+ * restaurants are FIXED_CATEGORIES, so both are anchors, so no reordering can
+ * separate them — yet the day's baseline conflict count is 1 and the suggestion
+ * built from it claimed to "clear 1 overlapping item".
+ */
+const CLASHING_ANCHORS = [
+  at('louvre', '10:10', '12:10'),
+  at('orsay', '13:00', '14:00', { category: 'restaurant' }),
+  at('pereLachaise', '13:00', '15:33', { category: 'restaurant' }),
+  at('eiffel', '17:00', '18:50'),
+]
+
+test('a candidate reports the conflicts it actually leaves behind', () => {
+  const plans = planDay(CLASHING_ANCHORS, DAY)
+  assert.equal(plans.baseline.conflicts, 1, 'the two restaurants overlap')
+  assert.ok(plans.candidates.length > 0, 'there is still travel worth saving')
+  for (const c of plans.candidates) {
+    assert.equal(c.conflicts, 1, 'two overlapping anchors cannot be separated by reordering')
+  }
+})
+
+test('an overlap between movable items is genuinely cleared', () => {
+  const plans = planDay(
+    [
+      at('louvre', '10:00', '12:00'),
+      at('pereLachaise', '10:00', '12:00'),
+      at('eiffel', '15:00', '16:00'),
+    ],
+    DAY,
+  )
+  assert.ok(plans.baseline.conflicts > 0)
+  assert.ok(plans.candidates.length > 0)
+  for (const c of plans.candidates) {
+    assert.equal(c.conflicts, 0, 'placement into free windows separates what it can move')
+  }
+})
+
+test('no candidate ever reports more conflicts than the day already had', () => {
+  // place() fits movable items into windows with the anchors cut out, so a
+  // candidate can only ever carry the anchor-vs-anchor overlaps forward. This
+  // is the invariant that makes "cleared = baseline - candidate" meaningful.
+  for (const [name, items] of Object.entries(FIXTURES)) {
+    const plans = planDay(items, DAY)
+    for (const c of plans.candidates) {
+      assert.ok(
+        c.conflicts <= plans.baseline.conflicts,
+        `${name} / ${c.id}: ${c.conflicts} > ${plans.baseline.conflicts}`,
+      )
+    }
+  }
+})
+
+test('a plan that resolves nothing and saves nothing is not offered at all', () => {
+  // The escape hatch in the `worthwhile` filter exists so a day whose items
+  // collide is offered a fix even when the fix saves no distance. It has to
+  // turn on whether *this candidate* resolves the collision — keyed to the
+  // baseline instead, it waves through plans that resolve nothing, which is
+  // how a suggestion with nothing to offer reached a real trip.
+  const plans = planDay(
+    [
+      // Two movable stops at one address: every ordering travels the same.
+      at('louvre', '10:00', '11:00'),
+      at('louvre', '11:30', '12:30'),
+      // The only overlap is between two anchors, so nothing can separate it.
+      at('orsay', '13:00', '14:00', { category: 'restaurant' }),
+      at('orsay', '13:00', '15:00', { category: 'restaurant' }),
+    ],
+    DAY,
+  )
+  assert.equal(plans.baseline.conflicts, 1, 'the day really does have an overlap')
+  assert.deepEqual(plans.candidates, [], 'nothing to save and nothing to resolve')
+})

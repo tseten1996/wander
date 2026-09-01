@@ -244,6 +244,21 @@ export interface Candidate {
   /** When the last movable stop finishes, `HH:MM`. Surfaced so a plan that runs
    *  later than the group's own finish is something they can see and decline. */
   endsAt: string
+  /**
+   * Overlapping pairs left in the day *under this plan*, not in the day as it
+   * stands. The two are different numbers and conflating them was a real bug:
+   * a suggestion read `baseline.conflicts` and announced it would "clear 1
+   * overlapping item" on a day whose only overlap was between two restaurants,
+   * which are anchors and therefore cannot be separated by any reordering.
+   *
+   * `place()` fits movable items into windows with the anchors cut out and
+   * advances a cursor between them, so a candidate can never introduce an
+   * overlap — this is always the anchor-vs-anchor count, and always ≤ the
+   * baseline. What `baseline.conflicts - candidate.conflicts` measures is
+   * therefore exactly what the plan resolves, which is the only number anything
+   * should claim credit for.
+   */
+  conflicts: number
 }
 
 export interface DayPlans {
@@ -478,6 +493,7 @@ export function planDay(items: DayItem[], day: string): DayPlans {
       id: `plan-${scored.length + 1}`,
       travelKm: travelKm(full).km,
       moved,
+      conflicts: countConflicts(full),
       endsAt: toHm(placed[placed.length - 1].end),
       order: full.map((s) => s.item.title),
       sequence: full.map((s) => s.item.id),
@@ -500,7 +516,13 @@ export function planDay(items: DayItem[], day: string): DayPlans {
       (c) =>
         // A candidate earns its place by saving real distance, or by resolving
         // a collision the day currently has. Both are things the group can see.
-        c.travelKm + MIN_IMPROVEMENT_KM <= baseline.travelKm || baseline.conflicts > 0,
+        //
+        // The second clause is about THIS candidate, not about the day. Keyed
+        // to `baseline.conflicts` it read "the day has an overlap" and waved
+        // through plans that resolved none of it — which is how a day whose
+        // only clash was between two restaurants (both anchors, both immovable)
+        // was offered a rearrangement that fixed nothing.
+        c.travelKm + MIN_IMPROVEMENT_KM <= baseline.travelKm || c.conflicts < baseline.conflicts,
     )
     .sort((a, b) => cost(a) - cost(b))
     .slice(0, MAX_CANDIDATES)

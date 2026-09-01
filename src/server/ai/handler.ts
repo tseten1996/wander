@@ -399,15 +399,32 @@ async function parseBooking(
 
 /* ── improve_day (#213) ──────────────────────────────────────────────────── */
 
+/**
+ * What a plan leaves unresolved, said plainly.
+ *
+ * Every plan is placed into windows with the anchors cut out, so the overlaps a
+ * candidate still carries are always anchor-vs-anchor — two fixed bookings on
+ * top of each other. No reordering can separate those, and the card must say so
+ * rather than leave a member staring at a red "Overlaps with…" badge the
+ * suggestion never mentions.
+ */
+const unresolvedOverlaps = (n: number): string =>
+  n === 1
+    ? 'One overlap is between fixed bookings, so no reordering can separate it — one of them has to move or get shorter.'
+    : `${n} overlaps are between fixed bookings, so no reordering can separate them — those need changing by hand.`
+
 /** A deterministic explanation, used when no model is called or its pick fails. */
 function computedReason(plan: Candidate, plans: DayPlans): string {
   const parts: string[] = []
   const saved = plans.baseline.travelKm - plan.travelKm
   if (saved >= 0.1) parts.push(`saves about ${saved.toFixed(1)} km of travel`)
-  if (plans.baseline.conflicts > 0) {
-    parts.push(
-      `clears ${plans.baseline.conflicts} overlapping ${plans.baseline.conflicts === 1 ? 'item' : 'items'}`,
-    )
+  // What THIS PLAN clears, never what the day happens to contain. The two
+  // differ whenever an overlap is between two anchors, and reading the baseline
+  // here is what made a suggestion announce it would "clear 1 overlapping item"
+  // on a day whose only clash was two restaurants it could not touch.
+  const cleared = plans.baseline.conflicts - plan.conflicts
+  if (cleared > 0) {
+    parts.push(`clears ${cleared} overlapping ${cleared === 1 ? 'item' : 'items'}`)
   }
   if (!parts.length) parts.push('groups nearby stops together')
   const moved = `${plan.moved} ${plan.moved === 1 ? 'item moves' : 'items move'}`
@@ -495,7 +512,12 @@ async function improveDay(
     return nothingToDo(
       plans.baseline.total < 2
         ? 'There is not enough in this day to rearrange yet.'
-        : 'This day already looks well ordered — nothing worth moving.',
+        : plans.baseline.conflicts > 0
+          ? // Not "well ordered". The day has a visible overlap and no
+            // rearrangement helps; saying it looks fine contradicts the badge
+            // the member is looking at.
+            `${plans.baseline.conflicts === 1 ? 'Two items overlap' : `${plans.baseline.conflicts} pairs of items overlap`} and no reordering fixes it — one of them has to be moved or shortened by hand.`
+          : 'This day already looks well ordered — nothing worth moving.',
       plans,
     )
   }
@@ -532,6 +554,7 @@ async function improveDay(
       order: c.order,
       travelKm: c.travelKm,
       moved: c.moved,
+      conflicts: c.conflicts,
       endsAt: c.endsAt,
     })),
     notes: plans.notes,
@@ -593,8 +616,12 @@ function suggestion(
       ok: true,
       intent: 'improve_day',
       result: {
+        // Appended here rather than in computedReason so it covers a
+        // model-authored reason too: the model is choosing between plans that
+        // all carry the same unresolvable overlap, and nothing in its two
+        // sentences is obliged to mention it.
+        reason: plan.conflicts > 0 ? `${reason} ${unresolvedOverlaps(plan.conflicts)}` : reason,
         status: 'suggested',
-        reason,
         reasonSource,
         plan: {
           id: plan.id,
@@ -603,6 +630,7 @@ function suggestion(
           order: plan.order,
           travelKm: plan.travelKm,
           moved: plan.moved,
+          conflicts: plan.conflicts,
           endsAt: plan.endsAt,
         },
         // The alternatives travel with the suggestion so the card can say "2
