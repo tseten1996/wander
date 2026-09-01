@@ -11,8 +11,8 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   CalendarArrowDown, Car, ClipboardPaste, Footprints, GripVertical, List,
-  Map as MapIcon, MapPin, MoreHorizontal, Navigation, Pencil, Plus, Sparkles,
-  TriangleAlert, Trash2, UserMinus,
+  Map as MapIcon, MapPin, MessageCircle, MoreHorizontal, Navigation, Pencil,
+  Plus, Sparkles, TriangleAlert, Trash2, UserMinus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -23,6 +23,7 @@ import {
 } from './api'
 import { ITINERARY_META } from './meta'
 import { ItemDialog, type ItineraryFormValues } from './ItemDialog'
+import { useCommentCounts } from './comments/api'
 import { useDestinations } from '@/features/destinations/api'
 import { groupDaysByLeg, hasLegs } from '@/features/destinations/legs'
 import { buildDayIndex, type DayInfo } from './days'
@@ -90,6 +91,27 @@ function conflictLabel(item: ItineraryItem): string {
     ? `${formatTime(item.start_time)} – ${formatTime(item.end_time)}`
     : formatTime(item.start_time)
   return range ? `${item.title} (${range})` : item.title
+}
+
+/**
+ * A quiet "there's discussion here" count on an itinerary item (#314). Renders
+ * nothing when the item has no comments, so an item without a thread looks
+ * exactly as it did before this feature. Every card reads the one trip-wide
+ * `useCommentCounts` query (a shared cache key), so this is a single request
+ * however many items are on screen.
+ */
+function CommentCountBadge({ itemId }: { itemId: string }) {
+  const { trip } = useTripContext()
+  const counts = useCommentCounts(trip.id, 'itinerary_item')
+  const count = counts.data?.get(itemId) ?? 0
+  if (count === 0) return null
+  return (
+    <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted">
+      <MessageCircle className="size-3.5 shrink-0" aria-hidden />
+      <span className="tabular-nums">{count}</span>
+      <span className="sr-only">{count === 1 ? 'comment' : 'comments'}</span>
+    </span>
+  )
 }
 
 function SortableItemCard({
@@ -208,6 +230,7 @@ function SortableItemCard({
           )}
           <MissFlag note={absenceNote ?? null} />
           <ItemBudgetLink item={item} />
+          <CommentCountBadge itemId={item.id} />
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -388,6 +411,7 @@ function SpanBandCard({
         <p className="truncate text-sm font-semibold">{item.title}</p>
         <p className="truncate text-xs text-muted">{detail}</p>
         <MissFlag note={absenceNote ?? null} />
+        <CommentCountBadge itemId={item.id} />
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
