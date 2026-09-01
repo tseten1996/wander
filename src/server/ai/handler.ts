@@ -143,6 +143,42 @@ async function record(
   }
 }
 
+/*
+  Why a `:model` row failed.
+
+  The two failures below have different causes and different fixes, and until
+  now the ledger recorded both as a bare `:model` / `failed` row. That cost a
+  real debugging session: production held exactly one failed dispatch, zero
+  tokens on both sides, and no way to tell which of the two it was without
+  tailing a live deployment.
+
+    :model:call_failed — the dispatch threw. The binding, the request shape or
+      the platform: a `response_format` the model rejects, a model this account
+      cannot reach, an outage. Nothing about the prompt will change it.
+    :model:bad_output  — the model answered and the schema refused what came
+      back. That is a prompt or a schema problem, and the model was still paid.
+
+  It goes in `feature` rather than `outcome` because `feature` is free text by
+  design (20260817090000_ai_usage.sql) while `outcome` is a CHECK constraint —
+  a sub-reason should not cost a migration. The `:model` infix is preserved on
+  both, so #296's "has a model ever run here" stays one query.
+*/
+
+/**
+ * The message a dispatch threw, on its way to the platform log.
+ *
+ * The ledger gets the class; the message goes here and only here. It is an
+ * upstream string of unknown provenance and ai_usage is readable by every
+ * member of the trip (its select policy), so the operator's log is the one
+ * place it belongs. This is also the only line in the AI path that says
+ * anything at all when a model call fails — without it the cause exists
+ * nowhere, which is the state that made the row above undiagnosable.
+ */
+function logModelFailure(feature: string, model: string, err: unknown): void {
+  const detail = err instanceof Error ? err.message : String(err)
+  console.error(`[ai] ${feature} dispatch failed (${model}): ${detail}`)
+}
+
 /**
  * The trip's own date range, read as the caller.
  *
@@ -321,10 +357,11 @@ async function parseBooking(
   let completion
   try {
     completion = await deps.provider.complete(args)
-  } catch {
+  } catch (err) {
     // The call itself failed, so there are no token counts to record — but the
     // attempt still gets a row, or an outage looks like nobody tried.
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
+    logModelFailure(modelFeature, model, err)
+    await record(deps, { tripId, feature: `${modelFeature}:call_failed`, outcome: 'failed', model })
     return refuse(
       'unavailable',
       'Wander AI could not read that just now. Your text is still here.',
@@ -342,7 +379,7 @@ async function parseBooking(
   // provider; this decides whether what came back is usable.
   const parsed = ParsedBookingResult.safeParse(completion.json)
   if (!parsed.success) {
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
+    await record(deps, { tripId, feature: `${modelFeature}:bad_output`, outcome: 'failed', ...usageRow })
     // Deliberately a 200 with an empty result rather than an error: the call
     // completed and cost tokens, it simply found nothing. The caller shows
     // today's raw-text create form either way, and reporting this as a failure
@@ -512,8 +549,9 @@ async function improveDay(
   let completion
   try {
     completion = await deps.provider.complete(args)
-  } catch {
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
+  } catch (err) {
+    logModelFailure(modelFeature, model, err)
+    await record(deps, { tripId, feature: `${modelFeature}:call_failed`, outcome: 'failed', model })
     // Still a useful answer: the plans were never the model's to produce.
     return suggestion(plans, top, computedReason(top, plans), 'computed', {
       inputTokens: 0,
@@ -533,7 +571,7 @@ async function improveDay(
     : undefined
 
   if (!picked.success || !chosen) {
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
+    await record(deps, { tripId, feature: `${modelFeature}:bad_output`, outcome: 'failed', ...usageRow })
     return suggestion(plans, top, computedReason(top, plans), 'computed', usage)
   }
 
@@ -756,8 +794,9 @@ async function suggestStarter(
   let completion
   try {
     completion = await deps.provider.complete(args)
-  } catch {
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', model })
+  } catch (err) {
+    logModelFailure(modelFeature, model, err)
+    await record(deps, { tripId, feature: `${modelFeature}:call_failed`, outcome: 'failed', model })
     const chosen = pickTopStarter(candidates, TARGET_STARTER_PLACES)
     return starterSuggestion(chosen, computedStarterReason(chosen, placeName), 'computed', placeName, candidates.length, {
       inputTokens: 0,
@@ -774,7 +813,7 @@ async function suggestStarter(
   // ships instead — the same fall-through improve_day uses for a bad plan id.
   const chosen = picked.success ? resolveStarterPicks(picked.data.placeIds, candidates) : []
   if (!picked.success || chosen.length < STARTER_MIN_PICKS) {
-    await record(deps, { tripId, feature: modelFeature, outcome: 'failed', ...usageRow })
+    await record(deps, { tripId, feature: `${modelFeature}:bad_output`, outcome: 'failed', ...usageRow })
     const fallback = pickTopStarter(candidates, TARGET_STARTER_PLACES)
     return starterSuggestion(fallback, computedStarterReason(fallback, placeName), 'computed', placeName, candidates.length, usage)
   }

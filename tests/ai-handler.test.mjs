@@ -777,10 +777,10 @@ const DISPATCH_REASONS = [
     ranModel: true,
   },
   {
-    name: 'the model returned junk → improve_day:model, failed',
+    name: 'the model returned junk → improve_day:model:bad_output, failed',
     day: DEFAULT_DAY_CONTEXT,
     provider: () => fakeProvider({ planId: 'plan-9', reason: 'trust me' }),
-    feature: 'improve_day:model',
+    feature: 'improve_day:model:bad_output',
     outcome: 'failed',
     ranModel: true,
   },
@@ -794,12 +794,14 @@ for (const c of DISPATCH_REASONS) {
     const row = db.rpcCalls[0].args
     assert.equal(row.p_feature, c.feature)
     assert.equal(row.p_outcome, c.outcome)
-    // The `:model` suffix is present exactly when a model was dispatched — it is
-    // the single greppable signal behind "has a model ever run".
+    // `:model` is present exactly when a model was dispatched — it is the single
+    // greppable signal behind "has a model ever run". A failed dispatch extends
+    // the string with why (`:call_failed` / `:bad_output`), so this is a
+    // substring test, not a suffix one.
     assert.equal(
-      row.p_feature.endsWith(':model'),
+      row.p_feature.includes(':model'),
       c.ranModel,
-      'the :model suffix marks a real dispatch and nothing else',
+      'the :model infix marks a real dispatch and nothing else',
     )
     if (!c.ranModel) assert.equal(row.p_model, '', 'no model ran, so none is named')
   })
@@ -842,4 +844,87 @@ test('“has a model ever run” is one query: only :model rows carry a model id
   }
   const modelRows = rows.filter((r) => r.p_feature.endsWith(':model'))
   assert.equal(modelRows.length, 2, 'exactly the two dispatched calls ran a model')
+})
+
+/* ── which way a `:model` row failed ──────────────────────────────────────
+   The production ledger showed exactly one failed model row with zero tokens
+   on both sides, and no way to tell whether the binding had thrown or the
+   model had answered with something the schema rejected. Those two have
+   different causes and different fixes, so they are recorded under different
+   features. Asserting the strings keeps the distinction from collapsing back
+   into one the next time someone tidies the ledger vocabulary. */
+
+/** Run `fn` with console.error captured rather than printed. */
+async function captureErrors(fn) {
+  const lines = []
+  const real = console.error
+  console.error = (...args) => lines.push(args.join(' '))
+  try {
+    return { result: await fn(), lines }
+  } finally {
+    console.error = real
+  }
+}
+
+test('a thrown dispatch and a rejected output are recorded differently', async () => {
+  const threw = fakeDb()
+  await captureErrors(() =>
+    handleAiRequest(paste(), deps({ db: threw, provider: fakeProvider(null, { throws: true }) })),
+  )
+  const rejected = fakeDb()
+  await handleAiRequest(paste(), deps({ db: rejected, provider: fakeProvider('prose, not an object') }))
+
+  assert.equal(threw.rpcCalls[0].args.p_feature, 'parse_booking:model:call_failed')
+  assert.equal(rejected.rpcCalls[0].args.p_feature, 'parse_booking:model:bad_output')
+  assert.notEqual(
+    threw.rpcCalls[0].args.p_feature,
+    rejected.rpcCalls[0].args.p_feature,
+    'the whole point: one query separates a broken binding from a bad answer',
+  )
+})
+
+test('improve_day and suggest_starter name the cause the same way', async () => {
+  const db = fakeDb()
+  await captureErrors(() =>
+    handleAiRequest(improve, deps({ db, provider: fakeProvider(null, { throws: true }) })),
+  )
+  assert.equal(db.rpcCalls[0].args.p_feature, 'improve_day:model:call_failed')
+
+  const bad = fakeDb()
+  await handleAiRequest(improve, deps({ db: bad, provider: fakeProvider({ planId: 'plan-9', reason: 'x' }) }))
+  assert.equal(bad.rpcCalls[0].args.p_feature, 'improve_day:model:bad_output')
+})
+
+test('every model row still says `:model`, whatever happened after', async () => {
+  // #296's property: "has a model ever run here" stays one query across every
+  // feature and every outcome. The sub-reason extends that string, never
+  // replaces it.
+  const rows = []
+  for (const provider of [
+    fakeProvider(null, { throws: true }),
+    fakeProvider('prose'),
+    fakeProvider(GOOD),
+  ]) {
+    const db = fakeDb()
+    await captureErrors(() => handleAiRequest(paste(), deps({ db, provider })))
+    rows.push(db.rpcCalls[0].args.p_feature)
+  }
+  for (const feature of rows) assert.ok(feature.includes(':model'), feature)
+})
+
+test('the thrown error reaches the log and never the ledger', async () => {
+  // ai_usage is readable by every member of the trip (its select policy), so an
+  // upstream error string — whatever it happens to contain — belongs in the
+  // operator's log and nowhere else.
+  const db = fakeDb()
+  const { lines } = await captureErrors(() =>
+    handleAiRequest(paste(), deps({ db, provider: fakeProvider(null, { throws: true }) })),
+  )
+  assert.ok(
+    lines.some((l) => l.includes('binding down')),
+    'the message the binding threw is what makes the failure diagnosable',
+  )
+  assert.ok(lines.some((l) => l.includes('@cf/')), 'and which model it was dispatched to')
+  const recorded = JSON.stringify(db.rpcCalls[0].args)
+  assert.doesNotMatch(recorded, /binding down/, 'the message must not be written to a member-readable table')
 })

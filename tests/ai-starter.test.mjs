@@ -268,7 +268,7 @@ test('an invented place id falls back to the computed day, recorded as failed', 
   assert.equal(res.body.result.status, 'suggested')
   assert.equal(res.body.result.reasonSource, 'computed', 'no usable pick → the app’s own default day')
   assert.ok(res.body.result.items.length >= MIN_STARTER_PLACES)
-  assert.equal(db.rpcCalls[0].args.p_feature, 'suggest_starter:model')
+  assert.equal(db.rpcCalls[0].args.p_feature, 'suggest_starter:model:bad_output')
   assert.equal(db.rpcCalls[0].args.p_outcome, 'failed')
 })
 
@@ -305,7 +305,7 @@ test('a thrown model call still returns the computed day', async () => {
   assert.equal(res.body.result.status, 'suggested')
   assert.equal(res.body.result.reasonSource, 'computed')
   assert.equal(db.rpcCalls[0].args.p_outcome, 'failed')
-  assert.equal(db.rpcCalls[0].args.p_feature, 'suggest_starter:model')
+  assert.equal(db.rpcCalls[0].args.p_feature, 'suggest_starter:model:call_failed')
 })
 
 test('a day that already has items is not this feature’s job', async () => {
