@@ -4,11 +4,8 @@ import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
 import { notify } from '@/lib/notify'
 import { extractMentionIds, mentionsToPlainText } from '@/features/messages/mentions'
+import { tallyCommentCounts, truncateMentionTitle } from './tally'
 import type { Comment, CommentEntityType } from '@/types'
-
-/** Cap the mention notification's title snapshot so a long comment doesn't
- *  bloat the inbox row — matches the chat path (#193). */
-const MENTION_TITLE_MAX = 140
 
 /** A comment thread for one entity (an itinerary item today), oldest-first —
  *  the same order chat renders in. Exported as a plain function so the query
@@ -60,11 +57,7 @@ export async function fetchCommentCounts(
     .eq('trip_id', tripId)
     .eq('entity_type', entityType)
   if (error) throw error
-  const counts = new Map<string, number>()
-  for (const row of data as { entity_id: string }[]) {
-    counts.set(row.entity_id, (counts.get(row.entity_id) ?? 0) + 1)
-  }
-  return counts
+  return tallyCommentCounts(data as Pick<Comment, 'entity_id'>[])
 }
 
 export function useCommentCounts(tripId: string, entityType: CommentEntityType) {
@@ -117,8 +110,7 @@ export function useAddComment(
           recipientIds: mentioned,
           type: 'mention',
           entityId,
-          title:
-            plain.length > MENTION_TITLE_MAX ? `${plain.slice(0, MENTION_TITLE_MAX - 1)}…` : plain,
+          title: truncateMentionTitle(plain),
         })
       }
     },
