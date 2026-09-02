@@ -15,7 +15,15 @@ import { longDate } from '@/lib/utils'
 
 /** A single grid tile — its own component so a failed image load is isolated to
  *  the tile and never breaks the surrounding grid. */
-function PhotoTile({ photo, onOpen }: { photo: GalleryPhoto; onOpen: () => void }) {
+function PhotoTile({
+  photo,
+  dayLabel,
+  onOpen,
+}: {
+  photo: GalleryPhoto
+  dayLabel: string
+  onOpen: () => void
+}) {
   const [broken, setBroken] = React.useState(false)
   const unavailable = photo.url === null || broken
 
@@ -23,7 +31,9 @@ function PhotoTile({ photo, onOpen }: { photo: GalleryPhoto; onOpen: () => void 
     <button
       type="button"
       onClick={onOpen}
-      aria-label="Open photo"
+      // Every tile would otherwise read the identical "Open photo"; naming the
+      // day it belongs to makes the grid distinguishable when tabbed (#327).
+      aria-label={`Open photo from ${dayLabel}`}
       className="group relative aspect-square overflow-hidden rounded-xl bg-sunken outline-none ring-primary/60 focus-visible:ring-2"
     >
       {unavailable ? (
@@ -128,16 +138,24 @@ export default function PhotosPage() {
         />
       ) : (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-7">
-          {days.map((day) => (
-            <section key={day.date}>
-              <h2 className="mb-2.5 text-sm font-semibold text-muted">{longDate(day.date)}</h2>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-                {day.photos.map((photo) => (
-                  <PhotoTile key={photo.key} photo={photo} onOpen={() => setSelectedKey(photo.key)} />
-                ))}
-              </div>
-            </section>
-          ))}
+          {days.map((day) => {
+            const dayLabel = longDate(day.date)
+            return (
+              <section key={day.date}>
+                <h2 className="mb-2.5 text-sm font-semibold text-muted">{dayLabel}</h2>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                  {day.photos.map((photo) => (
+                    <PhotoTile
+                      key={photo.key}
+                      photo={photo}
+                      dayLabel={dayLabel}
+                      onOpen={() => setSelectedKey(photo.key)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )
+          })}
         </motion.div>
       )}
 
