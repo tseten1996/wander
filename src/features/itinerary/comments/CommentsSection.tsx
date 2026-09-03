@@ -156,17 +156,27 @@ export function CommentsSection({
       ) : comments.isError ? (
         <ErrorState onRetry={() => comments.refetch()} isRetrying={comments.isFetching} />
       ) : (
-        <ul className="space-y-3" aria-live="polite">
-          {rows.length === 0 ? (
-            <li className="text-sm text-muted">
-              No comments yet — start the discussion about this stop.
-            </li>
-          ) : (
-            rows.map((c) => (
-              <CommentRow key={c.id} comment={c} entityType={entityType} entityId={entityId} />
-            ))
-          )}
-        </ul>
+        <>
+          {/* Comment count changes live (realtime refetch) — announce a compact
+              tally to screen readers without re-reading every comment, matching
+              the poll/date live-region pattern (#44, #327). */}
+          <p aria-live="polite" className="sr-only">
+            {rows.length === 0
+              ? 'No comments yet'
+              : `${rows.length} ${rows.length === 1 ? 'comment' : 'comments'}`}
+          </p>
+          <ul className="space-y-3">
+            {rows.length === 0 ? (
+              <li className="text-sm text-muted">
+                No comments yet — start the discussion about this stop.
+              </li>
+            ) : (
+              rows.map((c) => (
+                <CommentRow key={c.id} comment={c} entityType={entityType} entityId={entityId} />
+              ))
+            )}
+          </ul>
+        </>
       )}
 
       <div className="relative flex items-end gap-2">
