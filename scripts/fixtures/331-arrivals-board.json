@@ -1,0 +1,106 @@
+{
+  "//": "Fixture for the arrivals & departures board (#331, epic #285 slice 4). A Nov 14-21 trip with staggered member dates: Mika (owner) here the whole trip, Cid arrives Nov 15, Sam & Alex both arrive Nov 16 (a shared-date group), Priya departs Nov 19, Cid departs Nov 20. The Calendar page's 'Who's here when' card folds these into a chronological board. See screenshot-mock.mjs for the schema.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de331000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de331000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de331000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de331000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z",
+        "arrives_on": "2026-11-16",
+        "departs_on": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444403",
+        "trip_id": "de331000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555503",
+        "display_name": "Alex",
+        "color": "#be185d",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z",
+        "arrives_on": "2026-11-16",
+        "departs_on": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444404",
+        "trip_id": "de331000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555504",
+        "display_name": "Priya",
+        "color": "#7c3aed",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": "2026-11-19"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444405",
+        "trip_id": "de331000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555505",
+        "display_name": "Cid",
+        "color": "#15803d",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z",
+        "arrives_on": "2026-11-15",
+        "departs_on": "2026-11-20"
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de331000-0000-4000-8000-000000000001",
+    "get_invite_preview": [
+      {
+        "trip_name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "cover_url": null,
+        "member_count": 5,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21"
+      }
+    ]
+  },
+  "routes": ["/trip/{trip}/calendar"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}

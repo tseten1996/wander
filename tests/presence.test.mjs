@@ -19,6 +19,7 @@ import {
   hasPresenceDates,
   absentOn,
   describeAbsence,
+  presenceTimeline,
 } from '../src/lib/presence.ts'
 
 // Minimal member rows: the helpers read only id / arrives_on / departs_on.
@@ -144,4 +145,44 @@ test('describeAbsence reads like a person, singular and plural', () => {
     }),
     "Sam, Alex and Kai aren't here yet",
   )
+})
+
+// --- presenceTimeline: the arrivals & departures board (#331, slice 4) ---
+
+test('a dateless trip yields no events and every member here the whole trip', () => {
+  const members = [named('ana', 'Ana'), named('ben', 'Ben')]
+  const { days, wholeTrip } = presenceTimeline(members)
+  assert.deepEqual(days, [])
+  assert.deepEqual(wholeTrip.map((m) => m.id), ['ana', 'ben'])
+})
+
+test('events are grouped by date and ordered chronologically', () => {
+  const members = [
+    named('ana', 'Ana'), // undated → whole trip
+    named('ben', 'Ben', '2026-06-05'), // arrives Friday
+    named('sam', 'Sam', '2026-06-05'), // also arrives Friday (shares the date)
+    named('cid', 'Cid', '2026-06-06', '2026-06-06'), // arrives + leaves Saturday
+    named('pri', 'Priya', null, '2026-06-05'), // leaves Friday
+  ]
+  const { days, wholeTrip } = presenceTimeline(members)
+  // Two dated days, Friday before Saturday.
+  assert.deepEqual(days.map((d) => d.date), ['2026-06-05', '2026-06-06'])
+  // Friday groups both arrivals (member order preserved) and Priya's departure.
+  assert.deepEqual(days[0].arrivals.map((m) => m.id), ['ben', 'sam'])
+  assert.deepEqual(days[0].departures.map((m) => m.id), ['pri'])
+  // Saturday carries Cid as both an arrival and a departure.
+  assert.deepEqual(days[1].arrivals.map((m) => m.id), ['cid'])
+  assert.deepEqual(days[1].departures.map((m) => m.id), ['cid'])
+  // Only the fully-undated member is "here the whole trip".
+  assert.deepEqual(wholeTrip.map((m) => m.id), ['ana'])
+})
+
+test('a member with only one bound is a partial stay, never "whole trip"', () => {
+  // Arrives late, no stated departure: an arrival event, and NOT in wholeTrip.
+  const members = [named('ben', 'Ben', '2026-06-05')]
+  const { days, wholeTrip } = presenceTimeline(members)
+  assert.deepEqual(days.map((d) => d.date), ['2026-06-05'])
+  assert.deepEqual(days[0].arrivals.map((m) => m.id), ['ben'])
+  assert.deepEqual(days[0].departures, [])
+  assert.deepEqual(wholeTrip, [])
 })
