@@ -15,6 +15,7 @@ import { useDestinations } from '@/features/destinations/api'
 import { hasRange, legForDay } from '@/features/destinations/legs'
 import { legColor, legHeading } from '@/features/destinations/route'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { ArrivalsBoard } from './ArrivalsBoard'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -292,6 +293,8 @@ export default function CalendarPage() {
           </div>
         )}
       </Card>
+
+      <ArrivalsBoard members={members} />
 
       <motion.div
         key={selected.toISOString()}

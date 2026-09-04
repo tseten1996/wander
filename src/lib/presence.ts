@@ -90,7 +90,7 @@ export function absentOn(members: Member[], day: string): DayAbsence {
 
 /** Join names the way a person would: "Sam", "Sam and Priya", "Sam, Priya and
  *  Alex". Empty in → empty string. */
-function joinNames(names: string[]): string {
+export function joinNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? ''
   if (names.length === 2) return `${names[0]} and ${names[1]}`
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
@@ -124,4 +124,57 @@ export function arrivalsOn(members: Member[], day: string): Member[] {
 /** Members whose explicit departure is exactly `day`. */
 export function departuresOn(members: Member[], day: string): Member[] {
   return members.filter((m) => m.departs_on === day)
+}
+
+/** One dated row on the arrivals & departures board: the members whose stated
+ *  arrival or departure lands on this `yyyy-MM-dd`. Only dates that carry at
+ *  least one event appear. */
+export interface PresenceTimelineDay {
+  date: string
+  arrivals: Member[]
+  departures: Member[]
+}
+
+/** The whole board (#331, epic #285 slice 4): dated arrival/departure events in
+ *  chronological order, plus the members who set no dates at all. */
+export interface PresenceTimeline {
+  days: PresenceTimelineDay[]
+  /** Members with neither bound set — here for the whole trip. */
+  wholeTrip: Member[]
+}
+
+/**
+ * Fold the members' `arrives_on` / `departs_on` into a chronological board of
+ * arrival and departure events. Members who share a date are grouped on it; a
+ * member with only one bound set contributes only that event (a late arrival
+ * with no stated departure still shows as arriving, and is never forced to
+ * "leave"). Members with *neither* bound set are collected under `wholeTrip`
+ * and never treated as a partial stay. Roster order is preserved within each
+ * group, so names don't reshuffle between renders.
+ *
+ * Reads only the two member columns — no trip range, no schema, no RLS. A trip
+ * where nobody set dates yields `days: []` and every member under `wholeTrip`,
+ * which the board renders as a calm full-trip state.
+ */
+export function presenceTimeline(members: Member[]): PresenceTimeline {
+  const byDate = new Map<string, PresenceTimelineDay>()
+  const dayFor = (date: string): PresenceTimelineDay => {
+    let day = byDate.get(date)
+    if (!day) {
+      day = { date, arrivals: [], departures: [] }
+      byDate.set(date, day)
+    }
+    return day
+  }
+  const wholeTrip: Member[] = []
+  for (const m of members) {
+    if (m.arrives_on) dayFor(m.arrives_on).arrivals.push(m)
+    if (m.departs_on) dayFor(m.departs_on).departures.push(m)
+    if (!m.arrives_on && !m.departs_on) wholeTrip.push(m)
+  }
+  // `yyyy-MM-dd` strings sort chronologically as plain strings.
+  const days = [...byDate.values()].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  )
+  return { days, wholeTrip }
 }
