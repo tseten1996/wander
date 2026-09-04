@@ -154,15 +154,15 @@ export interface MessageReaction {
   emoji: string
 }
 
-/** What a comment can be attached to (epic #313). Restricted to itinerary items
- *  for slice 1 (#314); later slices widen it (budget entries, polls). Mirrors
- *  the `entity_type` CHECK on the `comments` table. */
-export type CommentEntityType = 'itinerary_item'
+/** What a comment can be attached to (epic #313). Itinerary items shipped in
+ *  slice 1 (#314); slice 2 (#330) adds budget entries; a later slice widens it
+ *  to polls. Mirrors the `entity_type` CHECK on the `comments` table. */
+export type CommentEntityType = 'itinerary_item' | 'budget_entry'
 
 /**
- * A comment pinned to a trip entity — for now, an itinerary item (#314, epic
- * #313 slice 1). `entity_id` is a *soft* pointer (no FK), so a comment whose
- * target was deleted simply stops being queried. Trust shape copied from
+ * A comment pinned to a trip entity — an itinerary item (#314) or a budget
+ * entry (#330), epic #313. `entity_id` is a *soft* pointer (no FK), so a comment
+ * whose target was deleted simply stops being queried. Trust shape copied from
  * `messages`: member-scoped read, self-attributed insert, author-or-owner
  * delete, no edit. `member_id` is null once its author leaves the trip.
  */

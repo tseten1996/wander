@@ -22,6 +22,7 @@ import {
 } from '@/lib/rates'
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
 import { suggestedParticipants } from '@/lib/presence'
+import { CommentsSection } from '@/features/itinerary/comments/CommentsSection'
 import { useRedenominateTrip, useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -834,6 +835,15 @@ function EntryDialog({
             {entry ? 'Save changes' : 'Add expense'}
           </Button>
         </form>
+        {/* Argue "who was here / why this split" on the expense itself (#330,
+            epic #313 slice 2). Only a saved entry has an id to attach comments
+            to, so the thread appears when editing, never in the add flow —
+            mirroring the itinerary item dialog. */}
+        {entry && (
+          <div className="mt-5">
+            <CommentsSection entityType="budget_entry" entityId={entry.id} />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
