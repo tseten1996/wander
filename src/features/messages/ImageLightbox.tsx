@@ -12,10 +12,14 @@ export function ImageLightbox({
   src,
   open,
   onOpenChange,
+  alt = 'Shared in chat',
 }: {
   src: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Accessible label for the image; defaults to the chat wording. Other callers
+   *  (e.g. an expense receipt, #338) pass their own. */
+  alt?: string
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -29,7 +33,7 @@ export function ImageLightbox({
           {src && (
             <img
               src={src}
-              alt="Shared in chat"
+              alt={alt}
               className="max-h-[92dvh] max-w-full rounded-xl object-contain shadow-lift"
             />
           )}

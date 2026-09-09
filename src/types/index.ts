@@ -257,6 +257,10 @@ export interface BudgetEntry {
   paid_by: string | null
   entry_date: string | null
   notes: string | null
+  /** Optional receipt image (#338): object path `<trip_id>/<uuid>.<ext>` into
+   *  the private `chat-images` bucket (the same bucket/RLS as chat images and
+   *  trip photos). null = no receipt — the entry renders exactly as before. */
+  image_path: string | null
   created_by: string | null
   created_at: string
 }

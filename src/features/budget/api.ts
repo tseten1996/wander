@@ -7,18 +7,82 @@ import { friendlyError } from '@/lib/errors'
 import { fetchRates } from '@/lib/rates'
 import type { BudgetCategory, BudgetEntry, Repayment } from '@/types'
 
-/** The trip's expense rows, newest first. Exported as a plain function (not
- *  just the hook) so the global search palette can warm this same cache key
- *  without touching Supabase itself — this api.ts stays the only place that
- *  reads the table. */
-export async function fetchBudget(tripId: string): Promise<BudgetEntry[]> {
+export type BudgetEntryWithReceipt = BudgetEntry & {
+  /** A short-lived signed read URL for an entry's receipt image (#338),
+   *  resolved by `fetchBudget`. Undefined when the entry has no receipt; null if
+   *  signing failed → the thumbnail shows the "unavailable" fallback. */
+  image_url?: string | null
+}
+
+// ── Expense receipts (#338) ──────────────────────────────────────────────────
+// A receipt reuses the private `chat-images` bucket (#51): same bucket, same
+// `<trip_id>/<uuid>.<ext>` path, same Storage RLS as a chat image or a trip
+// photo. Nothing new is exposed — a receipt is exactly as private as a chat
+// image, and this api.ts stays the only place the budget feature touches
+// Supabase (the composer calls these helpers).
+export const RECEIPT_BUCKET = 'chat-images'
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+// Mirrors the bucket's server-side MIME allowlist (see the chat-images migration).
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+/** Signed URLs live an hour; a page refetch renews them well inside that, so a
+ *  receipt never blanks out mid-session. */
+const SIGNED_URL_TTL_SECONDS = 60 * 60
+
+/** Reject a non-image or oversized file up front. Returns an error string for a
+ *  toast, or null when the file is acceptable. */
+export function validateReceipt(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) return 'That file isn’t a supported image (PNG, JPEG, GIF, or WebP).'
+  if (file.size > MAX_IMAGE_BYTES) return 'That image is over 5 MB — please pick a smaller one.'
+  return null
+}
+
+/** Upload a receipt to the private bucket and return its object path. The path's
+ *  first segment is the trip id the Storage RLS checks. */
+export async function uploadReceipt(tripId: string, file: File): Promise<string> {
+  const ext = file.type.split('/')[1] ?? 'bin'
+  const imagePath = `${tripId}/${crypto.randomUUID()}.${ext}`
+  const { error } = await supabase.storage
+    .from(RECEIPT_BUCKET)
+    .upload(imagePath, file, { contentType: file.type, upsert: false })
+  if (error) throw error
+  return imagePath
+}
+
+/** Best-effort removal of a receipt object, so a replaced/removed receipt or a
+ *  failed save doesn't litter Storage. Never throws — a Storage hiccup must not
+ *  block the visible action (mirrors chat images / trip photos). */
+export async function removeReceiptObject(imagePath: string): Promise<void> {
+  await supabase.storage.from(RECEIPT_BUCKET).remove([imagePath]).catch(() => {})
+}
+
+/** The trip's expense rows, newest first, each receipt's short-lived signed read
+ *  URL resolved in the same round-trip (the bucket is private). Exported as a
+ *  plain function (not just the hook) so the global search palette can warm this
+ *  same cache key without touching Supabase itself — this api.ts stays the only
+ *  place that reads the table and mints the receipt URLs. */
+export async function fetchBudget(tripId: string): Promise<BudgetEntryWithReceipt[]> {
   const { data, error } = await supabase
     .from('budget_entries')
     .select('*')
     .eq('trip_id', tripId)
     .order('created_at', { ascending: false })
   if (error) throw error
-  return data
+  const rows = data as BudgetEntryWithReceipt[]
+  const paths = [...new Set(rows.map((e) => e.image_path).filter((p): p is string => !!p))]
+  if (paths.length > 0) {
+    // A signing failure must degrade to "receipt unavailable", never break the
+    // whole list — so it's caught, not thrown out of the query.
+    try {
+      const { data: signed } = await supabase.storage
+        .from(RECEIPT_BUCKET)
+        .createSignedUrls(paths, SIGNED_URL_TTL_SECONDS)
+      const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]))
+      for (const e of rows) if (e.image_path) e.image_url = urls.get(e.image_path) ?? null
+    } catch {
+      /* leave image_url unset → the thumbnail shows the unavailable fallback */
+    }
+  }
+  return rows
 }
 
 export function useBudget(tripId: string) {
@@ -51,6 +115,10 @@ export interface BudgetInput {
   paid_by: string | null
   entry_date: string | null
   notes: string | null
+  /** Receipt object path (#338), or null to clear it. Optional: callers that
+   *  never attach a receipt (e.g. the itinerary "Add to budget" link) omit it
+   *  and the column stays null. */
+  image_path?: string | null
 }
 
 /**
@@ -133,9 +201,13 @@ export function useUpdateBudgetEntry(tripId: string) {
 export function useDeleteBudgetEntry(tripId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, imagePath }: { id: string; imagePath?: string | null }) => {
+      // Delete the row first (that's the visible action); then clean up its
+      // receipt object best-effort so a Storage hiccup never blocks the delete
+      // — the same order chat images (#51) and trip photos (#294) use.
       const { error } = await supabase.from('budget_entries').delete().eq('id', id)
       if (error) throw error
+      if (imagePath) await removeReceiptObject(imagePath)
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not delete that expense')),
