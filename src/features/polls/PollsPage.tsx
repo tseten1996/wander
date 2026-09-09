@@ -4,7 +4,8 @@ import { Controller, useFieldArray, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  Check, Clock, Crown, Lock, LockOpen, MoreHorizontal, Plus, Trash2, Vote as VoteIcon, X,
+  Check, ChevronDown, Clock, Crown, Lock, LockOpen, MessageCircle, MoreHorizontal, Plus,
+  Trash2, Vote as VoteIcon, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -31,6 +32,8 @@ import {
 } from '@/components/ui/select'
 import { searchAnchorId } from '@/features/search/anchor'
 import { LinkChip } from '@/features/itinerary/links'
+import { CommentsSection } from '@/features/itinerary/comments/CommentsSection'
+import { useCommentCounts } from '@/features/itinerary/comments/api'
 import { cn, isMobileViewport, timeAgo } from '@/lib/utils'
 import type { PollCategory } from '@/types'
 
@@ -100,6 +103,56 @@ function OptionThumb({ url }: { url: string }) {
       className="size-11 shrink-0 rounded-lg border border-line object-cover"
       onError={() => setFailed(true)}
     />
+  )
+}
+
+/**
+ * Discussion pinned to the poll itself (#337, epic #313 slice 3): "why beach
+ * over museum" is the argument a group has around a vote, and today it happens
+ * in the trip chat and scrolls away. Pure reuse — the same `CommentsSection`
+ * and `useCommentCounts` the itinerary (#314) and budget (#330) already mount,
+ * on the `poll` entity type. Collapsed by default so a poll with no discussion
+ * looks exactly as it did before this slice; the trigger surfaces the live
+ * count when there is one (every card shares the one trip-wide count query, so
+ * this is a single request however many polls are on screen) and opens the
+ * thread on demand. The count and the open thread both refresh live off the
+ * existing realtime `comments` subscription — no manual wiring here.
+ */
+function PollComments({ pollId }: { pollId: string }) {
+  const { trip } = useTripContext()
+  const counts = useCommentCounts(trip.id, 'poll')
+  const count = counts.data?.get(pollId) ?? 0
+  const [open, setOpen] = React.useState(false)
+  const panelId = React.useId()
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        className="inline-flex min-h-11 items-center gap-1.5 text-xs font-medium text-muted transition-colors hover:text-ink md:min-h-0 md:py-1"
+      >
+        <MessageCircle className="size-4 shrink-0" aria-hidden />
+        {count > 0 ? (
+          <span className="tabular-nums">
+            {count} {count === 1 ? 'comment' : 'comments'}
+          </span>
+        ) : (
+          <span>Discuss</span>
+        )}
+        <ChevronDown
+          className={cn('size-4 shrink-0 transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div id={panelId} className="mt-1">
+          <CommentsSection entityType="poll" entityId={pollId} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -249,6 +302,7 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
             {myVote ? 'Tap your choice again to remove your vote.' : 'Tap an option to vote.'}
           </p>
         )}
+        <PollComments pollId={poll.id} />
       </Card>
     </motion.div>
   )
