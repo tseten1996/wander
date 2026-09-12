@@ -701,6 +701,19 @@ select pg_temp.expect_dml('comments: non-author member cannot delete another''s'
 select pg_temp.expect_dml('comments: author can delete own',                   'aaaa0000-0000-0000-0000-000000000003', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000002'$$, 1);
 select pg_temp.expect_dml('comments: owner can delete a member comment',       'aaaa0000-0000-0000-0000-000000000001', false, $$delete from comments where id='ab210000-0000-4000-8000-000000000001'$$, 1);
 
+-- comments on a POLL (#337, epic #313 slice 3): the CHECK widens to a third
+-- entity_type but the RLS policies are entity-agnostic (member-scoped read,
+-- self-attributed insert, author-or-owner delete). This pins the new entity to
+-- the same trust path — a `poll` comment is neither more nor less visible or
+-- writable than an itinerary one. Seeded on poll dddd..01 ("Poll by F").
+insert into public.comments (id, trip_id, entity_type, entity_id, member_id, body) values
+  ('ab210000-0000-4000-8000-000000000003', 'bbbb0000-0000-0000-0000-000000000001', 'poll', 'dddd0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'Poll comment by F');
+select pg_temp.expect_count('comments(poll): member sees the poll thread',      'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from comments where entity_type='poll' and entity_id='dddd0000-0000-0000-0000-000000000001'$$, 1);
+select pg_temp.expect_count('comments(poll): cross-trip attacker sees none',    'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from comments where entity_type='poll' and entity_id='dddd0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_dml('comments(poll): member can comment as self',         'aaaa0000-0000-0000-0000-000000000003', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','poll','dddd0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','mine')$$, 1);
+select pg_temp.expect_dml('comments(poll): member cannot forge authorship',     'aaaa0000-0000-0000-0000-000000000003', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','poll','dddd0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','forged')$$, -1);
+select pg_temp.expect_dml('comments(poll): outsider cannot insert',             'aaaa0000-0000-0000-0000-000000000005', false, $$insert into comments(trip_id, entity_type, entity_id, member_id, body) values('bbbb0000-0000-0000-0000-000000000001','poll','dddd0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','x')$$, -1);
+
 -- ── trip_photos (#294, epic #205 slice 4) — direct-upload gallery pointer into
 --    the private chat-images bucket. Trust shape (20260825142200_trip_photos.sql):
 --    member-read, self-attributed insert (member_id = my_member_id), uploader-OR-
