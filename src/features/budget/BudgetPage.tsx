@@ -5,18 +5,19 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  ArrowRight, Check, HandCoins, MapPin, MoreHorizontal, Pencil, PiggyBank, Plus, Scale,
-  Trash2, Undo2,
+  ArrowRight, Check, HandCoins, ImageOff, MapPin, MoreHorizontal, Pencil, PiggyBank, Plus,
+  Receipt, Scale, Trash2, Undo2, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import { useItinerary } from '@/features/itinerary/api'
 import { searchAnchorId } from '@/features/search/anchor'
 import {
-  useBudget, useCreateBudgetEntry, useCreateRepayment, useDeleteBudgetEntry, useDeleteRepayment,
-  useRates, useRepayments, useUpdateBudgetEntry,
-  type BudgetInput, type RepaymentInput,
+  removeReceiptObject, uploadReceipt, useBudget, useCreateBudgetEntry, useCreateRepayment,
+  useDeleteBudgetEntry, useDeleteRepayment, useRates, useRepayments, useUpdateBudgetEntry,
+  validateReceipt, type BudgetEntryWithReceipt, type BudgetInput, type RepaymentInput,
 } from './api'
+import { ImageLightbox } from '@/features/messages/ImageLightbox'
 import {
   CURRENCIES, conversionRate, isSupportedCurrency, seededExpenseRate, toCents, type RateTable,
 } from '@/lib/rates'
@@ -232,13 +233,23 @@ function EntryDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  entry?: BudgetEntry
+  entry?: BudgetEntryWithReceipt
 }) {
   const { trip, me, members } = useTripContext()
   const createEntry = useCreateBudgetEntry(trip.id, me.id, members.map((m) => m.id))
   const updateEntry = useUpdateBudgetEntry(trip.id)
   const rates = useRates(trip.currency)
   const tripCurrency = trip.currency.toUpperCase()
+
+  // Receipt (#338). The picked-but-not-yet-saved file, a flag that the member
+  // cleared an existing receipt, and whether the lightbox is open. Held outside
+  // react-hook-form because a File isn't a form value and its object URL needs
+  // its own lifecycle. Uploaded on submit so the row only ever points at an
+  // object that exists (mirrors chat images / trip photos).
+  const [receiptFile, setReceiptFile] = React.useState<File | null>(null)
+  const [receiptCleared, setReceiptCleared] = React.useState(false)
+  const [receiptZoom, setReceiptZoom] = React.useState(false)
+  const receiptInputRef = React.useRef<HTMLInputElement>(null)
 
   // Whether the member has hand-typed a rate *for the currently-selected
   // currency* — once true we stop re-seeding it so their override sticks. Reset
@@ -288,6 +299,11 @@ function EntryDialog({
       // currency's rate in place after a currency change and wrote a wrong
       // converted amount into settle-up (#145).
       setRateEdited(false)
+      // Drop any receipt picked/cleared in a previous opening (#338) so the
+      // dialog reflects the entry's saved state, not stale local edits.
+      setReceiptFile(null)
+      setReceiptCleared(false)
+      if (receiptInputRef.current) receiptInputRef.current.value = ''
       // A saved entry that already carries a deliberate split — a real
       // participant subset or a weighted `shares` map — is treated as
       // user-owned from the start, so re-opening it and nudging the date never
@@ -391,6 +407,47 @@ function EntryDialog({
     [members, trip, form]
   )
 
+  // Object URL for previewing a freshly-picked receipt before upload; revoked
+  // when the file changes or the dialog closes so it can't leak (#338).
+  const [receiptPreview, setReceiptPreview] = React.useState<string | null>(null)
+  React.useEffect(() => {
+    if (!receiptFile) {
+      setReceiptPreview(null)
+      return
+    }
+    const url = URL.createObjectURL(receiptFile)
+    setReceiptPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [receiptFile])
+
+  // What the receipt panel shows right now: a just-picked file wins, else the
+  // entry's saved receipt (a signed URL resolved by fetchBudget), unless the
+  // member cleared it this session.
+  const savedReceiptUrl = !receiptCleared && entry?.image_path ? entry.image_url ?? null : null
+  const shownReceiptUrl = receiptFile ? receiptPreview : savedReceiptUrl
+  const hasReceipt = receiptFile != null || (!receiptCleared && !!entry?.image_path)
+
+  function pickReceipt(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const problem = validateReceipt(file)
+    if (problem) {
+      toast.error(problem)
+      e.target.value = ''
+      return
+    }
+    setReceiptFile(file)
+    setReceiptCleared(false)
+  }
+
+  function clearReceipt() {
+    setReceiptFile(null)
+    // Only a *saved* receipt needs the cleared flag; clearing a not-yet-saved
+    // pick just drops the file.
+    setReceiptCleared(!!entry?.image_path)
+    if (receiptInputRef.current) receiptInputRef.current.value = ''
+  }
+
   async function onSubmit(values: BudgetFormValues) {
     const currency = (values.currency || tripCurrency).toUpperCase()
     const foreign = currency !== tripCurrency
@@ -424,6 +481,24 @@ function EntryDialog({
       values.split_mode === 'equal'
         ? null
         : Object.fromEntries(picked.map((id) => [id, Number(values.weights?.[id])]))
+    // Resolve the receipt (#338): upload a newly-picked file, keep or clear an
+    // existing one. Upload before the row write so it never points at an object
+    // that doesn't exist; a failed upload aborts before touching the row.
+    let uploadedPath: string | null = null
+    if (receiptFile) {
+      try {
+        uploadedPath = await uploadReceipt(trip.id, receiptFile)
+      } catch (e) {
+        toast.error(friendlyError(e, 'Could not upload that receipt'))
+        return
+      }
+    }
+    const image_path = receiptFile
+      ? uploadedPath
+      : receiptCleared
+        ? null
+        : (entry?.image_path ?? null)
+
     const payload: BudgetInput = {
       title: values.title.trim(),
       category: values.category as BudgetCategory,
@@ -438,13 +513,22 @@ function EntryDialog({
       shares,
       entry_date: values.entry_date || null,
       notes: values.notes?.trim() || null,
+      image_path,
     }
     try {
       if (entry) await updateEntry.mutateAsync({ id: entry.id, ...payload })
       else await createEntry.mutateAsync(payload)
+      // Row saved: best-effort remove a receipt the save replaced or cleared, so
+      // the swapped-out object doesn't linger (mirrors chat images / photos).
+      if (entry?.image_path && entry.image_path !== image_path) {
+        await removeReceiptObject(entry.image_path)
+      }
       onOpenChange(false)
     } catch {
-      // toasted by the mutation's onError
+      // The row write failed after a successful upload — remove the now-orphan
+      // object so a retry doesn't litter Storage. Other errors are toasted by
+      // the mutation's onError.
+      if (uploadedPath) await removeReceiptObject(uploadedPath)
     }
   }
 
@@ -831,10 +915,83 @@ function EntryDialog({
             />
             {err.notes && <p className="text-xs text-danger">{err.notes.message}</p>}
           </div>
+
+          {/* Receipt (#338): attach the proof of the charge to the expense
+              itself, so "what was this €80?" is settled on the entry, not in
+              chat. Reuses the private chat-images bucket + signed-URL rendering
+              + lightbox; a saved receipt shows a thumbnail, a not-yet-saved pick
+              a local preview. */}
+          <div className="space-y-1.5">
+            <Label htmlFor="b-receipt">Receipt</Label>
+            <input
+              ref={receiptInputRef}
+              id="b-receipt"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              className="sr-only"
+              onChange={pickReceipt}
+            />
+            {hasReceipt ? (
+              <div className="flex items-center gap-3">
+                {shownReceiptUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setReceiptZoom(true)}
+                    aria-label="View receipt full size"
+                    className="size-16 shrink-0 overflow-hidden rounded-lg border border-line bg-sunken transition-opacity hover:opacity-90"
+                  >
+                    <img src={shownReceiptUrl} alt="Expense receipt" className="size-full object-cover" />
+                  </button>
+                ) : (
+                  <div
+                    className="flex size-16 shrink-0 flex-col items-center justify-center rounded-lg border border-line bg-sunken text-muted"
+                    aria-label="Receipt unavailable"
+                  >
+                    <ImageOff className="size-5" aria-hidden />
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => receiptInputRef.current?.click()}
+                  >
+                    Replace
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={clearReceipt}
+                    className="text-danger hover:text-danger"
+                  >
+                    <X aria-hidden /> Remove
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full justify-center"
+                onClick={() => receiptInputRef.current?.click()}
+              >
+                <Receipt aria-hidden /> Attach receipt
+              </Button>
+            )}
+            <p className="text-xs text-muted">A photo of the bill — PNG, JPEG, GIF or WebP, up to 5 MB.</p>
+          </div>
+
           <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {entry ? 'Save changes' : 'Add expense'}
           </Button>
         </form>
+
+        <ImageLightbox
+          src={shownReceiptUrl}
+          open={receiptZoom}
+          onOpenChange={setReceiptZoom}
+          alt="Expense receipt"
+        />
         {/* Argue "who was here / why this split" on the expense itself (#330,
             epic #313 slice 2). Only a saved entry has an id to attach comments
             to, so the thread appears when editing, never in the add flow —
@@ -884,10 +1041,15 @@ function LinkedItineraryChip({ entryId }: { entryId: string }) {
   )
 }
 
-function EntryRow({ entry }: { entry: BudgetEntry }) {
+function EntryRow({ entry }: { entry: BudgetEntryWithReceipt }) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const deleteEntry = useDeleteBudgetEntry(trip.id)
   const [editOpen, setEditOpen] = React.useState(false)
+  // Receipt preview (#338) is a *read* surface: any trip member can view it,
+  // even one who can't edit the expense (the edit dialog only renders for the
+  // creator/owner). A signed URL resolved by fetchBudget.
+  const [receiptView, setReceiptView] = React.useState(false)
+  const receiptUrl = entry.image_path ? entry.image_url ?? null : null
   const payer = entry.paid_by ? membersById.get(entry.paid_by) : null
   // Owner or the entry's creator may modify it. This gates both write paths —
   // Edit and Delete — so a member can't silently rewrite `paid_by`/amount (which
@@ -910,6 +1072,25 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
         </p>
         <LinkedItineraryChip entryId={entry.id} />
       </div>
+      {entry.image_path && (
+        receiptUrl ? (
+          <button
+            type="button"
+            onClick={() => setReceiptView(true)}
+            aria-label={`View receipt for ${entry.title}`}
+            className="size-11 shrink-0 overflow-hidden rounded-lg border border-line bg-sunken transition-opacity hover:opacity-90"
+          >
+            <img src={receiptUrl} alt="" className="size-full object-cover" />
+          </button>
+        ) : (
+          <span
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-line bg-sunken text-muted"
+            aria-label="Receipt unavailable"
+          >
+            <ImageOff className="size-4" aria-hidden />
+          </span>
+        )
+      )}
       {payer && <MemberAvatar name={payer.display_name} color={payer.color} size="sm" />}
       <div className="w-24 text-right">
         <p className={cn('text-sm font-semibold tabular-nums', entry.actual == null && 'text-muted')}>
@@ -938,9 +1119,10 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
             <DropdownMenuItem
               destructive
               onClick={() =>
-                deleteEntry.mutate(entry.id, {
-                  onSuccess: () => toast.success('Expense deleted'),
-                })
+                deleteEntry.mutate(
+                  { id: entry.id, imagePath: entry.image_path },
+                  { onSuccess: () => toast.success('Expense deleted') }
+                )
               }
             >
               <Trash2 /> Delete
@@ -951,6 +1133,12 @@ function EntryRow({ entry }: { entry: BudgetEntry }) {
       {canModify && (
         <EntryDialog open={editOpen} onOpenChange={setEditOpen} entry={entry} />
       )}
+      <ImageLightbox
+        src={receiptUrl}
+        open={receiptView}
+        onOpenChange={setReceiptView}
+        alt={`Receipt for ${entry.title}`}
+      />
     </div>
   )
 }
