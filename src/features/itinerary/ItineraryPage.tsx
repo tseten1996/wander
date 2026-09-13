@@ -23,7 +23,9 @@ import {
 } from './api'
 import { ITINERARY_META } from './meta'
 import { ItemDialog, type ItineraryFormValues } from './ItemDialog'
-import { useCommentCounts } from './comments/api'
+import { useCommentActivity } from './comments/api'
+import { isEntityUnread } from './comments/tally'
+import { useCommentSeen } from './comments/useCommentSeen'
 import { useDestinations } from '@/features/destinations/api'
 import { groupDaysByLeg, hasLegs } from '@/features/destinations/legs'
 import { buildDayIndex, type DayInfo } from './days'
@@ -94,22 +96,35 @@ function conflictLabel(item: ItineraryItem): string {
 }
 
 /**
- * A quiet "there's discussion here" count on an itinerary item (#314). Renders
- * nothing when the item has no comments, so an item without a thread looks
- * exactly as it did before this feature. Every card reads the one trip-wide
- * `useCommentCounts` query (a shared cache key), so this is a single request
- * however many items are on screen.
+ * A quiet "there's discussion here" count on an itinerary item (#314), with an
+ * unread dot when the newest comment is new to you (#342). Renders nothing when
+ * the item has no comments, so an item without a thread looks exactly as it did
+ * before. Every card reads the one trip-wide `useCommentActivity` query (a
+ * shared cache key), so this is a single request however many items are on
+ * screen; the dot updates live off the same realtime `comments` subscription.
  */
 function CommentCountBadge({ itemId }: { itemId: string }) {
-  const { trip } = useTripContext()
-  const counts = useCommentCounts(trip.id, 'itinerary_item')
-  const count = counts.data?.get(itemId) ?? 0
+  const { trip, me } = useTripContext()
+  const activity = useCommentActivity(trip.id, 'itinerary_item')
+  const { state } = useCommentSeen(trip.id, 'itinerary_item', me.id)
+  const entry = activity.data?.get(itemId)
+  const count = entry?.count ?? 0
   if (count === 0) return null
+  const unread = isEntityUnread(entry, state.seen[itemId], state.baseline, me.id)
   return (
     <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted">
       <MessageCircle className="size-3.5 shrink-0" aria-hidden />
       <span className="tabular-nums">{count}</span>
       <span className="sr-only">{count === 1 ? 'comment' : 'comments'}</span>
+      {unread && (
+        <>
+          <span
+            aria-hidden
+            className="size-1.5 rounded-full bg-accent"
+          />
+          <span className="sr-only">— unread</span>
+        </>
+      )}
     </span>
   )
 }
