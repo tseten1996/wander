@@ -104,7 +104,11 @@ trips ────────────┬─ members            (person ↔ 
   │               ├─ notes               (markdown)
   │               ├─ inspiration_items   (image / link board)
   │               ├─ trip_photos         (pointers to directly-uploaded gallery photos)
+  │               ├─ comments            (polymorphic threads on itinerary items, budget entries, polls; member-read, self-insert, author/owner-delete, no update)
   │               ├─ notifications       (per-recipient inbox: type, entity, read state)
+  │               ├─ push_subscriptions  (per-member Web Push opt-in; own-rows-only, device-private)
+  │               ├─ ai_usage            (AI call ledger + per-trip quota; member-read own trip, service-role-only writes)
+  │               ├─ trip_preferences    (one row per trip: stated group travel prefs; group read+write, self-attributed, no delete)
   │               ├─ error_reports       (write-only client error telemetry)
   │               └─ activity            (lightweight event feed)
 ```
@@ -165,6 +169,28 @@ Notable decisions:
   `SELECT` is owner-only for trip-scoped rows, and deploy-level (`trip_id IS
   NULL`) rows are readable only via the dashboard `service_role`. No `UPDATE` /
   `DELETE` policies, so the log is append-only.
+* **AI usage ledger.** Every call to the `/api/ai` Pages Function writes an
+  `ai_usage` row (epic #209) — including refused and failed ones — for
+  observability *and* the quota itself: the function counts a trip's rows in the
+  trailing window and refuses past the limit, so the number shown and the number
+  enforced can never disagree. The quota is **per trip, never per user**, because
+  anonymous invite-link sign-in lets anyone mint unlimited `auth.uid()`s but a
+  trip costs something to create. Members read their own trip's usage
+  (`is_trip_member`); there is **no insert/update/delete policy at all** — the
+  function writes with the `service_role` (which bypasses RLS), so the *absence*
+  of client-write policy is what makes a usage row unforgeable and the quota
+  trustworthy. Not in `supabase_realtime` (read on demand, not shared content).
+* **Trip preferences.** One row per trip (`trip_id` *is* the primary key)
+  holding the group's **stated** travel preferences — pace, budget style,
+  interests/dietary chips, free-text notes — that fold into AI day-context calls
+  (#268, epic #209). Stated, never mined: per `AI-ARCHITECTURE.md` §8.1 it holds
+  only what a member deliberately typed, never a trait inferred from chat. It is
+  **group-owned**: any member reads and writes (`is_trip_member` on both), with
+  the write policies pinning `updated_by` to the caller so no one can forge
+  another as the editor; there is no delete policy (clearing is an UPDATE to
+  null/empty). In `supabase_realtime` — it is shared content edited on a
+  collaborative Settings panel. See [`AI-ARCHITECTURE.md`](./AI-ARCHITECTURE.md)
+  for how this context reaches the model.
 * **Chat images.** A message may carry an optional `image_path` (text-only,
   image-only, or both). Images live in a **private** Storage bucket
   (`public = false`) keyed `<trip_id>/<uuid>.<ext>`; Storage RLS scopes read
@@ -180,6 +206,25 @@ Notable decisions:
   bucket and no new public-read surface. Read is member-scoped, insert is
   self-attributed, delete is uploader-or-owner, and there is no update policy; the
   table is in the `supabase_realtime` publication so an uploaded photo appears live.
+* **Comments** are a single polymorphic thread table (#314, epic #313) whose
+  `entity_type` CHECK now covers `itinerary_item`, `budget_entry` and `poll`,
+  each pinned to its row by a *soft* `entity_id` pointer (no FK, like
+  `notifications.entity_id`). The trust shape is **copied from `messages`**, not
+  invented: any trip member reads (`is_trip_member`), a member inserts only as
+  themselves (`member_id = my_member_id`), the author or owner deletes, and there
+  is deliberately **no update policy** — a comment is immutable, so Postgres
+  denies every direct UPDATE. In the `supabase_realtime` publication, so a
+  comment (and its count badge) appears live for everyone with the thread open.
+* **Push subscriptions** store *which devices* a member has opted into closed-app
+  Web Push on (#267, epic #181). A row is **device-private config, not shared
+  content**: a member may only ever read/write their **own** rows
+  (`member_id = my_member_id`) inside a trip they belong to — no other member,
+  **owner included**, can enumerate a member's devices. The stored `p256dh`/`auth`
+  keys are public by RFC 8291 design (they let a sender *encrypt to* the device;
+  only the browser's private key decrypts), and the one true secret — the VAPID
+  private key — lives solely in the server function's secret store, never here.
+  Deliberately **not** in `supabase_realtime` (no member renders another's
+  subscriptions). The send path (VAPID signing, fan-out) is a follow-up slice.
 * **Public share link** (read-only): an owner mints an unguessable `share_token`
   on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
   read-only itinerary projection through the `get_public_itinerary` (SECURITY
@@ -246,6 +291,8 @@ src/
     ├── photos/              # browsable trip gallery: aggregates chat + inspiration images + direct uploads
     ├── search/              # ⌘/Ctrl-K command-palette over cached trip data
     ├── notifications/       # personal inbox bell (per-recipient, cross-device)
+    ├── ai/                  # AI assist client (starter plan, day-context) → /api/ai Pages Function + usage ledger
+    ├── preferences/         # stated group travel preferences (Settings card, feeds AI day-context)
     ├── me/                  # cross-trip personal view ("my stuff")
     ├── share/               # public read-only itinerary page (token RPC, no session)
     └── settings/            # trip info, members, invite link, share link, danger zone

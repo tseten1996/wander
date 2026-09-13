@@ -66,10 +66,11 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Area | What you get |
 |------|--------------|
 | Dashboard | Cover hero, countdown, planning-progress bar (confetti at 100%), budget summary, upcoming items, live activity feed |
-| Notifications | Personal inbox bell — a per-recipient, cross-device stream of "things that need me" (assigned tasks, opened polls, expenses you owe, @-mentions) with read state |
+| Notifications | Personal inbox bell — a per-recipient, cross-device stream of "things that need me" (assigned tasks, opened polls, expenses you owe, @-mentions) with read state, plus opt-in closed-app **Web Push** so a device can be alerted even when Wander isn't open |
 | Presence | Live "who's here now" avatars in the trip header, driven by Supabase realtime presence |
 | Polls | Categories, expiry, one vote per member, live results, winner highlight, owner/creator close |
 | Chat | Realtime messages, replies, emoji reactions, pinned messages, edit/delete, and @-mentions that notify the mentioned member |
+| Comments | Focused discussion threads pinned to a specific itinerary item, budget entry or poll — the "why beach over museum" argument stays with the thing it's about instead of scrolling away in chat, with a live count badge and unread marker |
 | Questions | Ask → answer → done; anyone can answer |
 | Checklist | Assignees, due dates (overdue badges), notes, optimistic toggles |
 | Destinations | Multi-city trips as an ordered list of legs (place + date range); itinerary, calendar and the trip header read leg-aware (owner-managed) |
@@ -79,6 +80,8 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Calendar | Month view merging travel dates, itinerary, checklist deadlines and payments, with a daily weather forecast (Open-Meteo) |
 | Notes | Shared markdown notes with preview, pinning |
 | Ideas | Pinterest-style masonry board with category filters |
+| Photos | A browsable trip gallery that aggregates every image already in the trip — chat photos and idea-board images — plus direct uploads, into one date-grouped grid with a lightbox |
+| AI | Optional AI assist (starter plan, "improve this day") through a keyless `/api/ai` serverless function, folding in the group's stated travel preferences, with a per-trip usage quota so cost stays bounded |
 | Search | Command-palette search (⌘/Ctrl-K) across polls, chat, checklist, notes and ideas, jumping straight to the match |
 | Share | A read-only public itinerary link — an owner mints an unguessable token so anyone (no account, no edit access) can view the plan; revocable instantly |
 | Settings | Trip details, profile, invite management, members, public share link, export/import JSON, print-to-PDF summary, archive/delete |
