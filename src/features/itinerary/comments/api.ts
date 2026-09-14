@@ -4,7 +4,8 @@ import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
 import { notify } from '@/lib/notify'
 import { extractMentionIds, mentionsToPlainText } from '@/features/messages/mentions'
-import { tallyCommentCounts, truncateMentionTitle } from './tally'
+import { tallyCommentActivity, truncateMentionTitle } from './tally'
+import type { EntityCommentActivity } from './tally'
 import type { Comment, CommentEntityType } from '@/types'
 
 /** A comment thread for one entity (an itinerary item today), oldest-first —
@@ -41,29 +42,33 @@ export function useComments(
 }
 
 /**
- * Per-entity comment counts for a whole trip, as `entity_id → count`. One cheap
- * query drives every count badge in the itinerary list: it selects only the
- * `entity_id` column and tallies client-side, so an item with no comments reads
- * a plain 0 and renders exactly as today. Keyed under a `comment_counts` prefix
- * (distinct from the per-thread `comments` key) so realtime can invalidate both.
+ * Per-entity comment activity for a whole trip, as
+ * `entity_id → {count, newestAt, newestBy}`. One cheap query drives every count
+ * badge *and* its unread dot (#342): it selects only `entity_id, created_at,
+ * member_id` and tallies client-side, so an entity with no comments is absent
+ * from the map and renders exactly as today. Keyed under the `comment_counts`
+ * prefix (distinct from the per-thread `comments` key) so realtime invalidates
+ * both — which is what makes a dot appear live when another member comments.
  */
-export async function fetchCommentCounts(
+export async function fetchCommentActivity(
   tripId: string,
   entityType: CommentEntityType
-): Promise<Map<string, number>> {
+): Promise<Map<string, EntityCommentActivity>> {
   const { data, error } = await supabase
     .from('comments')
-    .select('entity_id')
+    .select('entity_id, created_at, member_id')
     .eq('trip_id', tripId)
     .eq('entity_type', entityType)
   if (error) throw error
-  return tallyCommentCounts(data as { entity_id: string }[])
+  return tallyCommentActivity(
+    data as { entity_id: string; created_at: string; member_id: string | null }[]
+  )
 }
 
-export function useCommentCounts(tripId: string, entityType: CommentEntityType) {
+export function useCommentActivity(tripId: string, entityType: CommentEntityType) {
   return useQuery({
     queryKey: ['comment_counts', tripId, entityType],
-    queryFn: () => fetchCommentCounts(tripId, entityType),
+    queryFn: () => fetchCommentActivity(tripId, entityType),
   })
 }
 

@@ -5,8 +5,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  ArrowRight, Check, HandCoins, ImageOff, MapPin, MoreHorizontal, Pencil, PiggyBank, Plus,
-  Receipt, Scale, Trash2, Undo2, X,
+  ArrowRight, Check, HandCoins, ImageOff, MapPin, MessageCircle, MoreHorizontal, Pencil,
+  PiggyBank, Plus, Receipt, Scale, Trash2, Undo2, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -24,6 +24,9 @@ import {
 import { isForeignEntry, repaymentTripAmount, tripActual, tripEstimated } from './amounts'
 import { suggestedParticipants } from '@/lib/presence'
 import { CommentsSection } from '@/features/itinerary/comments/CommentsSection'
+import { useCommentActivity } from '@/features/itinerary/comments/api'
+import { isEntityUnread } from '@/features/itinerary/comments/tally'
+import { useCommentSeen } from '@/features/itinerary/comments/useCommentSeen'
 import { useRedenominateTrip, useUpdateTripMoney, type TripMoneyInput } from '@/features/trips/api'
 import { friendlyError } from '@/lib/errors'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -1041,6 +1044,37 @@ function LinkedItineraryChip({ entryId }: { entryId: string }) {
   )
 }
 
+/**
+ * A quiet "there's discussion here" count on a budget entry, with an unread dot
+ * when the newest comment is new to you (#342). Mirrors the itinerary badge
+ * (#314), reading the one trip-wide `useCommentActivity` query. The budget
+ * thread lives inside the owner/creator-only edit dialog (#330), so this badge
+ * is rendered only for members who can open it — clicking it opens that dialog,
+ * where mounting `CommentsSection` clears the dot. Renders nothing when the
+ * entry has no comments, so a row without a thread looks exactly as before.
+ */
+function BudgetCommentBadge({ entryId, onOpen }: { entryId: string; onOpen: () => void }) {
+  const { trip, me } = useTripContext()
+  const activity = useCommentActivity(trip.id, 'budget_entry')
+  const { state } = useCommentSeen(trip.id, 'budget_entry', me.id)
+  const entry = activity.data?.get(entryId)
+  const count = entry?.count ?? 0
+  if (count === 0) return null
+  const unread = isEntityUnread(entry, state.seen[entryId], state.baseline, me.id)
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="mt-1 inline-flex min-h-11 items-center gap-1 text-xs text-muted transition-colors hover:text-ink md:min-h-0"
+      aria-label={`${count} ${count === 1 ? 'comment' : 'comments'}${unread ? ', unread' : ''} — open discussion`}
+    >
+      <MessageCircle className="size-3.5 shrink-0" aria-hidden />
+      <span className="tabular-nums">{count}</span>
+      {unread && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />}
+    </button>
+  )
+}
+
 function EntryRow({ entry }: { entry: BudgetEntryWithReceipt }) {
   const { trip, me, isOwner, membersById } = useTripContext()
   const deleteEntry = useDeleteBudgetEntry(trip.id)
@@ -1071,6 +1105,9 @@ function EntryRow({ entry }: { entry: BudgetEntryWithReceipt }) {
           {weighted && ' · split unevenly'}
         </p>
         <LinkedItineraryChip entryId={entry.id} />
+        {canModify && (
+          <BudgetCommentBadge entryId={entry.id} onOpen={() => setEditOpen(true)} />
+        )}
       </div>
       {entry.image_path && (
         receiptUrl ? (
