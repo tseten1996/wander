@@ -1,0 +1,89 @@
+{
+  "//": "Fixture for #348 (stays / lodging) screenshots — the Stays card + the calendar day surface. Two stays span the trip; the calendar opens on the trip's first day, which the Higashiyama hotel covers.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de300000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z"
+      }
+    ],
+    "stays": [
+      {
+        "id": "57300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "name": "Hotel Kanra Kyoto",
+        "address": "185 Kitamachi, Shimogyo Ward, Kyoto",
+        "latitude": 34.9931,
+        "longitude": 135.7595,
+        "check_in": "2026-11-14",
+        "check_out": "2026-11-18",
+        "confirmation_code": "KANRA-6F2Q9",
+        "booking_url": "https://example.com/booking/kanra",
+        "created_at": "2026-07-04T00:00:00Z"
+      },
+      {
+        "id": "57300000-0000-4000-8000-000000000002",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444402",
+        "name": "Arashiyama Ryokan",
+        "address": "Sagatenryuji, Ukyo Ward, Kyoto",
+        "latitude": 35.0094,
+        "longitude": 135.6737,
+        "check_in": "2026-11-18",
+        "check_out": "2026-11-21",
+        "confirmation_code": "RYOKAN-88T1",
+        "booking_url": null,
+        "created_at": "2026-07-04T00:00:00Z"
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de300000-0000-4000-8000-000000000001"
+  },
+  "routes": ["/trip/{trip}/calendar"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
