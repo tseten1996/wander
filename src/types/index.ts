@@ -63,6 +63,30 @@ export interface Destination {
   created_at: string
 }
 
+/** A place the trip sleeps — hotel / Airbnb / friend's couch (#348, epic #346).
+ *  A content row: any member adds one as themselves; the author or the trip
+ *  owner may edit or remove it. A day belongs to the stay whose half-open
+ *  `[check_in, check_out)` contains it. */
+export interface Stay {
+  id: string
+  trip_id: string
+  /** Author; null once that member is removed (their stays remain on the trip). */
+  member_id: string | null
+  name: string
+  /** Optional address + geocoded pin from the shared place autocomplete. */
+  address: string | null
+  latitude: number | null
+  longitude: number | null
+  /** Optional stay window; a null on either side is an open/dateless stay. */
+  check_in: string | null
+  check_out: string | null
+  /** Front-desk confirmation code (copy-to-clipboard in the UI). */
+  confirmation_code: string | null
+  /** Booking link; rendered only as a sanitized http(s) external link. */
+  booking_url: string | null
+  created_at: string
+}
+
 export interface Member {
   id: string
   trip_id: string

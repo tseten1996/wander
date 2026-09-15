@@ -743,6 +743,35 @@ select pg_temp.expect_dml('trip_photos: non-uploader member cannot delete anothe
 select pg_temp.expect_dml('trip_photos: uploader can delete own',               'aaaa0000-0000-0000-0000-000000000002', false, $$delete from trip_photos where id='ab220000-0000-4000-8000-000000000001'$$, 1);
 select pg_temp.expect_dml('trip_photos: owner can delete a member photo',       'aaaa0000-0000-0000-0000-000000000001', false, $$delete from trip_photos where id='ab220000-0000-4000-8000-000000000002'$$, 1);
 
+-- ── stays (#348, epic #346 slice 1) — lodging content table. Trust shape
+--    (20260915142000_stays.sql): member-read, self-attributed insert
+--    (member_id = my_member_id), and author-OR-OWNER update AND delete (stricter
+--    than the any-member update on notes/itinerary — a booking record). A CHECK
+--    keeps check_out >= check_in. Seeded on trip A: one stay by F, one by G, so
+--    the update/delete asymmetry has concrete targets. ─────────────────────────
+insert into public.stays (id, trip_id, member_id, name, check_in, check_out) values
+  ('ab230000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'Hotel by F', '2026-06-01', '2026-06-04'),
+  ('ab230000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'Airbnb by G', '2026-06-04', '2026-06-07');
+-- reads: any member sees the trip's stays; outsider and cross-trip attacker see none
+select pg_temp.expect_count('stays: member sees the trip stays',                'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from stays where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 2);
+select pg_temp.expect_count('stays: outsider sees none',                        'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from stays where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('stays: cross-trip attacker sees none',             'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from stays where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- inserts: self-attributed only — no forged authorship, no outsider, no cross-trip
+select pg_temp.expect_dml('stays: member can add a stay as self',               'aaaa0000-0000-0000-0000-000000000002', false, $$insert into stays(trip_id, member_id, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','Mine')$$, 1);
+select pg_temp.expect_dml('stays: member cannot forge another''s authorship',   'aaaa0000-0000-0000-0000-000000000002', false, $$insert into stays(trip_id, member_id, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','Forged')$$, -1);
+select pg_temp.expect_dml('stays: outsider cannot insert',                      'aaaa0000-0000-0000-0000-000000000005', false, $$insert into stays(trip_id, member_id, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','X')$$, -1);
+select pg_temp.expect_dml('stays: cross-trip attacker cannot insert',           'aaaa0000-0000-0000-0000-000000000004', false, $$insert into stays(trip_id, member_id, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','X')$$, -1);
+-- the CHECK constraint rejects a checkout-before-checkin stay (raises → -1)
+select pg_temp.expect_dml('stays: check_out before check_in is rejected',       'aaaa0000-0000-0000-0000-000000000002', false, $$insert into stays(trip_id, member_id, name, check_in, check_out) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','Bad','2026-06-05','2026-06-02')$$, -1);
+-- update asymmetry: a third member (G) cannot edit F's stay; the author and the owner can
+select pg_temp.expect_dml('stays: non-author member cannot update another''s',  'aaaa0000-0000-0000-0000-000000000003', false, $$update stays set name='hijack' where id='ab230000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('stays: author can update own',                       'aaaa0000-0000-0000-0000-000000000002', false, $$update stays set name='Hotel by F ✔' where id='ab230000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('stays: owner can update a member stay',              'aaaa0000-0000-0000-0000-000000000001', false, $$update stays set name='Airbnb (owner note)' where id='ab230000-0000-4000-8000-000000000002'$$, 1);
+-- delete asymmetry: mirrors update — non-author denied, author and owner allowed
+select pg_temp.expect_dml('stays: non-author member cannot delete another''s',  'aaaa0000-0000-0000-0000-000000000003', false, $$delete from stays where id='ab230000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('stays: author can delete own',                       'aaaa0000-0000-0000-0000-000000000002', false, $$delete from stays where id='ab230000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('stays: owner can delete a member stay',              'aaaa0000-0000-0000-0000-000000000001', false, $$delete from stays where id='ab230000-0000-4000-8000-000000000002'$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
