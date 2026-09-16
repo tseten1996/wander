@@ -6,7 +6,7 @@ import {
   isSameMonth, isToday, parseISO, startOfMonth, startOfWeek,
 } from 'date-fns'
 import {
-  CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane,
+  BedDouble, CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane,
   PlaneLanding, PlaneTakeoff,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -14,6 +14,9 @@ import { useTripContext } from '@/hooks/useTrip'
 import { useDestinations } from '@/features/destinations/api'
 import { hasRange, legForDay } from '@/features/destinations/legs'
 import { legColor, legHeading } from '@/features/destinations/route'
+import { useStays } from '@/features/stays/api'
+import { stayForDay } from '@/features/stays/dates'
+import { StaysCard } from '@/features/stays/StaysCard'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ArrivalsBoard } from './ArrivalsBoard'
 import { Button } from '@/components/ui/button'
@@ -148,6 +151,7 @@ export default function CalendarPage() {
   const { trip, members } = useTripContext()
   const events = useCalendarEvents(trip.id)
   const destinations = useDestinations(trip.id).data ?? []
+  const stays = useStays(trip.id).data ?? []
   const weather = useTripWeather(trip, destinations)
   const { unit } = useTempUnit()
   // Legs that own days (a full date range). Days in a leg's range are tinted
@@ -172,6 +176,9 @@ export default function CalendarPage() {
   const selectedLeg = rangedLegs.length
     ? legForDay(format(selected, 'yyyy-MM-dd'), rangedLegs)
     : null
+  // Which stay covers the selected day (half-open [check_in, check_out)), or
+  // null when none does — the "where are we sleeping tonight?" answer (#348).
+  const selectedStay = stayForDay(selectedIso, stays)
 
   return (
     <div>
@@ -237,13 +244,18 @@ export default function CalendarPage() {
               // in no leg keep the neutral trip-range tint.
               const leg = rangedLegs.length ? legForDay(format(day, 'yyyy-MM-dd'), rangedLegs) : null
               const legTint = leg ? legColor(leg, rangedLegs) : null
+              // The stay covering this day (half-open window), if any (#348).
+              const dayStay = stayForDay(iso, stays)
+              const cellTitle = [leg && legHeading(leg), dayStay && `Staying: ${dayStay.name}`]
+                .filter(Boolean)
+                .join(' · ')
               return (
                 <button
                   key={day.toISOString()}
                   type="button"
                   onClick={() => setSelected(day)}
                   style={legTint ? { backgroundColor: `${legTint}22` } : undefined}
-                  title={leg ? legHeading(leg) : undefined}
+                  title={cellTitle || undefined}
                   className={cn(
                     // No forced aspect ratio on mobile: with up to 4 event
                     // dots per day, a strict square can be shorter than its
@@ -271,6 +283,12 @@ export default function CalendarPage() {
                       <span key={e.id} className={cn('size-1.5 rounded-full', e.color)} />
                     ))}
                   </span>
+                  {dayStay && (
+                    <BedDouble
+                      className="size-3 shrink-0 text-primary/70"
+                      aria-label={`Staying at ${dayStay.name}`}
+                    />
+                  )}
                   <DayPresence arrivals={dayArrivals} departures={dayDepartures} />
                   {dayWeather && (() => {
                     const { label, Icon } = describeWeather(dayWeather.code)
@@ -296,6 +314,10 @@ export default function CalendarPage() {
 
       <ArrivalsBoard members={members} />
 
+      <div className="mt-5">
+        <StaysCard />
+      </div>
+
       <motion.div
         key={selected.toISOString()}
         initial={{ opacity: 0, y: 8 }}
@@ -310,6 +332,17 @@ export default function CalendarPage() {
           <p className="mb-2.5 flex items-center gap-1.5 text-sm text-muted">
             <MapPin className="size-3.5 shrink-0 text-primary" aria-hidden />
             {legHeading(selectedLeg)}
+          </p>
+        )}
+        {selectedStay && (
+          <p className="mb-2.5 flex items-start gap-1.5 text-sm text-muted">
+            <BedDouble className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
+            <span className="min-w-0">
+              <span className="font-medium text-ink">{selectedStay.name}</span>
+              {selectedStay.address && (
+                <span className="block break-words text-xs text-muted">{selectedStay.address}</span>
+              )}
+            </span>
           </p>
         )}
         {(selectedArrivals.length > 0 || selectedDepartures.length > 0) && (
@@ -371,6 +404,7 @@ export default function CalendarPage() {
         <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-violet-500" /> Payments</span>
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-success" /> Arrivals</span>
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-accent" /> Departures</span>
+        <span className="flex items-center gap-1.5"><BedDouble className="size-3 text-primary/70" /> Staying</span>
       </div>
     </div>
   )

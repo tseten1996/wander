@@ -92,6 +92,7 @@ All tables live in `public`, keyed by `uuid`. Every content table carries a
 ```
 trips ────────────┬─ members            (person ↔ trip, role, name, color, arrival/departure dates)
   │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
+  │               ├─ stays              (lodging: name, address+pin, check-in/out, confirmation code, booking url; member-read, self-insert, author/owner update+delete)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
   │               ├─ availability_polls ─ availability_candidates ─ availability_responses  (owner-run date poll; one response per member per candidate)
   │               ├─ messages ─ message_reactions   (threads via reply_to; inline images via image_path)
@@ -127,6 +128,15 @@ Notable decisions:
   `[start_date, end_date]` (a CHECK can't reach the parent `trips` row). The
   calendar day cells and the header's "who's here today" read these; nothing in
   the join flow touches them.
+* **Stays** (lodging, #348 / epic #346) are a member-authored content table:
+  any member adds one as themselves, the author or the trip owner edits or
+  removes it. A day belongs to the stay whose **half-open** `[check_in,
+  check_out)` contains it — you sleep there through the night before check-out,
+  not on the check-out morning — the one deliberate difference from a leg's
+  inclusive range (`stays/dates.ts` vs `destinations/legs.ts`). The calendar
+  surfaces the covering stay on each day; stays are deliberately **not** added to
+  the public recap/itinerary share projections (member-only), and `duplicate_trip`
+  does not copy them (deferred, like legs).
 * **Votes** enforce *one vote per member per poll* with a unique index; voting
   again switches your vote (upsert).
 * **Ordering** (itinerary, checklist) uses a float `position` column —
@@ -277,6 +287,7 @@ src/
     ├── join/                # invite landing page (name + colour → in)
     ├── dashboard/           # countdown, progress, summaries
     ├── destinations/        # multi-city legs: editor + leg/route derivation (owner-only)
+    ├── stays/               # lodging: card editor + per-day [check_in, check_out) derivation, surfaced on the calendar
     ├── polls/
     ├── dates/               # date-range availability poll (owner-run, live overlap)
     ├── messages/            # chat: replies, reactions, pins, images, @-mentions → inbox
