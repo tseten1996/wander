@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { motion } from '@/lib/motion'
 import {
   ArrowRight, CalendarClock, HelpCircle, ListChecks, Luggage, PartyPopper,
-  PiggyBank, Vote,
+  PiggyBank, Vote, Wallet,
 } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -13,6 +13,7 @@ import { EmptyState, ErrorState, Skeleton } from '@/components/ui/misc'
 import { cn, daysUntil, formatMoney, shortDate } from '@/lib/utils'
 import { useMyTrip, type MyTripSummary } from './api'
 import { MemberDatesForm } from './MemberDatesForm'
+import { PaymentLinkForm } from './PaymentLinkForm'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -195,6 +196,18 @@ export default function MePage() {
               around each day. Leave them blank if you’re here for the whole trip.
             </p>
             <MemberDatesForm trip={trip} member={me} actorId={me.id} isSelf />
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      <motion.div {...fadeUp} transition={{ duration: 0.3, delay: 0.015 }} className="mb-4">
+        <Card>
+          <div className="flex items-center gap-2 border-b border-line px-5 py-3.5">
+            <Wallet className="size-4.5 text-primary" />
+            <h2 className="font-display text-sm font-semibold">Your payment link</h2>
+          </div>
+          <CardContent className="py-4">
+            <PaymentLinkForm member={me} actorId={me.id} />
           </CardContent>
         </Card>
       </motion.div>
