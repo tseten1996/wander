@@ -33,7 +33,9 @@ import {
 import { searchAnchorId } from '@/features/search/anchor'
 import { LinkChip } from '@/features/itinerary/links'
 import { CommentsSection } from '@/features/itinerary/comments/CommentsSection'
-import { useCommentCounts } from '@/features/itinerary/comments/api'
+import { useCommentActivity } from '@/features/itinerary/comments/api'
+import { isEntityUnread } from '@/features/itinerary/comments/tally'
+import { useCommentSeen } from '@/features/itinerary/comments/useCommentSeen'
 import { cn, isMobileViewport, timeAgo } from '@/lib/utils'
 import type { PollCategory } from '@/types'
 
@@ -110,18 +112,22 @@ function OptionThumb({ url }: { url: string }) {
  * Discussion pinned to the poll itself (#337, epic #313 slice 3): "why beach
  * over museum" is the argument a group has around a vote, and today it happens
  * in the trip chat and scrolls away. Pure reuse — the same `CommentsSection`
- * and `useCommentCounts` the itinerary (#314) and budget (#330) already mount,
- * on the `poll` entity type. Collapsed by default so a poll with no discussion
- * looks exactly as it did before this slice; the trigger surfaces the live
- * count when there is one (every card shares the one trip-wide count query, so
- * this is a single request however many polls are on screen) and opens the
- * thread on demand. The count and the open thread both refresh live off the
- * existing realtime `comments` subscription — no manual wiring here.
+ * the itinerary (#314) and budget (#330) already mount, on the `poll` entity
+ * type. Collapsed by default so a poll with no discussion looks exactly as it
+ * did before this slice; the trigger surfaces the live count when there is one
+ * (every card shares the one trip-wide `useCommentActivity` query, so this is a
+ * single request however many polls are on screen), an unread dot when the
+ * newest comment is new to you (#342), and opens the thread on demand. Count,
+ * dot, and open thread all refresh live off the existing realtime `comments`
+ * subscription — no manual wiring here.
  */
 function PollComments({ pollId }: { pollId: string }) {
-  const { trip } = useTripContext()
-  const counts = useCommentCounts(trip.id, 'poll')
-  const count = counts.data?.get(pollId) ?? 0
+  const { trip, me } = useTripContext()
+  const activity = useCommentActivity(trip.id, 'poll')
+  const { state } = useCommentSeen(trip.id, 'poll', me.id)
+  const entry = activity.data?.get(pollId)
+  const count = entry?.count ?? 0
+  const unread = isEntityUnread(entry, state.seen[pollId], state.baseline, me.id)
   const [open, setOpen] = React.useState(false)
   const panelId = React.useId()
 
@@ -141,6 +147,12 @@ function PollComments({ pollId }: { pollId: string }) {
           </span>
         ) : (
           <span>Discuss</span>
+        )}
+        {unread && (
+          <>
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
+            <span className="sr-only">— unread comments</span>
+          </>
         )}
         <ChevronDown
           className={cn('size-4 shrink-0 transition-transform', open && 'rotate-180')}

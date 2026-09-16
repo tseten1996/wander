@@ -14,6 +14,7 @@ import { cn, timeAgo } from '@/lib/utils'
 import { FALLBACK_MEMBER_COLOR } from '@/lib/colors'
 import type { Comment, CommentEntityType } from '@/types'
 import { useAddComment, useComments, useDeleteComment } from './api'
+import { useCommentSeen } from './useCommentSeen'
 
 const COMMENT_MAX_LENGTH = 2000
 
@@ -89,6 +90,23 @@ export function CommentsSection({
   const { trip, me, members } = useTripContext()
   const comments = useComments(trip.id, entityType, entityId)
   const addComment = useAddComment(trip.id, entityType, entityId, me.id)
+  const { markSeen } = useCommentSeen(trip.id, entityType, me.id)
+
+  // Opening this thread — and every new comment that lands while it stays open,
+  // including one the viewer just posted — clears the unread dot on the entity
+  // (#342). Acknowledge up to the newest loaded comment, but never behind the
+  // device clock: server timestamps can lead it, and a dot surviving an actual
+  // read would be worse than none (mirrors the #43 mark-seen rule). Comments
+  // are oldest-first, so the last row is the newest.
+  const loaded = comments.data
+  const newestAt = loaded && loaded.length ? loaded[loaded.length - 1].created_at : null
+  React.useEffect(() => {
+    if (!newestAt) return
+    const stamp = new Date(
+      Math.max(Date.now(), new Date(newestAt).getTime())
+    ).toISOString()
+    markSeen(entityId, stamp)
+  }, [newestAt, entityId, markSeen])
 
   const [draft, setDraft] = React.useState('')
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
