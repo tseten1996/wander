@@ -1,12 +1,14 @@
 import * as React from 'react'
 import { motion } from '@/lib/motion'
-import { CalendarDays, CheckCircle2, MapPin, Sparkles, Users, Wallet } from 'lucide-react'
+import { CalendarDays, CheckCircle2, CopyPlus, MapPin, Sparkles, Users, Wallet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { useBudget, useRepayments } from '@/features/budget/api'
 import { useItinerary } from '@/features/itinerary/api'
 import { useDestinations } from '@/features/destinations/api'
 import { routeText } from '@/features/destinations/route'
+import { DuplicateTripDialog } from '@/features/trips/DuplicateTripDialog'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/misc'
 import { dateRange, formatMoney } from '@/lib/utils'
@@ -65,6 +67,12 @@ function Stat({
  */
 export function TripRecap() {
   const { trip, members } = useTripContext()
+  // The recap's "do it again" hook (#352). Reuses the shipped `duplicate_trip`
+  // RPC via the same `DuplicateTripDialog` Settings mounts — no new RPC/table/
+  // policy — pre-seeded from this trip. Because `TripRecap` only mounts once the
+  // trip has ended (DashboardPage gates it to `phase === 'after'`), this entry
+  // point inherits that gate and never competes with in-trip planning.
+  const [duplicateOpen, setDuplicateOpen] = React.useState(false)
   const dash = useDashboard(trip.id)
   const budget = useBudget(trip.id)
   const repayments = useRepayments(trip.id)
@@ -140,10 +148,29 @@ export function TripRecap() {
                   </React.Suspense>
                 </div>
               )}
+
+              {/* The retention hook (#352): from "that was great" to "let's do it
+                  again" in one tap, right at the emotional peak. Any member can
+                  use it — `duplicate_trip` deliberately allows non-owners. */}
+              <div className="mt-5 flex flex-col items-start gap-2 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted">
+                  Loved this one? Start your next trip with the same crew.
+                </p>
+                <Button
+                  variant="soft"
+                  size="lg"
+                  className="h-auto min-h-12 w-full whitespace-normal py-2.5 text-center leading-snug sm:w-auto"
+                  onClick={() => setDuplicateOpen(true)}
+                >
+                  <CopyPlus /> Plan your next trip from this one
+                </Button>
+              </div>
             </>
           )}
         </CardContent>
       </Card>
+
+      <DuplicateTripDialog trip={trip} open={duplicateOpen} onOpenChange={setDuplicateOpen} />
     </motion.div>
   )
 }

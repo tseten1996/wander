@@ -90,6 +90,14 @@ const TRIP_ROW = {
   created_at: '2026-02-01T00:00:00Z',
 }
 
+// A finished trip (end date well in the past) so the dashboard swaps the
+// planning view for the post-trip **Trip recap** card (#206) — the surface the
+// "Plan your next trip from this one" duplicate hook (#352) lives on. Only the
+// dates differ from TRIP_ROW; scoped to `endedTripScenario` so every other
+// scenario keeps the undated planning-phase trip untouched.
+const ENDED_TRIP_ROW = { ...TRIP_ROW, start_date: '2020-05-01', end_date: '2020-05-05' }
+let endedTripScenario = false
+
 const OWNER_MEMBER = {
   id: '44444444-4444-4444-8444-444444444444',
   trip_id: TRIP_ID,
@@ -723,7 +731,9 @@ async function routeSupabase(route) {
   //             create-trip reads just the owner row (`.single()`, no order).
   if (pathname.endsWith('/rest/v1/trips')) {
     if (method === 'POST') return json(TRIP_ROW, 201) // insert().select().single()
-    if (search.includes('id=eq.')) return json(TRIP_ROW) // trip page: one trip
+    // The ended-trip scenario (#352) hands back a finished trip so the dashboard
+    // renders the recap card; every other scenario gets the undated planning trip.
+    if (search.includes('id=eq.')) return json(endedTripScenario ? ENDED_TRIP_ROW : TRIP_ROW)
     return json([]) // home trip list — start with none
   }
   if (pathname.endsWith('/rest/v1/members')) {
@@ -1476,6 +1486,43 @@ async function runDuplicateTrip(browser) {
     await page.waitForURL((url) => url.hash.includes(`/trip/${NEW_TRIP_ID}`), { timeout: 10_000 })
     ok('duplicating navigates into the newly-created trip')
   } finally {
+    await context.close()
+  }
+}
+
+// The recap's "Plan your next trip from this one" hook (#352): a second door
+// onto the shipped duplicate flow, this one on the member-facing post-trip
+// recap. Any member reaching a finished trip's dashboard can clone it in one
+// tap — same `duplicate_trip` RPC, same dialog, new entry point.
+async function runRecapDuplicate(browser) {
+  console.log('\n▶ recap duplicate hook (member clones a finished trip from the recap)')
+  endedTripScenario = true
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}`, { waitUntil: 'domcontentloaded' })
+    // With the trip ended, the dashboard swaps the planning view for the recap.
+    await page.getByRole('heading', { name: 'Trip recap' }).waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    })
+    ok('a finished trip shows the recap card on the dashboard')
+
+    const openBtn = page.getByRole('button', { name: 'Plan your next trip from this one' })
+    await openBtn.waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the recap offers the "plan your next trip" action')
+    await openBtn.click()
+
+    // The same DuplicateTripDialog Settings mounts, pre-seeded from this trip.
+    await page.getByText('Duplicate this trip').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('the action opens the duplicate dialog seeded from this trip')
+
+    // Confirm → duplicate_trip RPC returns the new id → navigate into the copy.
+    await page.getByRole('button', { name: 'Create duplicate' }).click()
+    await page.waitForURL((url) => url.hash.includes(`/trip/${NEW_TRIP_ID}`), { timeout: 10_000 })
+    ok('duplicating from the recap navigates into the newly-created trip')
+  } finally {
+    endedTripScenario = false
     await context.close()
   }
 }
@@ -3124,6 +3171,7 @@ async function main() {
     await runCreateTrip(browser)
     await runPlaceAutocomplete(browser)
     await runDuplicateTrip(browser)
+    await runRecapDuplicate(browser)
     await runOffline(browser)
     await runSignOut(browser)
     await runTripPresence(browser)
