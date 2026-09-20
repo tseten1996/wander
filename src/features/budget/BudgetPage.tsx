@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   ArrowRight, Check, HandCoins, ImageOff, MapPin, MessageCircle, MoreHorizontal, Pencil,
-  PiggyBank, Plus, Receipt, Scale, Trash2, Undo2, X,
+  PiggyBank, Plus, Receipt, Scale, Trash2, Undo2, Wallet, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -54,6 +54,7 @@ import { optionalAmount } from '@/lib/forms'
 import {
   computeBalances, hasSettlementData, isAllSettled, minimalTransfers, type Transfer,
 } from './settlement'
+import { buildPaymentUrl } from './paymentLink'
 import type { BudgetCategory, BudgetEntry } from '@/types'
 
 const CATEGORIES: { value: BudgetCategory; label: string }[] = [
@@ -1535,35 +1536,66 @@ function SettlementCard({ entries }: { entries: BudgetEntry[] }) {
                 Suggested transfers
               </p>
               <ul className="space-y-2">
-                {transfers.map((t, i) => (
-                  <li
-                    key={`${t.from.id}-${t.to.id}-${i}`}
-                    className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
-                  >
-                    <span className="inline-flex items-center gap-1.5 font-medium">
-                      <MemberAvatar name={t.from.display_name} color={t.from.color} size="sm" />
-                      {t.from.display_name}
-                    </span>
-                    <ArrowRight className="size-4 text-faint" aria-label="pays" />
-                    <span className="inline-flex items-center gap-1.5 font-medium">
-                      <MemberAvatar name={t.to.display_name} color={t.to.color} size="sm" />
-                      {t.to.display_name}
-                    </span>
-                    <span className="ml-auto font-semibold tabular-nums">
-                      {formatMoney(t.amount, trip.currency)}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      data-tap-target
-                      className="shrink-0"
-                      disabled={createRepayment.isPending}
-                      onClick={() => markPaid(t)}
+                {transfers.map((t, i) => {
+                  // The creditor (t.to) is who gets paid, so their link is what a
+                  // "Pay" tap opens — with the owed amount (trip currency) and a
+                  // trip-named note prefilled where the target supports it (#347).
+                  // buildPaymentUrl re-sanitizes the stored value and returns null
+                  // when there's no safe link, so the action is simply absent then.
+                  const payUrl = buildPaymentUrl({
+                    link: t.to.payment_link,
+                    amount: t.amount,
+                    currency: trip.currency,
+                    note: `${trip.name} settle-up`,
+                  })
+                  return (
+                    <li
+                      key={`${t.from.id}-${t.to.id}-${i}`}
+                      className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
                     >
-                      <Check /> Mark paid
-                    </Button>
-                  </li>
-                ))}
+                      <span className="inline-flex items-center gap-1.5 font-medium">
+                        <MemberAvatar name={t.from.display_name} color={t.from.color} size="sm" />
+                        {t.from.display_name}
+                      </span>
+                      <ArrowRight className="size-4 text-faint" aria-label="pays" />
+                      <span className="inline-flex items-center gap-1.5 font-medium">
+                        <MemberAvatar name={t.to.display_name} color={t.to.color} size="sm" />
+                        {t.to.display_name}
+                      </span>
+                      <span className="ml-auto font-semibold tabular-nums">
+                        {formatMoney(t.amount, trip.currency)}
+                      </span>
+                      {payUrl && (
+                        <Button
+                          asChild
+                          variant="soft"
+                          size="sm"
+                          data-tap-target
+                          className="shrink-0"
+                        >
+                          <a
+                            href={payUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            aria-label={`Pay ${t.to.display_name} ${formatMoney(t.amount, trip.currency)}`}
+                          >
+                            <Wallet /> Pay
+                          </a>
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-tap-target
+                        className="shrink-0"
+                        disabled={createRepayment.isPending}
+                        onClick={() => markPaid(t)}
+                      >
+                        <Check /> Mark paid
+                      </Button>
+                    </li>
+                  )
+                })}
               </ul>
             </>
           )}

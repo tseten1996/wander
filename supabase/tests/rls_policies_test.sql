@@ -326,6 +326,24 @@ select pg_temp.expect_dml('member dates: owner can set a member''s dates',      
 select pg_temp.expect_dml('member dates: member can clear own dates',              'aaaa0000-0000-0000-0000-000000000002', false, $$update members set arrives_on=null, departs_on=null where id='cccc0000-0000-0000-0000-000000000002'$$, 1);
 
 -- ═════════════════════════════════════════════════════════════════════════════
+-- 7c. Member payment link (#347) — same single-writer rule again: a member sets
+--     ONLY their own link, the owner may set anyone's, and the value is
+--     constrained to an https URL by a CHECK (a hand-crafted non-https write is
+--     rejected, so a `javascript:`/`data:` string can't reach the column).
+-- ═════════════════════════════════════════════════════════════════════════════
+-- A member CAN set their own link (proves the column grant now covers payment_link).
+select pg_temp.expect_dml('member payment_link: member can set own link',          'aaaa0000-0000-0000-0000-000000000002', false, $$update members set payment_link='https://paypal.me/f' where id='cccc0000-0000-0000-0000-000000000002'$$, 1);
+-- The https CHECK rejects a non-https value regardless of who writes it.
+select pg_temp.expect_dml('member payment_link: non-https value is rejected',       'aaaa0000-0000-0000-0000-000000000002', false, $$update members set payment_link='javascript:alert(1)' where id='cccc0000-0000-0000-0000-000000000002'$$, -1);
+-- THE KEY CHECK: a member cannot write ANOTHER member's link (row USING denies →
+-- zero rows), even though the column grant permits the column.
+select pg_temp.expect_dml('member payment_link: member cannot set another''s link', 'aaaa0000-0000-0000-0000-000000000002', false, $$update members set payment_link='https://paypal.me/hijack' where id='cccc0000-0000-0000-0000-000000000003'$$, 0);
+-- The owner CAN set any member's link (is_trip_owner branch of members_update).
+select pg_temp.expect_dml('member payment_link: owner can set a member''s link',     'aaaa0000-0000-0000-0000-000000000001', false, $$update members set payment_link='https://venmo.com/u/g' where id='cccc0000-0000-0000-0000-000000000003'$$, 1);
+-- A member can clear their own link.
+select pg_temp.expect_dml('member payment_link: member can clear own link',         'aaaa0000-0000-0000-0000-000000000002', false, $$update members set payment_link=null where id='cccc0000-0000-0000-0000-000000000002'$$, 1);
+
+-- ═════════════════════════════════════════════════════════════════════════════
 -- 8. Collaborative content — ANY member may UPDATE (mark done/answered, reorder,
 --    edit shared notes), but DELETE is creator-or-owner only. This asymmetry is
 --    a deliberate, regression-prone design choice; assert both halves.

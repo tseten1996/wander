@@ -101,6 +101,12 @@ export interface Member {
   /** Day this member departs (`yyyy-MM-dd`), or null = present to the trip end.
    *  On or after `arrives_on`, and within the trip's date range (#286). */
   departs_on: string | null
+  /** Optional payment link this member set on their own profile (#347): a
+   *  PayPal.me / Venmo / Revolut handle link or any https URL, opened from the
+   *  settle-up "Pay" action with the owed amount prefilled. null = none set.
+   *  Always an `https:` URL (normalized on save + re-sanitized at render).
+   *  Member-visible only; never in a public projection. */
+  payment_link: string | null
 }
 
 /** How the group likes to travel — the pace of a day. */

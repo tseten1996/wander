@@ -182,3 +182,55 @@ export function useUpdateMemberDates(tripId: string) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   })
 }
+
+/** A member setting/clearing their own payment link (#347). */
+export interface MemberPaymentLinkInput {
+  memberId: string
+  /** The normalized `https:` link, or null to clear it. */
+  payment_link: string | null
+  /** Member id to attribute the activity entry to (the editor — always self here). */
+  actorId: string
+}
+
+/**
+ * Set or clear a member's own payment link (#347). Rides the same
+ * `members_update` self-edit path member dates (#286) use — a column-level grant
+ * on the existing policy, no new RLS. Optimistic on the shared
+ * `['members', tripId]` cache with rollback, so the settle-up "Pay" button
+ * appears/updates instantly and realtime reconciles other devices.
+ */
+export function useUpdateMemberPaymentLink(tripId: string) {
+  const queryClient = useQueryClient()
+  const key = ['members', tripId]
+  return useMutation({
+    mutationFn: async ({ memberId, payment_link }: MemberPaymentLinkInput) => {
+      const { error } = await supabase
+        .from('members')
+        .update({ payment_link })
+        .eq('id', memberId)
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<Member[]>(key)
+      queryClient.setQueryData<Member[]>(key, (old) =>
+        (old ?? []).map((m) =>
+          m.id === input.memberId ? { ...m, payment_link: input.payment_link } : m
+        )
+      )
+      return { previous }
+    },
+    onError: (err, _input, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+      toast.error(friendlyError(err, 'Could not save your payment link'))
+    },
+    onSuccess: (_data, input) => {
+      logActivity(
+        tripId,
+        input.actorId,
+        input.payment_link ? 'added a payment link' : 'removed their payment link'
+      )
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  })
+}
