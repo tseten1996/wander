@@ -1,0 +1,87 @@
+{
+  "//": "Fixture for #350 (transport / getting-there hops) screenshots — the Transport card + the calendar day surface. A same-day train and an overnight ferry across the Kyoto trip; the calendar opens on the trip's first day (Nov 14), when the arrival flight lands.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de300000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-21",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z"
+      }
+    ],
+    "transport": [
+      {
+        "id": "57400000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "mode": "flight",
+        "depart_place": "London Heathrow (LHR)",
+        "arrive_place": "Osaka Kansai (KIX)",
+        "depart_at": "2026-11-13T11:20",
+        "arrive_at": "2026-11-14T09:05",
+        "confirmation_code": "BA7X2QP",
+        "booking_url": "https://example.com/booking/ba-lhr-kix",
+        "created_at": "2026-07-04T00:00:00Z"
+      },
+      {
+        "id": "57400000-0000-4000-8000-000000000002",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444402",
+        "mode": "train",
+        "depart_place": "Kyoto Station",
+        "arrive_place": "Arashiyama",
+        "depart_at": "2026-11-18T10:15",
+        "arrive_at": "2026-11-18T10:42",
+        "confirmation_code": "JR-88T1",
+        "booking_url": null,
+        "created_at": "2026-07-05T00:00:00Z"
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de300000-0000-4000-8000-000000000001"
+  },
+  "routes": ["/trip/{trip}/calendar"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}

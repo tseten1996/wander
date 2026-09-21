@@ -7,7 +7,7 @@ import {
 } from 'date-fns'
 import {
   BedDouble, CalendarClock, ChevronLeft, ChevronRight, CreditCard, MapPin, Plane,
-  PlaneLanding, PlaneTakeoff,
+  PlaneLanding, PlaneTakeoff, Route,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useTripContext } from '@/hooks/useTrip'
@@ -17,6 +17,9 @@ import { legColor, legHeading } from '@/features/destinations/route'
 import { useStays } from '@/features/stays/api'
 import { stayForDay } from '@/features/stays/dates'
 import { StaysCard } from '@/features/stays/StaysCard'
+import { useTransport } from '@/features/transport/api'
+import { arrivingOn, departingOn, hasTransportOn } from '@/features/transport/dates'
+import { MODE_MAP, TransportCard, whenLabel } from '@/features/transport/TransportCard'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ArrivalsBoard } from './ArrivalsBoard'
 import { Button } from '@/components/ui/button'
@@ -152,6 +155,7 @@ export default function CalendarPage() {
   const events = useCalendarEvents(trip.id)
   const destinations = useDestinations(trip.id).data ?? []
   const stays = useStays(trip.id).data ?? []
+  const transport = useTransport(trip.id).data ?? []
   const weather = useTripWeather(trip, destinations)
   const { unit } = useTempUnit()
   // Legs that own days (a full date range). Days in a leg's range are tinted
@@ -179,6 +183,10 @@ export default function CalendarPage() {
   // Which stay covers the selected day (half-open [check_in, check_out)), or
   // null when none does — the "where are we sleeping tonight?" answer (#348).
   const selectedStay = stayForDay(selectedIso, stays)
+  // Transport departing or arriving on the selected day (#350). A single hop can
+  // appear in both lists only if it departs and arrives the same day.
+  const selectedTransportDepartures = departingOn(selectedIso, transport)
+  const selectedTransportArrivals = arrivingOn(selectedIso, transport)
 
   return (
     <div>
@@ -246,7 +254,13 @@ export default function CalendarPage() {
               const legTint = leg ? legColor(leg, rangedLegs) : null
               // The stay covering this day (half-open window), if any (#348).
               const dayStay = stayForDay(iso, stays)
-              const cellTitle = [leg && legHeading(leg), dayStay && `Staying: ${dayStay.name}`]
+              // Whether any transport hop departs or arrives this day (#350).
+              const dayHasTransport = hasTransportOn(iso, transport)
+              const cellTitle = [
+                leg && legHeading(leg),
+                dayStay && `Staying: ${dayStay.name}`,
+                dayHasTransport && 'Transport',
+              ]
                 .filter(Boolean)
                 .join(' · ')
               return (
@@ -283,11 +297,21 @@ export default function CalendarPage() {
                       <span key={e.id} className={cn('size-1.5 rounded-full', e.color)} />
                     ))}
                   </span>
-                  {dayStay && (
-                    <BedDouble
-                      className="size-3 shrink-0 text-primary/70"
-                      aria-label={`Staying at ${dayStay.name}`}
-                    />
+                  {(dayStay || dayHasTransport) && (
+                    <span className="flex items-center gap-0.5">
+                      {dayStay && (
+                        <BedDouble
+                          className="size-3 shrink-0 text-primary/70"
+                          aria-label={`Staying at ${dayStay.name}`}
+                        />
+                      )}
+                      {dayHasTransport && (
+                        <Route
+                          className="size-3 shrink-0 text-primary/70"
+                          aria-label="Transport this day"
+                        />
+                      )}
+                    </span>
                   )}
                   <DayPresence arrivals={dayArrivals} departures={dayDepartures} />
                   {dayWeather && (() => {
@@ -318,6 +342,10 @@ export default function CalendarPage() {
         <StaysCard />
       </div>
 
+      <div className="mt-5">
+        <TransportCard />
+      </div>
+
       <motion.div
         key={selected.toISOString()}
         initial={{ opacity: 0, y: 8 }}
@@ -344,6 +372,44 @@ export default function CalendarPage() {
               )}
             </span>
           </p>
+        )}
+        {(selectedTransportDepartures.length > 0 || selectedTransportArrivals.length > 0) && (
+          <Card className="mb-3 divide-y divide-line/60">
+            {selectedTransportDepartures.map((h) => {
+              const { Icon, label } = MODE_MAP[h.mode]
+              const route = [h.depart_place, h.arrive_place].filter(Boolean).join(' → ') || label
+              return (
+                <div key={`t-dep-${h.id}`} className="flex items-center gap-3 px-4 py-3">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-on-primary">
+                    <Icon className="size-4" aria-label={label} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{route}</p>
+                    <p className="text-xs text-muted">
+                      Departs{h.depart_at ? ` ${whenLabel(h.depart_at)}` : ''}
+                    </p>
+                  </div>
+                </div>
+              )
+            })}
+            {selectedTransportArrivals.map((h) => {
+              const { Icon, label } = MODE_MAP[h.mode]
+              const route = [h.depart_place, h.arrive_place].filter(Boolean).join(' → ') || label
+              return (
+                <div key={`t-arr-${h.id}`} className="flex items-center gap-3 px-4 py-3">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-faint text-primary">
+                    <Icon className="size-4" aria-label={label} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{route}</p>
+                    <p className="text-xs text-muted">
+                      Arrives{h.arrive_at ? ` ${whenLabel(h.arrive_at)}` : ''}
+                    </p>
+                  </div>
+                </div>
+              )
+            })}
+          </Card>
         )}
         {(selectedArrivals.length > 0 || selectedDepartures.length > 0) && (
           <Card className="mb-3 divide-y divide-line/60">
@@ -374,7 +440,8 @@ export default function CalendarPage() {
           </Card>
         )}
         {selectedEvents.length === 0 ? (
-          selectedArrivals.length === 0 && selectedDepartures.length === 0 && (
+          selectedArrivals.length === 0 && selectedDepartures.length === 0 &&
+          selectedTransportDepartures.length === 0 && selectedTransportArrivals.length === 0 && (
             <p className="text-sm text-muted">Nothing on this day.</p>
           )
         ) : (
@@ -405,6 +472,7 @@ export default function CalendarPage() {
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-success" /> Arrivals</span>
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-surface ring-2 ring-inset ring-accent" /> Departures</span>
         <span className="flex items-center gap-1.5"><BedDouble className="size-3 text-primary/70" /> Staying</span>
+        <span className="flex items-center gap-1.5"><Route className="size-3 text-primary/70" /> Transport</span>
       </div>
     </div>
   )
