@@ -56,31 +56,59 @@ export default function JoinPage() {
     async function check() {
       if (!code) return setPhase('invalid')
       try {
-        await ensureSession()
+        const { created } = await ensureSession()
         if (cancelled) return
 
         // Fire the preview request exactly once and reuse its resolved value.
-        // Calling getInvitePreview once and memoising its promise runs the
-        // request a single time (#215): it paints the context card the moment a
-        // real trip resolves (even while the join probe is still in flight — a
-        // failed or empty preview leaves the bare loader, so context never
-        // appears for a link that isn't real) and hands the memoised value to
-        // the form render.
-        const previewPromise = getInvitePreview(code).then((p) => {
-          if (p && !cancelled) {
-            setPreview(p)
-            // Default to a colour no member has taken yet (#234). This rides the
-            // preview fetch already on the critical path — no extra round-trip —
-            // and resolves before the form (and its picker) is ever shown, so a
-            // later manual pick is never overwritten. Random among the free
-            // colours, so two friends joining at once don't land on the same one.
-            setColor(firstFreeMemberColor(p.taken_colors))
-          }
-          return p
-        })
-        const joinPromise = joinTrip({ code, displayName: '' })
+        // Calling getInvitePreview once and awaiting the single promise runs the
+        // request one time (#215): it paints the context card the moment a real
+        // trip resolves (even while the join probe is still in flight — a failed
+        // or empty preview leaves the bare loader, so context never appears for a
+        // link that isn't real) and hands the same value to the phase decision.
+        const previewPromise = getInvitePreview(code)
+        // Paint as a self-contained chain: it sets context on success and
+        // swallows its own rejection, so it never surfaces an unhandled rejection
+        // on a branch (auto-navigate / probe error) that doesn't await the
+        // preview. The branches that need the preview await `previewPromise`
+        // itself, where its rejection is caught by the try below.
+        previewPromise
+          .then((p) => {
+            if (p && !cancelled) {
+              setPreview(p)
+              // Default to a colour no member has taken yet (#234). This rides the
+              // preview fetch already on the critical path — no extra round-trip —
+              // and resolves before the form (and its picker) is ever shown, so a
+              // later manual pick is never overwritten. Random among the free
+              // colours, so two friends joining at once don't land on the same one.
+              setColor(firstFreeMemberColor(p.taken_colors))
+            }
+          })
+          .catch(() => {})
 
-        const { data: tripId, error } = await joinPromise
+        // A session minted milliseconds ago (signInAnonymously, not a reused
+        // getSession() hit) cannot already be a member, so the join_trip
+        // auto-rejoin probe could only ever come back NAME_REQUIRED — a
+        // guaranteed-redundant round-trip on the exact slow-phone first touch
+        // the 15-second join is launch-critical for (#357). Skip it entirely
+        // for a brand-new session: the parallel preview already carries the only
+        // signal the probe could give, because get_invite_preview and join_trip
+        // gate on the identical (invite_enabled AND NOT archived) predicate — a
+        // real trip means the name form, a null preview means the very dead link
+        // the probe would have called INVALID_INVITE, and a thrown/rejected
+        // preview (network) falls through to the retryable error state below.
+        // join_trip on submit stays the authoritative, RLS-enforced join;
+        // nothing about the security model changes.
+        if (created) {
+          const p = await previewPromise
+          if (cancelled) return
+          setPhase(p ? 'form' : 'invalid')
+          return
+        }
+
+        // A reused session may belong to a returning member — the probe stays
+        // authoritative on this path, auto-navigating them straight into the
+        // trip (idempotent join) without ever showing the form.
+        const { data: tripId, error } = await joinTrip({ code, displayName: '' })
         if (cancelled) return
         if (!error && tripId) {
           navigate(`/trip/${tripId}`, { replace: true })
