@@ -12,9 +12,12 @@ interface AuthContextValue {
   signInWithEmail: (email: string) => Promise<void>
   /**
    * Guarantee a session exists (used by the join flow). Friends get an
-   * anonymous session — no email, no password, ~1 network call.
+   * anonymous session — no email, no password, ~1 network call. Resolves with
+   * the session plus `created`: true when this call minted a fresh anonymous
+   * session, false when it reused one from storage. The join flow uses that
+   * flag to skip its redundant auto-rejoin probe on a brand-new session (#357).
    */
-  ensureSession: () => Promise<Session>
+  ensureSession: () => Promise<{ session: Session; created: boolean }>
   signOut: () => Promise<void>
 }
 
@@ -55,12 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // time (#215).
   const ensureSession = React.useCallback(async () => {
     const { data } = await supabase.auth.getSession()
-    if (data.session) return data.session
+    if (data.session) return { session: data.session, created: false }
     const { data: anon, error } = await supabase.auth.signInAnonymously()
     if (error || !anon.session) {
       throw error ?? new Error('Could not create a session')
     }
-    return anon.session
+    return { session: anon.session, created: true }
   }, [])
 
   const value = React.useMemo<AuthContextValue>(

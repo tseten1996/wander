@@ -656,13 +656,33 @@ async function routeSupabase(route) {
     if (body.p_invite_code === 'flaky' && !flakyRecovered) {
       return route.abort('failed')
     }
+    // A returning member reopening their invite link on a *reused* session:
+    // join_trip is idempotent and hands back the trip id straight away, even for
+    // the blank-name probe (#357 keeps the auto-rejoin probe on the
+    // reused-session path). The client must auto-navigate in, never the form.
+    if (body.p_invite_code === 'rejoin') {
+      return json(JSON.stringify(TRIP_ID))
+    }
     // Mirrors join_trip: a blank display name means "show the name form".
     if (!body.p_display_name) {
       return json({ code: 'P0001', message: 'NAME_REQUIRED', details: null, hint: null }, 400)
     }
     return json(JSON.stringify(TRIP_ID)) // scalar text → a bare JSON string
   }
-  if (pathname.endsWith('/rest/v1/rpc/get_invite_preview')) return json([INVITE_PREVIEW])
+  if (pathname.endsWith('/rest/v1/rpc/get_invite_preview')) {
+    // A flaky connection drops the preview too — a real network failure hits
+    // every request, not just join_trip. Since #357 advances a brand-new session
+    // to the name form on the preview alone (the redundant probe is skipped),
+    // the retryable "couldn't connect" state now surfaces through this rejection
+    // until the retry test flips `flakyRecovered`.
+    if (body.p_invite_code === 'flaky' && !flakyRecovered) return route.abort('failed')
+    // Mirror the RPC's own gate (invite_enabled AND NOT archived): a
+    // disabled/regenerated invite has no matching row, so its preview is SQL null
+    // — the very dead-link signal join_trip raises as INVALID_INVITE, and the
+    // only signal the probe-skip path (#357) has to dead-end a brand-new session
+    // on. Every live code still resolves to the shared preview projection.
+    return json(body.p_invite_code === 'deadlink' ? null : [INVITE_PREVIEW])
+  }
   // get_public_itinerary (#127) returns a jsonb object for a valid token, or SQL
   // null (→ body "null") for an invalid/revoked one — the not-found signal.
   if (pathname.endsWith('/rest/v1/rpc/get_public_itinerary')) {
@@ -1130,12 +1150,13 @@ async function runJoin(browser) {
   console.log('\n▶ join (invite link)')
   const context = await newContext(browser)
   const page = await context.newPage()
-  // Count the first-touch RPCs (#215). A new friend's very first open must
-  // issue exactly one join_trip probe and one get_invite_preview — not the
-  // 2–4× it used to, when the auth-effect re-ran on the anonymous sign-in and
-  // the preview builder was consumed twice. Count only real POSTs (not the
-  // CORS OPTIONS preflight), up to the moment the name form appears; the
-  // deliberate second join_trip (submitting the name) happens after that.
+  // Count the first-touch RPCs (#215, #357). A brand-new friend's very first
+  // open must now issue *zero* join_trip probes — the auto-rejoin probe is
+  // redundant for a session minted milliseconds ago (it cannot be a member) and
+  // is skipped (#357) — and exactly one get_invite_preview, whose resolution
+  // alone advances to the name form. Count only real POSTs (not the CORS OPTIONS
+  // preflight), up to the moment the name form appears; the deliberate join_trip
+  // that submits the name happens after that.
   let firstJoinProbes = 0
   let firstPreviewFetches = 0
   page.on('request', (req) => {
@@ -1150,23 +1171,25 @@ async function runJoin(browser) {
     await page.getByText('Lisbon in Spring').waitFor({ state: 'visible', timeout: 10_000 })
     ok('invite preview renders after the anonymous session is created')
 
-    // Wait for the name form itself, not a fixed delay: the "Your name" input
-    // only mounts once the join_trip probe has resolved NAME_REQUIRED (the
-    // 'checking' preview card can paint while that probe is still in flight),
-    // so this deterministically settles past the anonymous sign-in that used to
-    // re-fire the effect. Then assert the first-touch call count is exactly one
-    // each — the acceptance criterion for #215. Checked before the name is
-    // submitted so the legitimate join POST below is never counted.
+    // Wait for the name form itself, not a fixed delay: on a brand-new device
+    // the "Your name" input now mounts as soon as the preview resolves — no
+    // join_trip probe gates it any more (#357) — so this deterministically
+    // settles past the anonymous sign-in. Then assert the first-touch call
+    // counts: zero join_trip probes (the skipped redundant round-trip, #357) and
+    // exactly one preview (#215). Checked before the name is submitted so the
+    // legitimate join POST below is never counted.
     await page.getByPlaceholder('Your name').waitFor({ state: 'visible', timeout: 10_000 })
-    if (firstJoinProbes !== 1) {
-      throw new Error(`first-time join fired join_trip ${firstJoinProbes}× (expected exactly 1)`)
+    if (firstJoinProbes !== 0) {
+      throw new Error(
+        `first-time join fired join_trip ${firstJoinProbes}× (expected 0 — the probe is skipped for a brand-new session, #357)`
+      )
     }
     if (firstPreviewFetches !== 1) {
       throw new Error(
         `first-time join fired get_invite_preview ${firstPreviewFetches}× (expected exactly 1)`
       )
     }
-    ok('a first-time join issues exactly one join_trip probe and one preview request')
+    ok('a first-time join issues zero join_trip probes and one preview request (#357)')
 
     // #234: the form defaults to a colour no member has taken, and flags the
     // taken swatches so a manual pick is informed. INVITE_PREVIEW reports three
@@ -1228,6 +1251,40 @@ async function runJoin(browser) {
     if (await nudge.isVisible()) throw new Error('a dismissed nudge reappeared on a later prompt')
     ok('a dismissed nudge stays dismissed on a later install prompt')
   } finally {
+    await context.close()
+  }
+}
+
+async function runJoinReturningMember(browser) {
+  console.log('\n▶ join: a returning member reopening the link auto-navigates in')
+  // The #357 probe-skip applies only to a *freshly minted* anonymous session. A
+  // reused session (getSession() hit) may belong to a member who already joined,
+  // so the auto-rejoin probe must still fire on this path and take them straight
+  // into the trip — never the name form. The roster carries this member
+  // (joinWelcomeScenario) so the trip page it lands on resolves `me` and renders.
+  joinWelcomeScenario = true
+  const context = await newContext(browser, MEMBER_SESSION)
+  const page = await context.newPage()
+  let probes = 0
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/rpc/join_trip')) probes += 1
+  })
+  try {
+    await page.goto(`${BASE_URL}/#/join/rejoin`, { waitUntil: 'domcontentloaded' })
+    // The idempotent probe returns the trip id → straight into the trip.
+    await page.waitForURL((url) => url.hash.includes(`/trip/${TRIP_ID}`), { timeout: 10_000 })
+    ok('a returning member reopening the invite link auto-navigates into the trip')
+    if (probes < 1) {
+      throw new Error('the reused-session auto-rejoin probe did not fire (#357 must keep it)')
+    }
+    ok('the reused-session path still fires the auto-rejoin probe (#357)')
+    // The name form must never appear for a returning member.
+    if (await page.getByPlaceholder('Your name').isVisible()) {
+      throw new Error('a returning member was shown the name form instead of auto-navigating')
+    }
+    ok('a returning member never sees the name form')
+  } finally {
+    joinWelcomeScenario = false
     await context.close()
   }
 }
@@ -3165,6 +3222,7 @@ async function main() {
   try {
     await runSignIn(browser)
     await runJoin(browser)
+    await runJoinReturningMember(browser)
     await runJoinWelcome(browser)
     await runJoinDeadLink(browser)
     await runJoinTransientError(browser)

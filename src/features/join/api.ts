@@ -17,11 +17,15 @@ import type { InvitePreview } from '@/types'
 /**
  * Whitelisted invite-context projection for a code, or `null` when the invite
  * isn't real (no row) — never throws for a dead link, matching the RPC, which
- * returns an empty set rather than an error. A genuine network failure still
- * rejects, so the caller can tell "no such invite" from "couldn't reach it".
+ * returns an empty set rather than an error. A genuine network/RPC failure
+ * rejects, so the caller can tell "no such invite" from "couldn't reach it" —
+ * the join flow relies on that distinction on the brand-new-session path, where
+ * the preview alone decides between the name form, the dead-end, and a retry
+ * (#357), the auto-rejoin probe no longer being there to disambiguate.
  */
 export async function getInvitePreview(code: string): Promise<InvitePreview | null> {
-  const { data } = await supabase.rpc('get_invite_preview', { p_invite_code: code })
+  const { data, error } = await supabase.rpc('get_invite_preview', { p_invite_code: code })
+  if (error) throw error
   return (data?.[0] as InvitePreview) ?? null
 }
 
