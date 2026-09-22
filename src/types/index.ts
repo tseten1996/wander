@@ -87,6 +87,34 @@ export interface Stay {
   created_at: string
 }
 
+/** How a transport hop travels — the CHECK-constrained set on the table. */
+export type TransportMode = 'flight' | 'train' | 'bus' | 'car' | 'ferry'
+
+/** A getting-there hop connecting two legs — the flight / train / bus / car /
+ *  ferry, with its times and confirmation code (#350, epic #346 slice 2). A
+ *  content row mirroring `Stay`: any member adds one as themselves; the author
+ *  or the trip owner may edit or remove it. `depart_at` / `arrive_at` are
+ *  wall-clock local datetimes (`YYYY-MM-DDTHH:mm`, no timezone) — a hop lands on
+ *  the calendar on the date prefix of each. */
+export interface Transport {
+  id: string
+  trip_id: string
+  /** Author; null once that member is removed (their hops remain on the trip). */
+  member_id: string | null
+  mode: TransportMode
+  /** Optional endpoints as free text ("Gare du Nord", "CDG T2"). */
+  depart_place: string | null
+  arrive_place: string | null
+  /** Optional wall-clock datetimes (`YYYY-MM-DDTHH:mm`); null = time still TBD. */
+  depart_at: string | null
+  arrive_at: string | null
+  /** Booking reference (copy-to-clipboard in the UI). */
+  confirmation_code: string | null
+  /** Booking link; rendered only as a sanitized http(s) external link. */
+  booking_url: string | null
+  created_at: string
+}
+
 export interface Member {
   id: string
   trip_id: string

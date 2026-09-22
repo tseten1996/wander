@@ -93,6 +93,7 @@ All tables live in `public`, keyed by `uuid`. Every content table carries a
 trips ────────────┬─ members            (person ↔ trip, role, name, color, arrival/departure dates)
   │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
   │               ├─ stays              (lodging: name, address+pin, check-in/out, confirmation code, booking url; member-read, self-insert, author/owner update+delete)
+  │               ├─ transport          (getting-there hops: mode, from/to place, depart/arrive datetime, confirmation code, booking url; member-read, self-insert, author/owner update+delete)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
   │               ├─ availability_polls ─ availability_candidates ─ availability_responses  (owner-run date poll; one response per member per candidate)
   │               ├─ messages ─ message_reactions   (threads via reply_to; inline images via image_path)
@@ -137,6 +138,19 @@ Notable decisions:
   surfaces the covering stay on each day; stays are deliberately **not** added to
   the public recap/itinerary share projections (member-only), and `duplicate_trip`
   does not copy them (deferred, like legs).
+* **Transport** (getting-there hops, #350 / epic #346 slice 2) is the same
+  member-authored content shape as stays: any member adds a hop as themselves,
+  the author or the trip owner edits or removes it. A hop carries a required
+  `mode` (a NOT-NULL CHECK over `flight` / `train` / `bus` / `car` / `ferry`),
+  optional from/to places, and optional `depart_at` / `arrive_at` stored as
+  **wall-clock** `timestamp` (no timezone) — a 14:30 train departs 14:30 at the
+  station for every viewer, so the calendar day a hop lands on is the date prefix
+  of each datetime, timezone-immune (`transport/dates.ts`). A single hop can
+  surface on two calendar days (an overnight ferry departs one, arrives the
+  next). Like stays, transport is member-only — **not** in the public
+  recap/itinerary share projections — and `duplicate_trip` does not copy it. The
+  booking link reuses the stays `safeHttpUrl` guard (http(s) only; the helper
+  consolidation is tracked in #354).
 * **Votes** enforce *one vote per member per poll* with a unique index; voting
   again switches your vote (upsert).
 * **Ordering** (itinerary, checklist) uses a float `position` column —
@@ -288,6 +302,7 @@ src/
     ├── dashboard/           # countdown, progress, summaries
     ├── destinations/        # multi-city legs: editor + leg/route derivation (owner-only)
     ├── stays/               # lodging: card editor + per-day [check_in, check_out) derivation, surfaced on the calendar
+    ├── transport/           # getting-there hops: card editor + per-day depart/arrive derivation, surfaced on the calendar
     ├── polls/
     ├── dates/               # date-range availability poll (owner-run, live overlap)
     ├── messages/            # chat: replies, reactions, pins, images, @-mentions → inbox

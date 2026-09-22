@@ -790,6 +790,37 @@ select pg_temp.expect_dml('stays: non-author member cannot delete another''s',  
 select pg_temp.expect_dml('stays: author can delete own',                       'aaaa0000-0000-0000-0000-000000000002', false, $$delete from stays where id='ab230000-0000-4000-8000-000000000001'$$, 1);
 select pg_temp.expect_dml('stays: owner can delete a member stay',              'aaaa0000-0000-0000-0000-000000000001', false, $$delete from stays where id='ab230000-0000-4000-8000-000000000002'$$, 1);
 
+-- ── transport (#350, epic #346 slice 2) — getting-there content table. Trust
+--    shape (20260921143000_transport.sql): member-read, self-attributed insert
+--    (member_id = my_member_id), and author-OR-OWNER update AND delete — exactly
+--    mirroring stays. `mode` is a NOT-NULL CHECK over five values; a CHECK keeps
+--    arrive_at >= depart_at. Seeded on trip A: one hop by F, one by G, so the
+--    update/delete asymmetry has concrete targets. ─────────────────────────────
+insert into public.transport (id, trip_id, member_id, mode) values
+  ('ab240000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'train'),
+  ('ab240000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'flight');
+-- reads: any member sees the trip's transport; outsider and cross-trip attacker see none
+select pg_temp.expect_count('transport: member sees the trip hops',              'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from transport where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 2);
+select pg_temp.expect_count('transport: outsider sees none',                     'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from transport where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('transport: cross-trip attacker sees none',          'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from transport where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- inserts: self-attributed only — no forged authorship, no outsider, no cross-trip
+select pg_temp.expect_dml('transport: member can add a hop as self',             'aaaa0000-0000-0000-0000-000000000002', false, $$insert into transport(trip_id, member_id, mode) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bus')$$, 1);
+select pg_temp.expect_dml('transport: member cannot forge another''s authorship','aaaa0000-0000-0000-0000-000000000002', false, $$insert into transport(trip_id, member_id, mode) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','bus')$$, -1);
+select pg_temp.expect_dml('transport: outsider cannot insert',                   'aaaa0000-0000-0000-0000-000000000005', false, $$insert into transport(trip_id, member_id, mode) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bus')$$, -1);
+select pg_temp.expect_dml('transport: cross-trip attacker cannot insert',        'aaaa0000-0000-0000-0000-000000000004', false, $$insert into transport(trip_id, member_id, mode) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','bus')$$, -1);
+-- the mode CHECK rejects an out-of-set mode (raises → -1)
+select pg_temp.expect_dml('transport: invalid mode is rejected',                 'aaaa0000-0000-0000-0000-000000000002', false, $$insert into transport(trip_id, member_id, mode) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','teleport')$$, -1);
+-- the CHECK constraint rejects an arrive-before-depart hop (raises → -1)
+select pg_temp.expect_dml('transport: arrive before depart is rejected',         'aaaa0000-0000-0000-0000-000000000002', false, $$insert into transport(trip_id, member_id, mode, depart_at, arrive_at) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','train','2026-06-05T10:00','2026-06-05T08:00')$$, -1);
+-- update asymmetry: a third member (G) cannot edit F's hop; the author and the owner can
+select pg_temp.expect_dml('transport: non-author member cannot update another''s','aaaa0000-0000-0000-0000-000000000003', false, $$update transport set mode='bus' where id='ab240000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('transport: author can update own',                    'aaaa0000-0000-0000-0000-000000000002', false, $$update transport set mode='bus' where id='ab240000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('transport: owner can update a member hop',            'aaaa0000-0000-0000-0000-000000000001', false, $$update transport set mode='ferry' where id='ab240000-0000-4000-8000-000000000002'$$, 1);
+-- delete asymmetry: mirrors update — non-author denied, author and owner allowed
+select pg_temp.expect_dml('transport: non-author member cannot delete another''s','aaaa0000-0000-0000-0000-000000000003', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('transport: author can delete own',                    'aaaa0000-0000-0000-0000-000000000002', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('transport: owner can delete a member hop',            'aaaa0000-0000-0000-0000-000000000001', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000002'$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
