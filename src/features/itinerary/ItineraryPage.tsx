@@ -27,6 +27,8 @@ import { useCommentActivity } from './comments/api'
 import { isEntityUnread } from './comments/tally'
 import { useCommentSeen } from './comments/useCommentSeen'
 import { useDestinations } from '@/features/destinations/api'
+import { useCreateWishlistItem } from '@/features/wishlist/api'
+import { WishlistCard } from '@/features/wishlist/WishlistCard'
 import { groupDaysByLeg, hasLegs } from '@/features/destinations/legs'
 import { buildDayIndex, type DayInfo } from './days'
 import { buildDayDirections } from './directions'
@@ -888,6 +890,26 @@ export default function ItineraryPage() {
     },
     [createSuggestion, trip.start_date],
   )
+  // "Save to wishlist" from the same Nearby preview (#355, epic #164 slice 2).
+  // Parks a found place on the shared shelf — name + coordinates + category, no
+  // day chosen — the "found it, not ready to schedule it" middle of the loop.
+  const saveSuggestion = useCreateWishlistItem(trip.id, me.id)
+  const saveNearby = React.useCallback(
+    async (place: NearbyPlace) => {
+      try {
+        await saveSuggestion.mutateAsync({
+          name: place.name,
+          category: place.category,
+          latitude: place.lat,
+          longitude: place.lon,
+        })
+        toast.success(`Saved “${place.name}” to the wishlist`)
+      } catch {
+        // The mutation's onError already toasts the failure.
+      }
+    },
+    [saveSuggestion],
+  )
   const [newOpen, setNewOpen] = React.useState(false)
   const [pasteOpen, setPasteOpen] = React.useState(false)
   // A pasted booking can produce several drafts (a flight that lands past
@@ -1111,11 +1133,19 @@ export default function ItineraryPage() {
                 onSelectItem={setSelectedId}
                 onOpenItem={setEditItem}
                 onAddNearby={addNearby}
+                onSaveNearby={saveNearby}
               />
             </React.Suspense>
           </TabsContent>
         </Tabs>
       )}
+      {/* The wishlist shelf: saved-but-unscheduled places, always available below
+          the itinerary (both when empty and populated) so a "maybe" from the map
+          or added by hand has a shared home — the browse → save → schedule
+          middle of epic #164 (#355). */}
+      <div className="mt-8">
+        <WishlistCard />
+      </div>
       <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
       <ItemDialog
         open={newOpen}

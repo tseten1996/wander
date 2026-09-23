@@ -821,6 +821,36 @@ select pg_temp.expect_dml('transport: non-author member cannot delete another''s
 select pg_temp.expect_dml('transport: author can delete own',                    'aaaa0000-0000-0000-0000-000000000002', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000001'$$, 1);
 select pg_temp.expect_dml('transport: owner can delete a member hop',            'aaaa0000-0000-0000-0000-000000000001', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000002'$$, 1);
 
+-- ── wishlist_items (#355, epic #164 slice 2) — saved-but-unscheduled places.
+--    Trust shape (20260923143000_wishlist_items.sql): member-read, self-attributed
+--    insert (added_by = my_member_id — NOTE the author column is `added_by`, not
+--    `member_id`), and author-OR-OWNER update AND delete — exactly mirroring
+--    stays/transport. `category` is a nullable CHECK over four values; a CHECK
+--    keeps out-of-set categories. Seeded on trip A: one place by F, one by G, so
+--    the update/delete asymmetry has concrete targets. ──────────────────────────
+insert into public.wishlist_items (id, trip_id, added_by, name, category) values
+  ('ab250000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'Blue Bottle', 'eat'),
+  ('ab250000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000003', 'Botanic Garden', 'see');
+-- reads: any member sees the trip's wishlist; outsider and cross-trip attacker see none
+select pg_temp.expect_count('wishlist: member sees the trip wishlist',           'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from wishlist_items where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 2);
+select pg_temp.expect_count('wishlist: outsider sees none',                      'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from wishlist_items where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+select pg_temp.expect_count('wishlist: cross-trip attacker sees none',           'aaaa0000-0000-0000-0000-000000000004', false, $$select count(*) from wishlist_items where trip_id='bbbb0000-0000-0000-0000-000000000001'$$, 0);
+-- inserts: self-attributed only — no forged authorship, no outsider, no cross-trip
+select pg_temp.expect_dml('wishlist: member can save a place as self',           'aaaa0000-0000-0000-0000-000000000002', false, $$insert into wishlist_items(trip_id, added_by, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','Mine')$$, 1);
+select pg_temp.expect_dml('wishlist: member cannot forge another''s authorship', 'aaaa0000-0000-0000-0000-000000000002', false, $$insert into wishlist_items(trip_id, added_by, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000003','Forged')$$, -1);
+select pg_temp.expect_dml('wishlist: outsider cannot insert',                    'aaaa0000-0000-0000-0000-000000000005', false, $$insert into wishlist_items(trip_id, added_by, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','X')$$, -1);
+select pg_temp.expect_dml('wishlist: cross-trip attacker cannot insert',         'aaaa0000-0000-0000-0000-000000000004', false, $$insert into wishlist_items(trip_id, added_by, name) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','X')$$, -1);
+-- the category CHECK rejects an out-of-set category (raises → -1)
+select pg_temp.expect_dml('wishlist: invalid category is rejected',              'aaaa0000-0000-0000-0000-000000000002', false, $$insert into wishlist_items(trip_id, added_by, name, category) values('bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','Bad','sleep')$$, -1);
+-- update asymmetry: a third member (G) cannot edit F's place; the author and the owner can
+select pg_temp.expect_dml('wishlist: non-author member cannot update another''s','aaaa0000-0000-0000-0000-000000000003', false, $$update wishlist_items set name='hijack' where id='ab250000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('wishlist: author can update own',                     'aaaa0000-0000-0000-0000-000000000002', false, $$update wishlist_items set name='Blue Bottle ✔' where id='ab250000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('wishlist: owner can update a member place',           'aaaa0000-0000-0000-0000-000000000001', false, $$update wishlist_items set name='Botanic Garden (owner note)' where id='ab250000-0000-4000-8000-000000000002'$$, 1);
+-- delete asymmetry: mirrors update — non-author denied, author and owner allowed
+select pg_temp.expect_dml('wishlist: non-author member cannot delete another''s','aaaa0000-0000-0000-0000-000000000003', false, $$delete from wishlist_items where id='ab250000-0000-4000-8000-000000000001'$$, 0);
+select pg_temp.expect_dml('wishlist: author can delete own',                     'aaaa0000-0000-0000-0000-000000000002', false, $$delete from wishlist_items where id='ab250000-0000-4000-8000-000000000001'$$, 1);
+select pg_temp.expect_dml('wishlist: owner can delete a member place',           'aaaa0000-0000-0000-0000-000000000001', false, $$delete from wishlist_items where id='ab250000-0000-4000-8000-000000000002'$$, 1);
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
