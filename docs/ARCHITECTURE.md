@@ -94,6 +94,7 @@ trips ────────────┬─ members            (person ↔ 
   │  (+share_token)├─ destinations       (ordered legs: place, date range, position)
   │               ├─ stays              (lodging: name, address+pin, check-in/out, confirmation code, booking url; member-read, self-insert, author/owner update+delete)
   │               ├─ transport          (getting-there hops: mode, from/to place, depart/arrive datetime, confirmation code, booking url; member-read, self-insert, author/owner update+delete)
+  │               ├─ wishlist_items      (saved-but-unscheduled places: name, category, optional pin, note, url, position; member-read, self-insert, author/owner update+delete)
   │               ├─ polls ─ poll_options ─ votes   (one vote per member per poll)
   │               ├─ availability_polls ─ availability_candidates ─ availability_responses  (owner-run date poll; one response per member per candidate)
   │               ├─ messages ─ message_reactions   (threads via reply_to; inline images via image_path)
@@ -151,6 +152,21 @@ Notable decisions:
   recap/itinerary share projections — and `duplicate_trip` does not copy it. The
   booking link reuses the stays `safeHttpUrl` guard (http(s) only; the helper
   consolidation is tracked in #354).
+* **Wishlist** (saved places, #355 / epic #164 slice 2) is the same
+  member-authored content shape as stays/transport — any member saves a place as
+  themselves, the author or the trip owner edits or removes it — but the author
+  column is named `added_by`. It is the shelf **between** browse and schedule: a
+  found place is saved with no day chosen, either from the itinerary map's
+  "Nearby" preview (a **Save to wishlist** action beside the slice-1 **Add to
+  itinerary**, carrying name + coordinates + `category`) or added by hand (name +
+  optional note, no coordinate required). `category` reuses slice 1's POI buckets
+  (`eat` / `see` / `drink`) plus `other` for a hand-added place, as a nullable
+  CHECK. A saved `url` is stored only if it normalizes to http(s) (the same
+  `safeHttpUrl` guard). Like stays/transport it is member-only — **not** in the
+  public recap/itinerary share projections — and `duplicate_trip` does not copy
+  it (both by omission, in this slice). Scheduling a wishlist place onto a day,
+  and rendering wishlist map pins, are deferred to epic #164 slice 3. The shelf
+  is surfaced on the Itinerary page below the day list.
 * **Votes** enforce *one vote per member per poll* with a unique index; voting
   again switches your vote (upsert).
 * **Ordering** (itinerary, checklist) uses a float `position` column —
@@ -303,6 +319,7 @@ src/
     ├── destinations/        # multi-city legs: editor + leg/route derivation (owner-only)
     ├── stays/               # lodging: card editor + per-day [check_in, check_out) derivation, surfaced on the calendar
     ├── transport/           # getting-there hops: card editor + per-day depart/arrive derivation, surfaced on the calendar
+    ├── wishlist/            # saved-but-unscheduled places: card editor + shelf, saved from the itinerary map, surfaced on the itinerary
     ├── polls/
     ├── dates/               # date-range availability poll (owner-run, live overlap)
     ├── messages/            # chat: replies, reactions, pins, images, @-mentions → inbox

@@ -115,6 +115,37 @@ export interface Transport {
   created_at: string
 }
 
+/** A saved place's category — slice 1's POI categories plus `other` for a
+ *  hand-added place that isn't a found POI. The CHECK-constrained set on the
+ *  table; `null` is an uncategorized save. */
+export type WishlistCategory = 'eat' | 'see' | 'drink' | 'other'
+
+/** A saved-but-unscheduled place on the trip's shared "want to go" shelf (#355,
+ *  epic #164 slice 2). A content row mirroring `Stay` / `Transport`: any member
+ *  saves one as themselves, the author or the trip owner may edit or remove it.
+ *  Saved from the slice-1 map "Nearby" preview (name + coordinates + category) or
+ *  added by hand (name + optional note, no coordinate required). Scheduling a
+ *  wishlist place onto a day is deferred to slice 3. */
+export interface WishlistItem {
+  id: string
+  trip_id: string
+  /** Author; null once that member is removed (their saved places remain). */
+  added_by: string | null
+  name: string
+  /** Optional category; null is an uncategorized save. */
+  category: WishlistCategory | null
+  /** Optional geocoded pin carried from the map suggestion; null when hand-added. */
+  latitude: number | null
+  longitude: number | null
+  /** Optional free-text note ("open late", "closed Mondays"). */
+  note: string | null
+  /** Link; rendered only as a sanitized http(s) external link. */
+  url: string | null
+  /** Float ordering position on the shelf (midpoint scheme, seeded on insert). */
+  position: number
+  created_at: string
+}
+
 export interface Member {
   id: string
   trip_id: string

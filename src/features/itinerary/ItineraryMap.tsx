@@ -202,8 +202,15 @@ function nearbyPinIcon(category: PoiCategory): L.DivIcon {
   return L.divIcon({ className: '', html: wrap.outerHTML, iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -12] })
 }
 
-/** Preview popup for a suggestion — name, category, rough distance, one-tap add. */
-function nearbyPopupContent(place: NearbyPlace, distanceKm: number | null, onAdd: () => void): HTMLElement {
+/** Preview popup for a suggestion — name, category, rough distance, and two
+ *  one-tap actions: add it straight onto a day, or save it to the wishlist for
+ *  later (#355). Both are 44px tall (the mobile tap-target floor). */
+function nearbyPopupContent(
+  place: NearbyPlace,
+  distanceKm: number | null,
+  onAdd: () => void,
+  onSave: () => void,
+): HTMLElement {
   const root = document.createElement('div')
   root.style.minWidth = '160px'
 
@@ -224,11 +231,7 @@ function nearbyPopupContent(place: NearbyPlace, distanceKm: number | null, onAdd
   sub.style.cssText = 'color:var(--muted);font-size:12px;margin:4px 0 0'
   root.appendChild(sub)
 
-  const btn = document.createElement('button')
-  btn.type = 'button'
-  btn.textContent = 'Add to itinerary'
-  btn.style.cssText = [
-    'margin-top:8px',
+  const actionBase = [
     'width:100%',
     'box-sizing:border-box',
     'min-height:44px',
@@ -237,15 +240,36 @@ function nearbyPopupContent(place: NearbyPlace, distanceKm: number | null, onAdd
     'justify-content:center',
     'padding:8px 10px',
     'border-radius:8px',
-    'background:var(--primary)',
-    'color:var(--on-primary)',
     'font-size:12px',
     'font-weight:600',
     'cursor:pointer',
+  ]
+
+  const add = document.createElement('button')
+  add.type = 'button'
+  add.textContent = 'Add to itinerary'
+  add.style.cssText = [
+    ...actionBase,
+    'margin-top:8px',
+    'background:var(--primary)',
+    'color:var(--on-primary)',
     'border:0',
   ].join(';')
-  btn.addEventListener('click', onAdd)
-  root.appendChild(btn)
+  add.addEventListener('click', onAdd)
+  root.appendChild(add)
+
+  const save = document.createElement('button')
+  save.type = 'button'
+  save.textContent = 'Save to wishlist'
+  save.style.cssText = [
+    ...actionBase,
+    'margin-top:6px',
+    'background:var(--surface)',
+    'color:var(--ink)',
+    'border:1px solid var(--line)',
+  ].join(';')
+  save.addEventListener('click', onSave)
+  root.appendChild(save)
 
   return root
 }
@@ -299,6 +323,7 @@ export default function ItineraryMap({
   onSelectItem,
   onOpenItem,
   onAddNearby,
+  onSaveNearby,
 }: {
   items: ItineraryItem[]
   dayIndex: Map<string, DayInfo>
@@ -309,6 +334,8 @@ export default function ItineraryMap({
   onOpenItem: (item: ItineraryItem) => void
   /** One-tap add a found place as a normal itinerary item (name + coords). */
   onAddNearby: (place: NearbyPlace) => void
+  /** One-tap save a found place to the wishlist for later (name + coords + category, #355). */
+  onSaveNearby: (place: NearbyPlace) => void
 }) {
   const located = React.useMemo(() => items.filter(isLocated), [items])
   const unlocated = React.useMemo(() => items.filter((i) => !isLocated(i)), [items])
@@ -342,10 +369,12 @@ export default function ItineraryMap({
   const onSelectRef = React.useRef(onSelectItem)
   const onOpenRef = React.useRef(onOpenItem)
   const onAddNearbyRef = React.useRef(onAddNearby)
+  const onSaveNearbyRef = React.useRef(onSaveNearby)
   React.useLayoutEffect(() => {
     onSelectRef.current = onSelectItem
     onOpenRef.current = onOpenItem
     onAddNearbyRef.current = onAddNearby
+    onSaveNearbyRef.current = onSaveNearby
   })
 
   // ── Nearby "things to do" (epic #164, slice 1) ────────────────────────────
@@ -548,10 +577,18 @@ export default function ItineraryMap({
           )
         : null
       marker.bindPopup(() =>
-        nearbyPopupContent(place, distanceKm, () => {
-          onAddNearbyRef.current(place)
-          marker.closePopup()
-        }),
+        nearbyPopupContent(
+          place,
+          distanceKm,
+          () => {
+            onAddNearbyRef.current(place)
+            marker.closePopup()
+          },
+          () => {
+            onSaveNearbyRef.current(place)
+            marker.closePopup()
+          },
+        ),
       )
       marker.addTo(layer)
     }
