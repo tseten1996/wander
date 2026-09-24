@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { motion } from '@/lib/motion'
 import {
-  CornerUpLeft, ImagePlus, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff,
+  ArrowDown, CornerUpLeft, ImagePlus, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff,
   SendHorizonal, SmilePlus, Trash2, X,
 } from 'lucide-react'
 import { format, isSameDay, parseISO } from 'date-fns'
@@ -300,11 +300,28 @@ export default function ChatPage() {
   // Set when the local member sends: their own message always brings them down,
   // even if they were reading older chat when they hit send.
   const forceScrollRef = React.useRef(false)
+  // The message count at the previous render, so the follow effect can tell how
+  // many messages actually arrived (vs. a delete shrinking the list).
+  const prevCountRef = React.useRef(count)
+  // Messages that arrived while the reader was scrolled up (#362). Surfaced as a
+  // "N new messages" pill rather than silently piling up at an unseen bottom.
+  const [newCount, setNewCount] = React.useState(0)
 
   function handleScroll() {
     const el = scrollRef.current
     if (!el) return
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+    atBottomRef.current = atBottom
+    // Scrolling back down to the live edge clears the unread pill. setState bails
+    // out when already 0, so this is a no-op on the common mid-scroll events.
+    if (atBottom) setNewCount(0)
+  }
+
+  function jumpToLatest() {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    bottomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' })
+    atBottomRef.current = true
+    setNewCount(0)
   }
 
   function attachImage(file: File | null | undefined) {
@@ -352,10 +369,20 @@ export default function ChatPage() {
   }
 
   React.useEffect(() => {
+    const arrived = count - prevCountRef.current
+    prevCountRef.current = count
     // Don't steal the scroll position from someone reading older chat: only
     // follow new messages when they're near the bottom, or just sent one.
-    if (!atBottomRef.current && !forceScrollRef.current) return
+    if (!atBottomRef.current && !forceScrollRef.current) {
+      // Detached reader: surface arrivals in the pill instead of silently
+      // appending them off-screen. Ignore shrinking (a delete) — arrived ≤ 0.
+      if (arrived > 0) setNewCount((n) => n + arrived)
+      return
+    }
     forceScrollRef.current = false
+    // Following to the live edge means nothing is unread — clear the pill even
+    // when a force-scroll (the reader sent while scrolled up) brought us here.
+    setNewCount(0)
     // A raw scrollIntoView isn't governed by the root MotionConfig, so honour
     // prefers-reduced-motion by hand (matching SearchHighlighter/Itinerary).
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -419,10 +446,11 @@ export default function ChatPage() {
         </div>
       )}
 
+      <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="scrollbar-thin flex-1 space-y-4 overflow-y-auto pb-4 pr-1"
+        className="scrollbar-thin h-full space-y-4 overflow-y-auto pb-4 pr-1"
       >
         {messages.isLoading ? (
           <div className="space-y-3">
@@ -460,6 +488,25 @@ export default function ChatPage() {
           })
         )}
         <div ref={bottomRef} />
+      </div>
+
+      {/* New-messages pill (#362): while the reader is scrolled up, arrivals
+          land here instead of silently at an unseen bottom. aria-live announces
+          the count to screen readers; MotionConfig honours reduced-motion. */}
+      <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+        {newCount > 0 && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            onClick={jumpToLatest}
+            className="pointer-events-auto inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary shadow-soft transition-shadow hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            {newCount} new message{newCount === 1 ? '' : 's'}
+            <ArrowDown className="size-4" />
+          </motion.button>
+        )}
+      </div>
       </div>
 
       <motion.div
