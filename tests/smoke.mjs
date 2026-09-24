@@ -600,6 +600,15 @@ const BUDGET_SEARCH_SEED = {
 }
 let searchScenario = false
 
+// Trip-load failure recovery (#361): while set, the trip page's single-row
+// `trips` read returns a 5xx (the transient server failure the issue names), so
+// TripProvider must show its retryable error state — NOT the scary "you're not a
+// member" dead-end, which belongs only to a query that *succeeded* with no
+// membership row. The retry test flips this to false right before clicking "Try
+// again", proving the trip loads in place. Mirrors the `flakyRecovered` join
+// pattern above.
+let tripLoadFails = false
+
 // ── The Supabase stub: one handler for every request to the project host ──
 async function routeSupabase(route) {
   const req = route.request()
@@ -751,6 +760,12 @@ async function routeSupabase(route) {
   //             create-trip reads just the owner row (`.single()`, no order).
   if (pathname.endsWith('/rest/v1/trips')) {
     if (method === 'POST') return json(TRIP_ROW, 201) // insert().select().single()
+    // A transient 5xx on the trip page's single-row read (#361): the query errors
+    // (after react-query's one retry), so TripProvider must land on its retryable
+    // error state — never the not-a-member dead-end, which belongs only to a read
+    // that *succeeded* with no membership row. Flipped off before the retry click.
+    if (search.includes('id=eq.') && tripLoadFails)
+      return json({ message: 'transient upstream failure' }, 500)
     // The ended-trip scenario (#352) hands back a finished trip so the dashboard
     // renders the recap card; every other scenario gets the undated planning trip.
     if (search.includes('id=eq.')) return json(endedTripScenario ? ENDED_TRIP_ROW : TRIP_ROW)
@@ -1700,6 +1715,35 @@ async function runTripPresence(browser) {
     await page.getByText(/Overdue by/).waitFor({ state: 'visible', timeout: 10_000 })
     ok('a time-based reminder shows in its own section, distinct from notifications')
   } finally {
+    await context.close()
+  }
+}
+
+async function runTripLoadError(browser) {
+  console.log('\n▶ trip that fails to load shows a retry, not the not-a-member dead-end')
+  const context = await newContext(browser, OWNER_SESSION)
+  const page = await context.newPage()
+  tripLoadFails = true
+  try {
+    await page.goto(`${BASE_URL}/#/trip/${TRIP_ID}`, { waitUntil: 'domcontentloaded' })
+    // The trip read fails → TripProvider must land on its retryable error state,
+    // never the "you're not a member of this trip on this device" dead-end that
+    // belongs only to a query that succeeded with no membership row (#361).
+    await page.getByText('Couldn’t load this trip').waitFor({ state: 'visible', timeout: 10_000 })
+    ok('a failed trip load shows the retryable error state')
+    if (await page.getByText('You’re not a member of this trip on this device').isVisible()) {
+      throw new Error('a transient trip-load failure was misdiagnosed as not-a-member')
+    }
+    ok('a transient failure is not blamed on membership')
+
+    // Let the trip read through, then retry: it must recover in place (no full
+    // reload) → the trip layout renders the trip name.
+    tripLoadFails = false
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await page.getByText('Lisbon in Spring').first().waitFor({ state: 'visible', timeout: 10_000 })
+    ok('Try again re-runs the failed query and loads the trip in place')
+  } finally {
+    tripLoadFails = false
     await context.close()
   }
 }
@@ -3233,6 +3277,7 @@ async function main() {
     await runOffline(browser)
     await runSignOut(browser)
     await runTripPresence(browser)
+    await runTripLoadError(browser)
     await runAvailabilityPoll(browser)
     await runBudget(browser)
     await runChat(browser)
