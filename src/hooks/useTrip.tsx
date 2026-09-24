@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useTripRealtime } from '@/hooks/useRealtime'
 import { useTripPresence } from '@/hooks/usePresence'
+import { ErrorState } from '@/components/ui/misc'
 import type { Member, Trip } from '@/types'
 
 interface TripContextValue {
@@ -91,7 +92,31 @@ export function TripProvider({
   }, [trip, members, me, activeIds])
 
   if (tripQuery.isLoading || membersQuery.isLoading) return <>{fallback}</>
-  // RLS returns no row when you're not a member — same as not-found.
+
+  // A transient failure (network drop, 5xx, RLS timeout) must NOT be read as
+  // "you're not a member" — that scary dead-end belongs only to a query that
+  // *succeeded* and found no membership row. On error, offer a retry that
+  // re-runs whichever query failed, in place (issue #361).
+  if (tripQuery.isError || membersQuery.isError) {
+    const retry = () => {
+      if (tripQuery.isError) void tripQuery.refetch()
+      if (membersQuery.isError) void membersQuery.refetch()
+    }
+    return (
+      <div className="mx-auto max-w-md px-4 py-20">
+        <ErrorState
+          title="Couldn’t load this trip"
+          description="Something went wrong reaching the server. Check your connection and try again."
+          onRetry={retry}
+          isRetrying={tripQuery.isRefetching || membersQuery.isRefetching}
+        />
+      </div>
+    )
+  }
+
+  // Query succeeded but there's no row: RLS returns nothing when you're not a
+  // member — same as not-found. This is the genuine "ask for a fresh invite"
+  // state, reached only after a successful (non-error) fetch.
   if (!value) return <>{denied}</>
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>
