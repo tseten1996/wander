@@ -28,6 +28,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { MemberDatesForm } from '@/features/me/MemberDatesForm'
+import { useBudget, useRepayments } from '@/features/budget/api'
 import { DestinationsCard } from '@/features/destinations/DestinationsCard'
 import { TripPreferencesCard } from '@/features/preferences/TripPreferencesCard'
 import { CoverPicker } from '@/features/trips/CoverPicker'
@@ -343,16 +344,21 @@ function InviteCard() {
   const { trip, isOwner } = useTripContext()
   const queryClient = useQueryClient()
   const { url: inviteUrl, copied, copy } = useInviteLink(trip)
+  const [confirmRegen, setConfirmRegen] = React.useState(false)
+  const [regenerating, setRegenerating] = React.useState(false)
 
   async function regenerate() {
+    setRegenerating(true)
     const { error } = await supabase
       .from('trips')
       .update({ invite_code: randomCode() })
       .eq('id', trip.id)
+    setRegenerating(false)
     if (error) toast.error(friendlyError(error, 'Could not regenerate the invite link'))
     else {
       toast.success('New invite link generated — old links no longer work')
       void queryClient.invalidateQueries({ queryKey: ['trip', trip.id] })
+      setConfirmRegen(false)
     }
   }
 
@@ -388,12 +394,34 @@ function InviteCard() {
               <Switch checked={trip.invite_enabled} onCheckedChange={setEnabled} />
               Invite link active
             </label>
-            <Button variant="ghost" size="sm" onClick={regenerate}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRegen(true)}>
               <RefreshCw /> Regenerate link
             </Button>
           </div>
         )}
       </CardContent>
+
+      <Dialog open={confirmRegen} onOpenChange={(open) => !regenerating && setConfirmRegen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Regenerate the invite link?</DialogTitle>
+            <DialogDescription>
+              This creates a brand-new link and breaks the current one right away.
+              Any link you’ve already shared — in the group chat, a text — stops
+              working, and friends who haven’t joined yet won’t be able to until
+              you send them the new one. This can’t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setConfirmRegen(false)} disabled={regenerating}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={regenerate} disabled={regenerating}>
+              {regenerating ? 'Regenerating…' : 'Regenerate link'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
@@ -578,18 +606,40 @@ function MembersCard() {
   const [mergeDup, setMergeDup] = React.useState<Member | null>(null)
   // The member whose trip dates the owner is editing inline. null = collapsed.
   const [editingDates, setEditingDates] = React.useState<string | null>(null)
+  // The member the owner is about to remove (confirm dialog). null = closed.
+  const [removing, setRemoving] = React.useState<Member | null>(null)
+  const [removeBusy, setRemoveBusy] = React.useState(false)
+  // Whether the current member is confirming leaving the trip.
+  const [leaveOpen, setLeaveOpen] = React.useState(false)
+  const [leaveBusy, setLeaveBusy] = React.useState(false)
 
-  async function remove(memberId: string, name: string) {
-    const { error } = await supabase.from('members').delete().eq('id', memberId)
+  // Removing a member wipes their money trail: expenses they paid have their
+  // payer cleared (paid_by → null) and repayments to/from them are deleted, so
+  // settle-up balances silently shift. We read both through the budget feature's
+  // own hooks (never Supabase directly) to warn before that happens (#363).
+  const { data: budget } = useBudget(trip.id)
+  const { data: repayments } = useRepayments(trip.id)
+  const removingAffectsLedger = removing
+    ? (budget ?? []).some((e) => e.paid_by === removing.id) ||
+      (repayments ?? []).some((r) => r.from_member === removing.id || r.to_member === removing.id)
+    : false
+
+  async function remove(member: Member) {
+    setRemoveBusy(true)
+    const { error } = await supabase.from('members').delete().eq('id', member.id)
+    setRemoveBusy(false)
     if (error) toast.error(friendlyError(error, 'Could not remove that member'))
     else {
-      toast.success(`${name} removed from the trip`)
+      toast.success(`${member.display_name} removed from the trip`)
       void queryClient.invalidateQueries({ queryKey: ['members', trip.id] })
+      setRemoving(null)
     }
   }
 
   async function leave() {
+    setLeaveBusy(true)
     const { error } = await supabase.from('members').delete().eq('id', me.id)
+    setLeaveBusy(false)
     if (error) toast.error(friendlyError(error, 'Could not leave the trip'))
     else navigate('/')
   }
@@ -647,7 +697,7 @@ function MembersCard() {
                           variant="ghost"
                           size="sm"
                           className="text-danger"
-                          onClick={() => remove(m.id, m.display_name)}
+                          onClick={() => setRemoving(m)}
                         >
                           <UserMinus /> Remove
                         </Button>
@@ -666,7 +716,7 @@ function MembersCard() {
         })}
         {!isOwner && (
           <div className="pt-2">
-            <Button variant="danger" size="sm" onClick={leave}>
+            <Button variant="danger" size="sm" onClick={() => setLeaveOpen(true)}>
               <LogOut /> Leave this trip
             </Button>
             {isAnonymous && (
@@ -683,6 +733,61 @@ function MembersCard() {
         candidates={members.filter((m) => m.id !== mergeDup?.id)}
         onOpenChange={(open) => !open && setMergeDup(null)}
       />
+
+      <Dialog open={!!removing} onOpenChange={(open) => !open && !removeBusy && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove “{removing?.display_name}” from the trip?</DialogTitle>
+            <DialogDescription>
+              They lose access right away and need a fresh invite link to rejoin.
+              This can’t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {removingAffectsLedger && (
+              <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+                Their expenses and settle-up transfers will be removed with them,
+                so everyone’s balances will change.
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={() => setRemoving(null)} disabled={removeBusy}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => removing && remove(removing)}
+                disabled={removeBusy}
+              >
+                {removeBusy ? 'Removing…' : 'Remove member'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={leaveOpen} onOpenChange={(open) => !leaveBusy && setLeaveOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave “{trip.name}”?</DialogTitle>
+            <DialogDescription>
+              You’ll be removed from this trip and lose access to its plans, chat
+              and lists.
+              {isAnonymous
+                ? ' Without an account you can only rejoin with a fresh invite link.'
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setLeaveOpen(false)} disabled={leaveBusy}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={leave} disabled={leaveBusy}>
+              {leaveBusy ? 'Leaving…' : 'Leave trip'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
