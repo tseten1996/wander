@@ -49,13 +49,39 @@ const CATEGORIES: { value: PollCategory; label: string }[] = [
   { value: 'transport', label: 'Transportation' },
 ]
 
+/** A `datetime-local` value (`YYYY-MM-DDTHH:mm`, no seconds/tz) for the given
+    instant in the viewer's own timezone — used both as the picker `min` and,
+    floored to the minute, as the "not in the past" comparison so the two agree. */
+function localDateTimeValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`
+}
+
 const pollSchema = z
   .object({
     question: z.string().trim().min(1, 'Give it a question').max(200, 'Keep it under 200 characters'),
     category: z.enum([
       'general', 'dates', 'stay', 'flights', 'food', 'activities', 'transport',
     ]),
-    closes_at: z.string().optional().nullable(),
+    closes_at: z
+      .string()
+      .optional()
+      .nullable()
+      // A close time in the past makes a dead-on-arrival poll: `isPollOpen` is
+      // false the instant it's posted. Reject it (empty = no expiry, still ok).
+      // Compare at minute granularity to match the picker's precision, so the
+      // current minute — which `min` still allows — is not rejected here.
+      .refine(
+        (v) => {
+          if (!v) return true
+          const t = new Date(v).getTime()
+          if (Number.isNaN(t)) return true
+          return t >= Math.floor(Date.now() / 60_000) * 60_000
+        },
+        { message: 'Pick a close time in the future' }
+      ),
     options: z
       .array(
         z.object({
@@ -344,6 +370,10 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // Floor of "now" as a picker `min` so past times can't be selected in
+  // supporting browsers; recomputed each time the dialog opens.
+  const closesMin = React.useMemo(() => localDateTimeValue(new Date()), [open])
+
   async function onSubmit(values: PollFormValues) {
     try {
       await createPoll.mutateAsync({
@@ -408,7 +438,14 @@ function NewPollDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="poll-closes">Closes (optional)</Label>
-              <Input id="poll-closes" type="datetime-local" {...form.register('closes_at')} />
+              <Input
+                id="poll-closes"
+                type="datetime-local"
+                min={closesMin}
+                aria-invalid={err.closes_at ? true : undefined}
+                {...form.register('closes_at')}
+              />
+              {err.closes_at && <p className="text-xs text-danger">{err.closes_at.message}</p>}
             </div>
           </div>
           <div className="space-y-1.5">
