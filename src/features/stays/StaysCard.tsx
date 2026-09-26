@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useLocation } from 'react-router-dom'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -21,7 +22,7 @@ import { Skeleton, ErrorState } from '@/components/ui/misc'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { dateRange } from '@/lib/utils'
+import { cn, dateRange } from '@/lib/utils'
 import type { Stay } from '@/types'
 
 /**
@@ -360,6 +361,25 @@ export function StaysCard() {
 
   const stays = query.data ?? []
 
+  // "Open stay" on a map marker (#371) navigates here with the stay id in router
+  // state (HashRouter owns the URL hash, so it can't ride a fragment). Scroll the
+  // matching row into view and highlight it briefly so the tap-through lands
+  // somewhere obvious rather than at the top of a long list.
+  const location = useLocation()
+  const focusStayId = (location.state as { focusStayId?: string } | null)?.focusStayId ?? null
+  const [highlightId, setHighlightId] = React.useState<string | null>(null)
+  const rowRefs = React.useRef(new Map<string, HTMLLIElement>())
+  React.useEffect(() => {
+    if (!focusStayId) return
+    const el = rowRefs.current.get(focusStayId)
+    if (!el) return
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+    setHighlightId(focusStayId)
+    const t = window.setTimeout(() => setHighlightId(null), 2200)
+    return () => window.clearTimeout(t)
+  }, [focusStayId, stays])
+
   return (
     <Card>
       <CardHeader>
@@ -387,7 +407,18 @@ export function StaysCard() {
                   return (
                     <li
                       key={s.id}
-                      className="flex items-start gap-3 rounded-xl border border-line bg-sunken/40 px-3 py-2"
+                      id={`stay-${s.id}`}
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(s.id, el)
+                        else rowRefs.current.delete(s.id)
+                      }}
+                      aria-current={highlightId === s.id ? 'true' : undefined}
+                      className={cn(
+                        'flex items-start gap-3 rounded-xl border px-3 py-2 transition-colors',
+                        highlightId === s.id
+                          ? 'border-primary bg-primary-faint ring-2 ring-primary'
+                          : 'border-line bg-sunken/40',
+                      )}
                     >
                       <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-faint text-primary">
                         <BedDouble className="size-4" />
