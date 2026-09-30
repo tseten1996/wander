@@ -5,12 +5,15 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  ArrowRight, Check, HandCoins, ImageOff, MapPin, MessageCircle, MoreHorizontal, Pencil,
-  PiggyBank, Plus, Receipt, Scale, Trash2, Undo2, Wallet, X,
+  ArrowRight, BedDouble, Check, HandCoins, ImageOff, MapPin, MessageCircle, MoreHorizontal,
+  Pencil, PiggyBank, Plus, Receipt, Route, Scale, Trash2, Undo2, Wallet, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import { useItinerary } from '@/features/itinerary/api'
+import { useStays } from '@/features/stays/api'
+import { useTransport } from '@/features/transport/api'
+import { MODE_MAP } from '@/features/transport/TransportCard'
 import { searchAnchorId } from '@/features/search/anchor'
 import {
   removeReceiptObject, uploadReceipt, useBudget, useCreateBudgetEntry, useCreateRepayment,
@@ -1046,6 +1049,66 @@ function LinkedItineraryChip({ entryId }: { entryId: string }) {
 }
 
 /**
+ * Reverse link (#370, epic #346): when a stay or transport hop points at this
+ * expense, show what booking it paid for, tapping back to it on the Calendar
+ * (where both the Stays and Transport cards live). Reads the already-cached
+ * bookings; renders nothing until one links here, so an unlinked expense row is
+ * unchanged. The counterpart to `LinkedItineraryChip` (#151).
+ */
+function LinkedBookingChip({ entryId }: { entryId: string }) {
+  const { trip } = useTripContext()
+  const navigate = useNavigate()
+  const stays = useStays(trip.id)
+  const transport = useTransport(trip.id)
+  const linkedStays = React.useMemo(
+    () => (stays.data ?? []).filter((s) => s.budget_entry_id === entryId),
+    [stays.data, entryId],
+  )
+  const linkedHops = React.useMemo(
+    () => (transport.data ?? []).filter((h) => h.budget_entry_id === entryId),
+    [transport.data, entryId],
+  )
+  if (linkedStays.length === 0 && linkedHops.length === 0) return null
+
+  const chipClass = cn(
+    'mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full bg-sunken px-2 py-0.5',
+    'text-xs font-medium text-muted transition-colors hover:text-ink',
+  )
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {linkedStays.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          data-tap-target
+          onClick={() => navigate(`/trip/${trip.id}/calendar`, { state: { focusStayId: s.id } })}
+          className={chipClass}
+        >
+          <BedDouble className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">Paid for stay · {s.name}</span>
+        </button>
+      ))}
+      {linkedHops.map((h) => {
+        const label =
+          [h.depart_place, h.arrive_place].filter(Boolean).join(' → ') || MODE_MAP[h.mode].label
+        return (
+          <button
+            key={h.id}
+            type="button"
+            data-tap-target
+            onClick={() => navigate(`/trip/${trip.id}/calendar`)}
+            className={chipClass}
+          >
+            <Route className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">Paid for transport · {label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
  * A quiet "there's discussion here" count on a budget entry, with an unread dot
  * when the newest comment is new to you (#342). Mirrors the itinerary badge
  * (#314), reading the one trip-wide `useCommentActivity` query. The budget
@@ -1106,6 +1169,7 @@ function EntryRow({ entry }: { entry: BudgetEntryWithReceipt }) {
           {weighted && ' · split unevenly'}
         </p>
         <LinkedItineraryChip entryId={entry.id} />
+        <LinkedBookingChip entryId={entry.id} />
         {canModify && (
           <BudgetCommentBadge entryId={entry.id} onOpen={() => setEditOpen(true)} />
         )}

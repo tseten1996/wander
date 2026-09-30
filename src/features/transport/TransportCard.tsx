@@ -9,9 +9,10 @@ import {
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useCreateTransport, useDeleteTransport, useTransport, useUpdateTransport,
-  type TransportInput,
+  useCreateTransport, useDeleteTransport, useSetTransportBudgetLink, useTransport,
+  useUpdateTransport, type TransportInput,
 } from './api'
+import { BookingCostChip, BudgetLinkControl } from '@/features/budget/BudgetLinkControl'
 // The booking-URL sanitizer is shared with Stays rather than copied a third time
 // (per the #350 build note; the consolidation of these helpers is tracked in
 // #354). An `href` is a capability, so a member-supplied link is only ever
@@ -95,6 +96,7 @@ function TransportDialog({
   const { trip, me } = useTripContext()
   const create = useCreateTransport(trip.id, me.id)
   const update = useUpdateTransport(trip.id, me.id)
+  const setBudgetLink = useSetTransportBudgetLink(trip.id)
 
   const form = useForm<TransportFormValues>({
     resolver: zodResolver(transportSchema),
@@ -290,6 +292,23 @@ function TransportDialog({
             />
             {err.booking_url && <p className="text-xs text-danger">{err.booking_url.message}</p>}
           </div>
+          {/* Linking a cost needs the hop's id, so it lives on the edit form only
+              — a brand-new hop is saved first, then linked, mirroring the stays
+              card and the budget/itinerary comment threads. */}
+          {hop && (
+            <BudgetLinkControl
+              linkedEntryId={hop.budget_entry_id}
+              onChange={(budget_entry_id) =>
+                setBudgetLink.mutate({ id: hop.id, budget_entry_id })
+              }
+              draftTitle={
+                [hop.depart_place, hop.arrive_place].filter(Boolean).join(' → ') ||
+                MODE_MAP[hop.mode].label
+              }
+              category="transport"
+              busy={setBudgetLink.isPending}
+            />
+          )}
           <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {hop ? 'Save transport' : 'Add transport'}
           </Button>
@@ -400,10 +419,11 @@ function TransportRow({
             {arrive && <span>{arrive}</span>}
           </p>
         )}
-        {(hop.confirmation_code || url) && (
+        {(hop.confirmation_code || url || hop.budget_entry_id) && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {hop.confirmation_code && <CodeChip code={hop.confirmation_code} />}
             {url && <BookingChip url={url} />}
+            {hop.budget_entry_id && <BookingCostChip entryId={hop.budget_entry_id} />}
           </div>
         )}
       </div>
