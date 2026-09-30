@@ -78,8 +78,11 @@ zero configuration. After the first deploy, update the Supabase **Site URL**
 | Budget | Trip budget vs planned vs spent, per-category chart, paid-by tracking, multi-currency entries converted to the trip currency (ECB reference rates), and a minimal settle-up summary |
 | Packing | Five categories, per-category progress, quick add |
 | Calendar | Month view merging travel dates, itinerary, checklist deadlines and payments, with a daily weather forecast (Open-Meteo) |
+| Stays | Lodging cards on the calendar: name, address (with map pin), check-in/out dates, confirmation code and booking link — each trip day surfaces the stay you're sleeping in |
+| Transport | Getting-there hops on the calendar: flight/train/bus/car/ferry, from/to places, depart & arrive times, confirmation code and booking link — each hop shows on the day it departs or arrives |
 | Notes | Shared markdown notes with preview, pinning |
 | Ideas | Pinterest-style masonry board with category filters |
+| Wishlist | A "want to go" shelf on the itinerary for saved-but-unscheduled places — name, category (Food/Sight/Drinks/Other), note and link, added by hand or saved from the map's nearby suggestions |
 | Photos | A browsable trip gallery that aggregates every image already in the trip — chat photos and idea-board images — plus direct uploads, into one date-grouped grid with a lightbox |
 | AI | Optional AI assist (starter plan, "improve this day") through a keyless `/api/ai` serverless function, folding in the group's stated travel preferences, with a per-trip usage quota so cost stays bounded |
 | Search | Command-palette search (⌘/Ctrl-K) across polls, chat, checklist, notes and ideas, jumping straight to the match |
