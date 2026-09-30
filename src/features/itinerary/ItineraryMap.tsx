@@ -2,12 +2,12 @@ import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MapPinOff, Sparkles, X } from 'lucide-react'
+import { BedDouble, MapPinOff, Sparkles, X } from 'lucide-react'
 import { ITINERARY_META } from './meta'
 import { dayInfoFor, type DayInfo } from './days'
 import { isSpanning } from './spans'
 import { onColor } from '@/lib/colors'
-import { formatTime } from '@/lib/utils'
+import { dateRange, formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { haversineKm } from '@/lib/geo'
 import {
@@ -17,6 +17,7 @@ import {
 import { PERSIST_MAX_AGE } from '@/lib/queryClient'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/misc'
+import type { LocatedStay } from '@/features/stays/pins'
 import type { ItineraryItem } from '@/types'
 
 /**
@@ -162,6 +163,115 @@ function popupContent(item: ItineraryItem, info: DayInfo, onOpen: () => void): H
   root.appendChild(btn)
 
   return root
+}
+
+// ── Stay markers (#371, epic #346) ──────────────────────────────────────────
+// A stay already stores an optional geocoded pin (the same coordinate the
+// itinerary uses); this layer just reads and draws it. A lodging marker is
+// deliberately unlike both the round, numbered day pins and the hollow Nearby
+// rings: a rounded *square* tinted with the accent token, carrying a bed glyph —
+// so "where we sleep" reads apart from "what we're doing" by shape, colour and
+// icon at once, never by colour alone. Tokens only (no raw palette values —
+// see the token lint in check-invariants).
+
+/**
+ * A lodging marker drawn from tokens (no external image), centred in a 44px
+ * transparent wrapper so the tap area meets the mobile floor, same as `pinIcon`.
+ * The bed glyph is stroked in the surface colour, which contrasts against the
+ * accent fill in both light and dark themes.
+ */
+function stayIcon(): L.DivIcon {
+  const wrap = document.createElement('div')
+  wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;width:44px;height:44px'
+
+  const el = document.createElement('div')
+  el.style.cssText = [
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'width:30px',
+    'height:30px',
+    'border-radius:9px',
+    'background:var(--accent)',
+    // Sets `currentColor` for the inline SVG stroke below.
+    'color:var(--surface)',
+    'border:2px solid var(--surface)',
+    'box-shadow:var(--shadow-soft)',
+  ].join(';')
+  // Bed glyph (lucide bed-double), inline so no external marker image is fetched.
+  el.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M2 20v-8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8"/>' +
+    '<path d="M4 10V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4"/>' +
+    '<path d="M12 4v6"/><path d="M2 18h20"/></svg>'
+  wrap.appendChild(el)
+
+  return L.divIcon({ className: '', html: wrap.outerHTML, iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -15] })
+}
+
+/** Popup for a stay marker — its name, its check-in/check-out range, and a
+ *  44px-tall tap-through to the Stay card. Built as DOM (textContent) so the
+ *  user-entered name is never interpreted as HTML. */
+function stayPopupContent(stay: LocatedStay, onOpen: () => void): HTMLElement {
+  const root = document.createElement('div')
+  root.style.minWidth = '150px'
+
+  const title = document.createElement('p')
+  title.textContent = stay.name
+  title.style.cssText = 'font-weight:600;font-size:13px;margin:0'
+  root.appendChild(title)
+
+  const sub = document.createElement('p')
+  // dateRange renders "Dates TBD" for a pinned-but-dateless stay — no empty line.
+  sub.textContent = `Stay · ${dateRange(stay.check_in, stay.check_out)}`
+  sub.style.cssText = 'color:var(--muted);font-size:12px;margin:4px 0 0'
+  root.appendChild(sub)
+
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.textContent = 'Open stay'
+  btn.style.cssText = [
+    'margin-top:8px',
+    'width:100%',
+    'box-sizing:border-box',
+    'min-height:44px',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'padding:8px 10px',
+    'border-radius:8px',
+    'background:var(--primary)',
+    'color:var(--on-primary)',
+    'font-size:12px',
+    'font-weight:600',
+    'cursor:pointer',
+    'border:0',
+  ].join(';')
+  btn.addEventListener('click', onOpen)
+  root.appendChild(btn)
+
+  return root
+}
+
+/** Legend chip explaining the lodging marker — shown only when the map has
+ *  stay pins, so the accent bed square is never an unexplained symbol. */
+function StayLegend() {
+  return (
+    <ul aria-label="Map stay legend" className="flex items-center gap-x-3 text-xs text-muted">
+      <li className="flex items-center gap-1.5">
+        <span
+          aria-hidden
+          className="flex size-4 items-center justify-center rounded-[5px] border"
+          style={{ background: 'var(--accent)', color: 'var(--surface)', borderColor: 'var(--surface)' }}
+        >
+          <BedDouble className="size-2.5" />
+        </span>
+        <span>Stay</span>
+      </li>
+    </ul>
+  )
 }
 
 /** Search radius for Nearby, in metres — a walkable neighbourhood. Named
@@ -318,20 +428,27 @@ function DayLegend({ days }: { days: DayInfo[] }) {
 
 export default function ItineraryMap({
   items,
+  stays,
   dayIndex,
   selectedId,
   onSelectItem,
   onOpenItem,
+  onOpenStay,
   onAddNearby,
   onSaveNearby,
 }: {
   items: ItineraryItem[]
+  /** Stays that carry a pin — a separate, read-only lodging layer (#371). The
+   *  caller filters to located stays so this component just draws them. */
+  stays: LocatedStay[]
   dayIndex: Map<string, DayInfo>
   selectedId: string | null
   /** Set the shared selection (a pin was clicked). */
   onSelectItem: (id: string | null) => void
   /** Open an item's edit dialog (the popup's "Open item" button). */
   onOpenItem: (item: ItineraryItem) => void
+  /** Tap through from a stay marker to the Stay card (the popup's "Open stay"). */
+  onOpenStay: (stay: LocatedStay) => void
   /** One-tap add a found place as a normal itinerary item (name + coords). */
   onAddNearby: (place: NearbyPlace) => void
   /** One-tap save a found place to the wishlist for later (name + coords + category, #355). */
@@ -339,7 +456,9 @@ export default function ItineraryMap({
 }) {
   const located = React.useMemo(() => items.filter(isLocated), [items])
   const unlocated = React.useMemo(() => items.filter((i) => !isLocated(i)), [items])
-  const hasPins = located.length > 0
+  // The map is worth showing when there's anything to plot — a located itinerary
+  // item OR a stay pin (a trip may pin its hotel before any stop is located).
+  const hasPins = located.length > 0 || stays.length > 0
 
   // Distinct days present among the pins, in day order, for the legend.
   const legendDays = React.useMemo(() => {
@@ -359,6 +478,9 @@ export default function ItineraryMap({
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const mapRef = React.useRef<L.Map | null>(null)
   const layerRef = React.useRef<L.LayerGroup | null>(null)
+  // Stay markers live in their own layer so redrawing lodging never disturbs the
+  // itinerary pins' selection sync (mirrors the Nearby layer's separation).
+  const staysLayerRef = React.useRef<L.LayerGroup | null>(null)
   // Markers by item id so the selection effect can restyle / pan to one without
   // rebuilding the whole layer.
   const markersRef = React.useRef<Map<string, { marker: L.Marker; item: ItineraryItem; info: DayInfo }>>(
@@ -368,11 +490,13 @@ export default function ItineraryMap({
   // every marker when the parent re-renders.
   const onSelectRef = React.useRef(onSelectItem)
   const onOpenRef = React.useRef(onOpenItem)
+  const onOpenStayRef = React.useRef(onOpenStay)
   const onAddNearbyRef = React.useRef(onAddNearby)
   const onSaveNearbyRef = React.useRef(onSaveNearby)
   React.useLayoutEffect(() => {
     onSelectRef.current = onSelectItem
     onOpenRef.current = onOpenItem
+    onOpenStayRef.current = onOpenStay
     onAddNearbyRef.current = onAddNearby
     onSaveNearbyRef.current = onSaveNearby
   })
@@ -453,6 +577,9 @@ export default function ItineraryMap({
       maxZoom: 19,
     }).addTo(map)
     layerRef.current = L.layerGroup().addTo(map)
+    // Stays sit above the itinerary pins and route lines but below the Nearby
+    // suggestions, so a lodging marker never hides an active suggestion.
+    staysLayerRef.current = L.layerGroup().addTo(map)
     // Suggestion markers live in their own layer, added last so they sit above
     // the itinerary pins and route lines.
     nearbyLayerRef.current = L.layerGroup().addTo(map)
@@ -465,6 +592,7 @@ export default function ItineraryMap({
       map.remove()
       mapRef.current = null
       layerRef.current = null
+      staysLayerRef.current = null
       nearbyLayerRef.current = null
       markersRef.current = new Map()
     }
@@ -522,6 +650,27 @@ export default function ItineraryMap({
       marker.addTo(layer)
       markersRef.current.set(item.id, { marker, item, info })
     })
+
+    // Stay markers (#371): a distinct, read-only lodging layer. No selection
+    // sync, but their points join the fit-bounds below so a far-flung hotel is
+    // never cropped out of frame. Redrawn here alongside the pins so a change to
+    // either set recomputes one consistent set of bounds.
+    const staysLayer = staysLayerRef.current
+    if (staysLayer) {
+      staysLayer.clearLayers()
+      stays.forEach((stay) => {
+        const latlng: L.LatLngExpression = [stay.latitude, stay.longitude]
+        points.push(latlng)
+        const marker = L.marker(latlng, {
+          icon: stayIcon(),
+          title: `${stay.name} — stay`,
+          keyboard: true,
+        })
+        marker.bindPopup(() => stayPopupContent(stay, () => onOpenStayRef.current(stay)))
+        marker.addTo(staysLayer)
+      })
+    }
+
     if (points.length > 0) {
       map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 15 })
     }
@@ -531,7 +680,7 @@ export default function ItineraryMap({
     // selectedId is intentionally omitted: the selection effect below restyles
     // the affected pins so a selection change doesn't rebuild the whole layer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [located, dayIndex])
+  }, [located, dayIndex, stays])
 
   // Reflect the shared selection: restyle every pin, then pan to / open the
   // selected one. Runs on mount too, so a selection made on the List tab is
@@ -599,7 +748,10 @@ export default function ItineraryMap({
       {hasPins ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <DayLegend days={legendDays} />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+              <DayLegend days={legendDays} />
+              {stays.length > 0 && <StayLegend />}
+            </div>
             <Button
               variant={nearbyOn ? 'secondary' : 'soft'}
               size="sm"

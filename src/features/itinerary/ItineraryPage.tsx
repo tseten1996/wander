@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from '@/lib/motion'
 import {
   DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter,
@@ -27,6 +28,8 @@ import { useCommentActivity } from './comments/api'
 import { isEntityUnread } from './comments/tally'
 import { useCommentSeen } from './comments/useCommentSeen'
 import { useDestinations } from '@/features/destinations/api'
+import { useStays } from '@/features/stays/api'
+import { staysWithPin } from '@/features/stays/pins'
 import { useCreateWishlistItem } from '@/features/wishlist/api'
 import { WishlistCard } from '@/features/wishlist/WishlistCard'
 import { groupDaysByLeg, hasLegs } from '@/features/destinations/legs'
@@ -856,10 +859,23 @@ function PasteBookingDialog({
 }
 
 export default function ItineraryPage() {
+  const navigate = useNavigate()
   const { trip, me } = useTripContext()
   const itinerary = useItinerary(trip.id)
   const destinations = useDestinations(trip.id).data ?? []
   const weather = useTripWeather(trip, destinations)
+  // Stays with a pin, drawn as a distinct lodging layer on the map (#371). The
+  // Stays card itself lives on the Calendar page, so "Open stay" navigates there
+  // and asks it to focus this stay (via router state — HashRouter owns the URL
+  // hash, so a second fragment can't carry the id).
+  const stays = useStays(trip.id).data ?? []
+  const stayPins = React.useMemo(() => staysWithPin(stays), [stays])
+  const openStay = React.useCallback(
+    (stay: { id: string }) => {
+      navigate('../calendar', { relative: 'path', state: { focusStayId: stay.id } })
+    },
+    [navigate],
+  )
   // One-tap "Add to itinerary" from a Nearby map suggestion (#165). A found
   // place becomes a plain itinerary item — name + coordinates prefilled, day
   // defaulted to the trip start (editable afterwards like any other item), so
@@ -1128,10 +1144,12 @@ export default function ItineraryPage() {
             <React.Suspense fallback={<Skeleton className="h-[22rem] rounded-2xl sm:h-[28rem]" />}>
               <ItineraryMap
                 items={items}
+                stays={stayPins}
                 dayIndex={dayIndex}
                 selectedId={selectedId}
                 onSelectItem={setSelectedId}
                 onOpenItem={setEditItem}
+                onOpenStay={openStay}
                 onAddNearby={addNearby}
                 onSaveNearby={saveNearby}
               />
