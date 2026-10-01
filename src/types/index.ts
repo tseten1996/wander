@@ -84,6 +84,10 @@ export interface Stay {
   confirmation_code: string | null
   /** Booking link; rendered only as a sanitized http(s) external link. */
   booking_url: string | null
+  /** Optional link to the budget entry that paid for this stay (#370, epic
+   *  #346). Nullable pointer, `ON DELETE SET NULL`: deleting the expense clears
+   *  the link and leaves the stay intact. Budget totals/settle-up never read it. */
+  budget_entry_id: string | null
   created_at: string
 }
 
@@ -112,6 +116,10 @@ export interface Transport {
   confirmation_code: string | null
   /** Booking link; rendered only as a sanitized http(s) external link. */
   booking_url: string | null
+  /** Optional link to the budget entry that paid for this hop (#370, epic #346).
+   *  Nullable pointer, `ON DELETE SET NULL`: deleting the expense clears the link
+   *  and leaves the hop intact. Budget totals/settle-up never read it. */
+  budget_entry_id: string | null
   created_at: string
 }
 

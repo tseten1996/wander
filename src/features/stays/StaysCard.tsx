@@ -9,8 +9,10 @@ import {
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useCreateStay, useDeleteStay, useStays, useUpdateStay, type StayInput,
+  useCreateStay, useDeleteStay, useSetStayBudgetLink, useStays, useUpdateStay,
+  type StayInput,
 } from './api'
+import { BookingCostChip, BudgetLinkControl } from '@/features/budget/BudgetLinkControl'
 import { geocodeFirst } from '@/lib/geocode'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -87,6 +89,7 @@ function StayDialog({
   const { trip, me } = useTripContext()
   const create = useCreateStay(trip.id, me.id)
   const update = useUpdateStay(trip.id, me.id)
+  const setBudgetLink = useSetStayBudgetLink(trip.id)
 
   const form = useForm<StayFormValues>({
     resolver: zodResolver(staySchema),
@@ -290,6 +293,20 @@ function StayDialog({
             />
             {err.booking_url && <p className="text-xs text-danger">{err.booking_url.message}</p>}
           </div>
+          {/* Linking a cost needs the stay's id, so it lives on the edit form only
+              — a brand-new stay is saved first, then linked, mirroring how the
+              budget/itinerary comment threads appear only once a row exists. */}
+          {stay && (
+            <BudgetLinkControl
+              linkedEntryId={stay.budget_entry_id}
+              onChange={(budget_entry_id) =>
+                setBudgetLink.mutate({ id: stay.id, budget_entry_id })
+              }
+              draftTitle={stay.name}
+              category="stay"
+              busy={setBudgetLink.isPending}
+            />
+          )}
           <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
             {stay ? 'Save stay' : 'Add stay'}
           </Button>
@@ -434,10 +451,11 @@ export function StaysCard() {
                             <span className="min-w-0 break-words">{s.address}</span>
                           </p>
                         )}
-                        {(s.confirmation_code || url) && (
+                        {(s.confirmation_code || url || s.budget_entry_id) && (
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
                             {s.confirmation_code && <CodeChip code={s.confirmation_code} />}
                             {url && <BookingChip url={url} />}
+                            {s.budget_entry_id && <BookingCostChip entryId={s.budget_entry_id} />}
                           </div>
                         )}
                       </div>

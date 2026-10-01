@@ -89,6 +89,21 @@ export function useUpdateTransport(tripId: string, memberId: string) {
   })
 }
 
+/** Set or clear a hop's link to the budget entry that paid for it (#370). A quiet
+ *  pointer update — no activity-feed event, matching the itinerary budget link
+ *  (#151). The author-or-owner `transport_update` policy gates it server-side. */
+export function useSetTransportBudgetLink(tripId: string) {
+  const invalidate = useInvalidate(tripId)
+  return useMutation({
+    mutationFn: async ({ id, budget_entry_id }: { id: string; budget_entry_id: string | null }) => {
+      const { error } = await supabase.from('transport').update({ budget_entry_id }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: invalidate,
+    onError: (err) => toast.error(friendlyError(err, 'Could not link that cost')),
+  })
+}
+
 export function useDeleteTransport(tripId: string, memberId: string) {
   const invalidate = useInvalidate(tripId)
   return useMutation({
