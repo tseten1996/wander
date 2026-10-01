@@ -575,7 +575,31 @@ as $$
         and (i.day = p_day or (i.day <= p_day and i.end_day >= p_day))
     ), '[]'::jsonb),
     'daySpend', (select coalesce(sum(coalesce(b.actual_converted, b.actual, 0)), 0)
-      from budget_entries b where b.trip_id = p_trip_id and b.entry_date = p_day)
+      from budget_entries b where b.trip_id = p_trip_id and b.entry_date = p_day),
+    -- Where the group sleeps this night (#375). The stay whose half-open
+    -- [check_in, check_out) contains the day (stays/dates.ts). Its coordinate is
+    -- what anchors the "near the hotel" bounding box below. Null when none.
+    'stay', (
+      select jsonb_build_object('name', s.name, 'lat', s.latitude, 'lng', s.longitude,
+        'checkIn', s.check_in, 'checkOut', s.check_out)
+      from stays s
+      where s.trip_id = p_trip_id
+        and s.check_in is not null and s.check_out is not null
+        and s.check_in <= p_day and p_day < s.check_out
+      order by s.check_in limit 1),
+    -- The hops touching this day (#375): depart OR arrive date-prefix is the day
+    -- (transport/dates.ts). An overnight hop appears on both its days. So the
+    -- model knows a 14:30 train eats the afternoon. Empty array when none.
+    'transport', coalesce((
+      select jsonb_agg(jsonb_build_object('mode', tr.mode, 'departAt', tr.depart_at,
+        'arriveAt', tr.arrive_at, 'from', tr.depart_place, 'to', tr.arrive_place)
+        order by tr.depart_at nulls last, tr.arrive_at nulls last)
+      from transport tr
+      where tr.trip_id = p_trip_id
+        and (tr.depart_at::date = p_day or tr.arrive_at::date = p_day)
+    ), '[]'::jsonb)
+    -- (Stated group preferences, #268, are folded in here too — see §8 — and
+    -- carry no member identity; omitted from this sketch for brevity.)
   );
 $$;
 ```
@@ -584,7 +608,10 @@ $$;
 row-level policies, so it cannot leak across trips even if the edge function
 passes a trip id the caller has no business seeing. **Reserve `security definer`
 for operations that genuinely need to exceed the caller's rights — on the read
-path, that is none of them.**
+path, that is none of them.** The `stay` and `transport` fields (#375) carry no
+member identity by construction — a stay/hop has no name or `member_id` to
+select — so they extend the day context without touching §6's "never put a
+person in the context" rule.
 
 ### When SQL beats a model
 
@@ -602,7 +629,9 @@ model earns its call only when the output is a judgement.
 
 No PostGIS. A bounding-box prefilter plus the existing `haversineKm` over a few
 dozen rows is instantaneous, and avoids adding an extension to a database whose
-500 MB storage limit is the real constraint.
+500 MB storage limit is the real constraint. The "near the hotel" row is now
+grounded: the `stay` field above returns the covering stay's coordinate (#375),
+which is the anchor that bounding box needs.
 
 ---
 

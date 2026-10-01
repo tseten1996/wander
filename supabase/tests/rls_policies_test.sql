@@ -821,6 +821,42 @@ select pg_temp.expect_dml('transport: non-author member cannot delete another''s
 select pg_temp.expect_dml('transport: author can delete own',                    'aaaa0000-0000-0000-0000-000000000002', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000001'$$, 1);
 select pg_temp.expect_dml('transport: owner can delete a member hop',            'aaaa0000-0000-0000-0000-000000000001', false, $$delete from transport where id='ab240000-0000-4000-8000-000000000002'$$, 1);
 
+-- ── get_ai_day_context: the day's stay + transport (#375, epic #346) ──────────
+--    The logistics epic's last-unwired consumer surface. get_ai_day_context now
+--    folds the covering stay and the day's hops into the same SECURITY INVOKER
+--    read, so "improve this day" knows where the group sleeps and the train it is
+--    catching, and the "$0 near the hotel" answer (§7) has a coordinate to anchor
+--    its bounding box. These assert the derivation rules (half-open stay window,
+--    date-prefix transport, overnight hop on both days), that the coordinate is
+--    present, that RLS still gates the new fields, and that no person leaks in.
+--    Fresh dated fixtures on trip A (distinct ids), inserted here as superuser so
+--    they bypass RLS like the other fixtures and don't perturb the stays/transport
+--    row-count assertions above. The suite's outer transaction rolls them back.
+insert into public.stays (id, trip_id, member_id, name, latitude, longitude, check_in, check_out) values
+  ('dddd0000-0000-0000-0000-0000000000b1', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'Hotel Lutèce', 48.853, 2.349, '2026-09-04', '2026-09-06');
+insert into public.transport (id, trip_id, member_id, mode, depart_place, arrive_place, depart_at, arrive_at) values
+  -- A same-day train on 09-04, and an overnight flight departing 09-04, arriving 09-05.
+  ('dddd0000-0000-0000-0000-0000000000b2', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'train',  'Paris',     'Amsterdam', '2026-09-04T14:30', '2026-09-04T17:45'),
+  ('dddd0000-0000-0000-0000-0000000000b3', 'bbbb0000-0000-0000-0000-000000000001', 'cccc0000-0000-0000-0000-000000000002', 'flight', 'Amsterdam', 'Rome',      '2026-09-04T23:30', '2026-09-05T01:40');
+
+-- The covering stay: an object on the night it covers, with its coordinate (the
+-- anchor a "near the hotel" follow-up needs), and correctly named.
+select pg_temp.expect_count('ai_day_context: stay covers the night',            'aaaa0000-0000-0000-0000-000000000002', false, $$select case when jsonb_typeof(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay')='object' then 1 else 0 end$$, 1);
+select pg_temp.expect_count('ai_day_context: stay carries name + coordinate',   'aaaa0000-0000-0000-0000-000000000002', false, $$select case when (get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay'->>'name')='Hotel Lutèce' and (get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay'->>'lat') is not null and (get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay'->>'lng') is not null then 1 else 0 end$$, 1);
+-- Half-open [check_in, check_out): the check-out morning belongs to no stay.
+select pg_temp.expect_count('ai_day_context: checkout morning has no stay',     'aaaa0000-0000-0000-0000-000000000002', false, $$select case when jsonb_typeof(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-06')->'stay')='null' then 1 else 0 end$$, 1);
+-- Transport by date prefix: both hops depart on 09-04, so the day shows two…
+select pg_temp.expect_count('ai_day_context: both hops on the depart day',      'aaaa0000-0000-0000-0000-000000000002', false, $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'transport')$$, 2);
+-- …and the overnight flight surfaces again on its arrival day (09-05), alone.
+select pg_temp.expect_count('ai_day_context: overnight hop on its arrive day',  'aaaa0000-0000-0000-0000-000000000002', false, $$select jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-05')->'transport')$$, 1);
+-- RLS still gates the new fields: a non-member gets no stay and no transport,
+-- for the same reason they get an empty items array — the caller's policies decide.
+select pg_temp.expect_count('ai_day_context: non-member gets no stay/transport','aaaa0000-0000-0000-0000-000000000005', false, $$select case when jsonb_typeof(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay')='null' and jsonb_array_length(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'transport')=0 then 1 else 0 end$$, 1);
+-- Never a person in the context (§6): neither the stay object nor any hop
+-- carries authorship or a display name — only logistics.
+select pg_temp.expect_count('ai_day_context: stay carries no person',           'aaaa0000-0000-0000-0000-000000000002', false, $$select case when (get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'stay') ?| array['member_id','memberId','created_by','createdBy','display_name','displayName'] then 1 else 0 end$$, 0);
+select pg_temp.expect_count('ai_day_context: transport carries no person',      'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from jsonb_array_elements(get_ai_day_context('bbbb0000-0000-0000-0000-000000000001','2026-09-04')->'transport') e where e ?| array['member_id','memberId','created_by','createdBy','display_name','displayName']$$, 0);
+
 -- ── wishlist_items (#355, epic #164 slice 2) — saved-but-unscheduled places.
 --    Trust shape (20260923143000_wishlist_items.sql): member-read, self-attributed
 --    insert (added_by = my_member_id — NOTE the author column is `added_by`, not
