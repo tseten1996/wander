@@ -2,13 +2,14 @@ import * as React from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ExternalLink, Heart, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
+import { CalendarPlus, ExternalLink, Heart, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
   useCreateWishlistItem, useDeleteWishlistItem, useUpdateWishlistItem, useWishlist,
   type WishlistInput,
 } from './api'
+import { ScheduleDialog } from './ScheduleDialog'
 import { safeHttpUrl } from '@/features/stays/StaysCard'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -247,6 +248,7 @@ export function WishlistCard() {
   const remove = useDeleteWishlistItem(trip.id, me.id)
   const [addOpen, setAddOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WishlistItem | null>(null)
+  const [scheduling, setScheduling] = React.useState<WishlistItem | null>(null)
   const [filter, setFilter] = React.useState<Filter>(ALL)
 
   const items = query.data ?? []
@@ -337,31 +339,43 @@ export function WishlistCard() {
                           )}
                         </div>
                       </div>
-                      {canManage && (
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setEditing(item)}
-                            aria-label={`Edit ${item.name}`}
-                          >
-                            <Pencil />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-danger"
-                            onClick={() =>
-                              remove.mutate(item, {
-                                onSuccess: () => toast.success(`Removed ${item.name}`),
-                              })
-                            }
-                            aria-label={`Remove ${item.name}`}
-                          >
-                            <Trash2 />
-                          </Button>
-                        </div>
-                      )}
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        {/* Scheduling is open to every member — the shelf is shared,
+                            so anyone can graduate any saved place onto a day (#377). */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setScheduling(item)}
+                          aria-label={`Add ${item.name} to a day`}
+                        >
+                          <CalendarPlus />
+                        </Button>
+                        {canManage && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditing(item)}
+                              aria-label={`Edit ${item.name}`}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-danger"
+                              onClick={() =>
+                                remove.mutate(item, {
+                                  onSuccess: () => toast.success(`Removed ${item.name}`),
+                                })
+                              }
+                              aria-label={`Remove ${item.name}`}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </li>
                   )
                 })}
@@ -388,6 +402,11 @@ export function WishlistCard() {
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
         item={editing ?? undefined}
+      />
+      <ScheduleDialog
+        open={scheduling !== null}
+        onOpenChange={(o) => !o && setScheduling(null)}
+        item={scheduling}
       />
     </Card>
   )

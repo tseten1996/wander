@@ -92,3 +92,25 @@ export function useDeleteWishlistItem(tripId: string, memberId: string) {
     onError: (err) => toast.error(friendlyError(err, 'Could not remove that place')),
   })
 }
+
+/**
+ * Remove a wishlist row once it has been scheduled onto a day (#377, slice 3).
+ * Distinct from the user-initiated delete above in one deliberate way: a failure
+ * here degrades **quietly**. By the time this runs the `itinerary_item` already
+ * exists and is the source of truth, so the place is never lost — the shelf row
+ * just lingers until the next wishlist mutation clears it. Surfacing a "could
+ * not remove" error after a successful schedule would be both wrong and
+ * confusing, so this hook carries no `onError` toast. The cleanup is logged as
+ * part of the itinerary create (via `useCreateItineraryItem`), so it adds no
+ * second activity entry of its own.
+ */
+export function useRemoveScheduledWishlistItem(tripId: string) {
+  const invalidate = useInvalidate(tripId)
+  return useMutation({
+    mutationFn: async (item: WishlistItem) => {
+      const { error } = await supabase.from('wishlist_items').delete().eq('id', item.id)
+      if (error) throw error
+    },
+    onSuccess: invalidate,
+  })
+}
