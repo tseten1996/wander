@@ -12,7 +12,13 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseReservation } from '../src/features/itinerary/parse.ts'
+import {
+  parseReservation,
+  targetForCategory,
+  toStayDraft,
+  toTransportDraft,
+  inferTransportMode,
+} from '../src/features/itinerary/parse.ts'
 
 const YEAR = 2026
 
@@ -191,4 +197,121 @@ test('a flight without a route is not force-detected, falls through to generic',
 test('drafts always carry a matched flag so the caller can prefill safely', () => {
   const r = parseReservation('AA 148 SFO to JFK departs 8:00 AM on 2026-07-24', YEAR)
   assert.equal(r.drafts.every((d) => d.matched === true), true)
+})
+
+// ── #380: dedicated confirmation_code / booking_url fields ───────────────────
+
+test('a flight extracts the bare confirmation code and a safe booking link', () => {
+  const text = [
+    'United Airlines UA 837',
+    'SFO to NRT',
+    'Departs 10:30 AM — Arrives 2:45 PM on July 24, 2026',
+    'Confirmation code: ABC123',
+    'Manage: https://united.com/booking/ABC123',
+  ].join('\n')
+  const [f] = parseReservation(text, YEAR).drafts
+  // The bare code (no "Confirmation:" prefix) lands in its own field, while the
+  // notes keep the labelled form for the itinerary-item path.
+  assert.equal(f.confirmation_code, 'ABC123')
+  assert.equal(f.notes, 'Confirmation: ABC123')
+  assert.equal(f.booking_url, 'https://united.com/booking/ABC123')
+})
+
+test('a hotel extracts confirmation_code and booking_url too', () => {
+  const text = [
+    'The Ritz-Carlton Kyoto',
+    'Check-in: 15 Aug 2026 at 3:00 PM',
+    'Check-out: 18 Aug 2026 at 11:00 AM',
+    'Confirmation number: HTL45678',
+    'http://ritzcarlton.com/kyoto/res/HTL45678',
+  ].join('\n')
+  const [stay] = parseReservation(text, YEAR).drafts
+  assert.equal(stay.confirmation_code, 'HTL45678')
+  assert.equal(stay.booking_url, 'http://ritzcarlton.com/kyoto/res/HTL45678')
+})
+
+test('a non-http(s) scheme is never kept as a booking link', () => {
+  const text = [
+    'Dinner at Narisawa',
+    'Aug 15, 2026 at 7:30 PM',
+    'link: javascript:alert(1)',
+  ].join('\n')
+  const [d] = parseReservation(text, YEAR).drafts
+  assert.equal(d.booking_url, null)
+})
+
+// ── #380: routing a parsed category to the card it belongs in ────────────────
+
+test('targetForCategory routes each category to the right editor', () => {
+  assert.equal(targetForCategory('hotel'), 'stay')
+  assert.equal(targetForCategory('flight'), 'transport')
+  assert.equal(targetForCategory('transport'), 'transport')
+  assert.equal(targetForCategory('restaurant'), 'item')
+  assert.equal(targetForCategory('activity'), 'item')
+  assert.equal(targetForCategory('free'), 'item')
+  assert.equal(targetForCategory(null), 'item')
+})
+
+test('hotel → Stay: a parsed lodging maps onto the Stay create form', () => {
+  const text = [
+    'The Ritz-Carlton Kyoto',
+    'Check-in: 15 Aug 2026 at 3:00 PM',
+    'Check-out: 18 Aug 2026 at 11:00 AM',
+    'Address: Kamogawa Nijo-Ohashi Hotori, Kyoto',
+    'Confirmation number: HTL45678',
+    'https://ritzcarlton.com/kyoto',
+  ].join('\n')
+  const parse = parseReservation(text, YEAR)
+  assert.equal(targetForCategory(parse.drafts[0].category), 'stay')
+  const stay = toStayDraft(parse.drafts)
+  assert.equal(stay.name, 'The Ritz-Carlton Kyoto')
+  assert.equal(stay.address, 'Kamogawa Nijo-Ohashi Hotori, Kyoto')
+  assert.equal(stay.check_in, '2026-08-15')
+  assert.equal(stay.check_out, '2026-08-18')
+  assert.equal(stay.confirmation_code, 'HTL45678')
+  assert.equal(stay.booking_url, 'https://ritzcarlton.com/kyoto')
+})
+
+test('flight → Transport: a same-day flight maps onto one hop with both datetimes', () => {
+  const text = [
+    'United Airlines UA 837',
+    'SFO to NRT',
+    'Departure: July 24, 2026',
+    'Departs 10:30 AM — Arrives 2:45 PM',
+    'Confirmation code: ABC123',
+  ].join('\n')
+  const parse = parseReservation(text, YEAR)
+  assert.equal(targetForCategory(parse.drafts[0].category), 'transport')
+  const hop = toTransportDraft(parse.drafts, text)
+  assert.equal(hop.mode, 'flight')
+  assert.equal(hop.depart_place, 'SFO')
+  assert.equal(hop.arrive_place, 'NRT')
+  assert.equal(hop.depart_at, '2026-07-24T10:30')
+  assert.equal(hop.arrive_at, '2026-07-24T14:45')
+  assert.equal(hop.confirmation_code, 'ABC123')
+})
+
+test('flight → Transport: a red-eye collapses its two anchors into one hop', () => {
+  const text = [
+    'American AA 148',
+    'JFK to LHR',
+    'Departs 11:30 PM on 2026-07-24',
+    'Arrives 6:15 AM',
+    'Record locator: XYZ789',
+  ].join('\n')
+  const parse = parseReservation(text, YEAR)
+  assert.equal(parse.drafts.length, 2) // two itinerary anchors…
+  const hop = toTransportDraft(parse.drafts, text)
+  // …but a single hop, departing and arriving on their true calendar days.
+  assert.equal(hop.depart_at, '2026-07-24T23:30')
+  assert.equal(hop.arrive_at, '2026-07-25T06:15')
+  assert.equal(hop.confirmation_code, 'XYZ789')
+})
+
+test('inferTransportMode re-derives the mode the category flattened', () => {
+  assert.equal(inferTransportMode('Eurostar train to Paris, platform 9'), 'train')
+  assert.equal(inferTransportMode('FlixBus coach to Berlin'), 'bus')
+  assert.equal(inferTransportMode('Ferry crossing to Santorini'), 'ferry')
+  assert.equal(inferTransportMode('Hertz rental car pick-up'), 'car')
+  assert.equal(inferTransportMode('United flight, boarding gate 22'), 'flight')
 })

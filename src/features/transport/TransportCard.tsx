@@ -71,7 +71,7 @@ const transportSchema = z
     path: ['arrive_at'],
   })
 
-type TransportFormValues = z.input<typeof transportSchema>
+export type TransportFormValues = z.input<typeof transportSchema>
 
 const EMPTY: TransportFormValues = {
   mode: 'flight', depart_place: '', arrive_place: '',
@@ -85,13 +85,23 @@ function toLocalInput(dt: string | null | undefined): string {
 }
 
 /** Add / edit a single transport hop. Mode is required; everything else is
- *  optional so a half-known hop ("we're taking a train, time TBD") still saves. */
-function TransportDialog({
-  open, onOpenChange, hop,
+ *  optional so a half-known hop ("we're taking a train, time TBD") still saves.
+ *
+ *  Exported so the paste-a-booking flow (#380) can open it pre-filled from a
+ *  parsed flight/train/bus confirmation — `prefill` seeds the create form
+ *  (ignored when editing an existing `hop`), and `banner` renders a re-target
+ *  control above the form so a member can send the paste to the Stay card or the
+ *  itinerary item instead before saving. */
+export function TransportDialog({
+  open, onOpenChange, hop, prefill, banner,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   hop?: Transport
+  /** Create-mode seed values (from a pasted booking, #380). Ignored when editing. */
+  prefill?: Partial<TransportFormValues>
+  /** Optional node rendered above the form — the import re-target control. */
+  banner?: React.ReactNode
 }) {
   const { trip, me } = useTripContext()
   const create = useCreateTransport(trip.id, me.id)
@@ -116,10 +126,10 @@ function TransportDialog({
             confirmation_code: hop.confirmation_code ?? '',
             booking_url: hop.booking_url ?? '',
           }
-        : EMPTY
+        : { ...EMPTY, ...prefill }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, hop])
+  }, [open, hop, prefill])
 
   async function onSubmit(values: TransportFormValues) {
     const payload: TransportInput = {
@@ -154,6 +164,7 @@ function TransportDialog({
             places — with the times and booking reference everyone can pull up.
           </DialogDescription>
         </DialogHeader>
+        {banner}
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="transport-mode">Mode</Label>

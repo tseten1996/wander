@@ -38,8 +38,13 @@ import { buildDayDirections } from './directions'
 import { onColor } from '@/lib/colors'
 import { overlapsByItem } from './overlap'
 import { coveredDays, isSpanning, spanPosition } from './spans'
-import { parseReservation, type ParsedBooking, type ReservationParse } from './parse'
+import {
+  parseReservation, targetForCategory, toStayDraft, toTransportDraft,
+  type ImportTarget, type ParsedBooking, type ReservationParse,
+} from './parse'
 import { aiParseDisabled, useAiParseBooking } from './aiParse'
+import { StayDialog, type StayFormValues } from '@/features/stays/StaysCard'
+import { TransportDialog, type TransportFormValues } from '@/features/transport/TransportCard'
 import { ImproveDayAction } from './ImproveDay'
 import { StarterPlanAction } from './StarterPlan'
 import { extractUrls, LinkChip, MapsChip } from './links'
@@ -722,8 +727,86 @@ function toPrefill(p: ParsedBooking): Partial<ItineraryFormValues> {
   if (p.start_time) pf.start_time = p.start_time
   if (p.end_time) pf.end_time = p.end_time
   if (p.location) pf.location = p.location
+  // The itinerary item has a dedicated link field; a parsed booking URL belongs
+  // there rather than buried in notes. The confirmation code stays in notes
+  // (the itinerary item has no code field — unlike a Stay/Transport card, #380).
+  if (p.booking_url) pf.url = p.booking_url
   if (p.notes) pf.notes = p.notes
   return pf
+}
+
+/** A parsed lodging confirmation → the Stay create form's seed values (#380).
+ *  Null fields are dropped so the form's own defaults apply; the address is left
+ *  for the Stay form to geocode on save, the same path a typed address takes. */
+function toStayPrefill(drafts: ParsedBooking[]): Partial<StayFormValues> {
+  const d = toStayDraft(drafts)
+  const pf: Partial<StayFormValues> = {}
+  if (d.name) pf.name = d.name
+  if (d.address) pf.address = d.address
+  if (d.check_in) pf.check_in = d.check_in
+  if (d.check_out) pf.check_out = d.check_out
+  if (d.confirmation_code) pf.confirmation_code = d.confirmation_code
+  if (d.booking_url) pf.booking_url = d.booking_url
+  return pf
+}
+
+/** A parsed flight/train/bus confirmation → the Transport create form's seed
+ *  values (#380). `mode` is always set (the form requires one); `text` is the
+ *  raw paste, read only to infer the mode the parser's category flattened. */
+function toTransportPrefill(parse: ReservationParse, text: string): Partial<TransportFormValues> {
+  const d = toTransportDraft(parse.drafts, text)
+  const pf: Partial<TransportFormValues> = { mode: d.mode }
+  if (d.depart_place) pf.depart_place = d.depart_place
+  if (d.arrive_place) pf.arrive_place = d.arrive_place
+  if (d.depart_at) pf.depart_at = d.depart_at
+  if (d.arrive_at) pf.arrive_at = d.arrive_at
+  if (d.confirmation_code) pf.confirmation_code = d.confirmation_code
+  if (d.booking_url) pf.booking_url = d.booking_url
+  return pf
+}
+
+/** The three places a pasted confirmation can land. Default is the parser's
+ *  category guess; the member re-targets before saving (#380). */
+const IMPORT_TARGETS: { value: ImportTarget; label: string }[] = [
+  { value: 'item', label: 'Itinerary item' },
+  { value: 'stay', label: 'Stay' },
+  { value: 'transport', label: 'Transport' },
+]
+
+/** Re-target control shown above a pre-filled import form: switch where the
+ *  pasted booking will be saved without re-pasting. Mobile-first 44px targets. */
+function RetargetChips({
+  value, onChange,
+}: {
+  value: ImportTarget
+  onChange: (t: ImportTarget) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-muted">Add this as</p>
+      <div role="group" aria-label="Where to add this booking" className="flex flex-wrap gap-1.5">
+        {IMPORT_TARGETS.map((t) => {
+          const active = t.value === value
+          return (
+            <button
+              key={t.value}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(t.value)}
+              className={cn(
+                'min-h-11 rounded-full border px-3.5 text-sm transition-colors',
+                active
+                  ? 'border-primary bg-primary-faint text-primary'
+                  : 'border-line bg-surface text-muted hover:border-line-strong hover:text-ink',
+              )}
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -744,7 +827,7 @@ function PasteBookingDialog({
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
-  onParsed: (parsed: ReservationParse, viaAi?: boolean) => void
+  onParsed: (parsed: ReservationParse, text: string, viaAi?: boolean) => void
 }) {
   const { trip } = useTripContext()
   const [text, setText] = React.useState('')
@@ -772,14 +855,14 @@ function PasteBookingDialog({
     // Nothing structured, and AI is available to ask: stay open and offer it.
     // Otherwise behave exactly as this dialog always has.
     if (!parsed.matched && !aiParseDisabled()) setStuck(parsed)
-    else onParsed(parsed)
+    else onParsed(parsed, text)
   }
 
   async function handleAskAi() {
     if (!stuck) return
     const outcome = await aiParse.mutateAsync({ tripId: trip.id, text, base: stuck.drafts[0] })
     if (outcome.status === 'parsed') {
-      onParsed({ kind: 'generic', drafts: [outcome.booking], matched: true }, true)
+      onParsed({ kind: 'generic', drafts: [outcome.booking], matched: true }, text, true)
       return
     }
     // 'empty' and every refusal converge here deliberately: to the person
@@ -788,7 +871,7 @@ function PasteBookingDialog({
     if (outcome.status === 'refused' && outcome.reason !== 'disabled') {
       toast(outcome.message)
     }
-    onParsed(stuck)
+    onParsed(stuck, text)
   }
 
   return (
@@ -827,7 +910,7 @@ function PasteBookingDialog({
               variant="ghost"
               size="lg"
               className="w-full"
-              onClick={() => onParsed(stuck)}
+              onClick={() => onParsed(stuck, text)}
               disabled={aiParse.isPending}
             >
               Fill it in myself
@@ -934,6 +1017,21 @@ export default function ItineraryPage() {
   // and each successful create shifts it until the queue drains.
   const [prefillQueue, setPrefillQueue] = React.useState<Partial<ItineraryFormValues>[]>([])
   const prefill = prefillQueue[0]
+  // A pasted confirmation, held so it can be re-targeted (stay ↔ transport ↔
+  // itinerary item) by re-mapping the same drafts rather than re-parsing (#380).
+  // `null` means no import is in flight — a blank create shows no re-target control.
+  const [importCtx, setImportCtx] = React.useState<{ parse: ReservationParse; text: string } | null>(null)
+  const [importTarget, setImportTarget] = React.useState<ImportTarget>('item')
+  // Memoized so the Stay/Transport dialogs' reset effects (keyed on `prefill`)
+  // don't re-fire — and wipe a member's edits — on every render while open.
+  const stayPrefill = React.useMemo(
+    () => (importCtx ? toStayPrefill(importCtx.parse.drafts) : undefined),
+    [importCtx],
+  )
+  const transportPrefill = React.useMemo(
+    () => (importCtx ? toTransportPrefill(importCtx.parse, importCtx.text) : undefined),
+    [importCtx],
+  )
   const [exporting, setExporting] = React.useState(false)
   // Selecting a pin (or an unlocated row) in the Map view opens this item for
   // editing — the map has no cards of its own to host a per-item dialog.
@@ -947,21 +1045,51 @@ export default function ItineraryPage() {
   )
 
   function openBlankCreate() {
+    setImportCtx(null)
+    setImportTarget('item')
     setPrefillQueue([])
     setNewOpen(true)
   }
 
-  function handleParsed(result: ReservationParse, viaAi = false) {
-    setPrefillQueue(result.drafts.map(toPrefill))
+  // Tear down every import dialog and its held state — on cancel, on the last
+  // save of a queue, or when switching to a blank create.
+  function clearImport() {
+    setImportCtx(null)
+    setImportTarget('item')
+    setPrefillQueue([])
+    setNewOpen(false)
+  }
+
+  // Open the right editor for the chosen target, re-seeding from the held drafts.
+  // The itinerary-item path keeps the multi-draft queue (a red-eye → two items);
+  // a stay/transport is a single structured record, so no queue.
+  function openForTarget(target: ImportTarget, result: ReservationParse) {
+    if (target === 'item') {
+      setPrefillQueue(result.drafts.map(toPrefill))
+      setNewOpen(true)
+    } else {
+      setPrefillQueue([])
+      setNewOpen(false)
+    }
+  }
+
+  function handleParsed(result: ReservationParse, text: string, viaAi = false) {
+    const target = targetForCategory(result.drafts[0]?.category ?? null)
+    setImportCtx({ parse: result, text })
+    setImportTarget(target)
     setPasteOpen(false)
-    setNewOpen(true)
+    openForTarget(target, result)
     if (!result.matched) {
       toast('Couldn’t read that automatically — added it to the notes')
     } else if (viaAi) {
       // Named as a read rather than a result: the model is more likely to be
       // wrong here than the regexes are, so the toast should send someone to
-      // check the dates rather than tell them it worked.
-      toast.success('Wander AI read it — check the dates before saving')
+      // check the details rather than tell them it worked.
+      toast.success('Wander AI read it — check the details before saving')
+    } else if (target === 'stay') {
+      toast.success('Looks like a stay — review and save, or change where it goes')
+    } else if (target === 'transport') {
+      toast.success('Looks like transport — review and save, or change where it goes')
     } else if (result.drafts.length > 1) {
       toast.success(`Found ${result.drafts.length} items — review and save each`)
     } else {
@@ -969,15 +1097,24 @@ export default function ItineraryPage() {
     }
   }
 
+  // Switch where a held import lands without re-pasting (#380). Re-maps the same
+  // drafts onto the chosen editor; the memoized prefills recompute off importCtx.
+  function retarget(target: ImportTarget) {
+    if (!importCtx) return
+    setImportTarget(target)
+    openForTarget(target, importCtx.parse)
+  }
+
   // Advance the draft queue after a successful create: keep the dialog open and
-  // re-seed it with the next draft, or close once the last one is saved.
+  // re-seed it with the next draft, or tear down the import once the last one is
+  // saved.
   function handleItemCreated() {
     // Keep the setPrefillQueue updater pure; drive the dialog side effect from
     // the already-current queue in this closure (React may double-invoke the
     // updater in dev Strict Mode, so a setState inside it can misfire).
     const rest = prefillQueue.slice(1)
     setPrefillQueue(rest)
-    if (rest.length === 0) setNewOpen(false)
+    if (rest.length === 0) clearImport()
   }
 
   const items = itinerary.data ?? []
@@ -1167,14 +1304,35 @@ export default function ItineraryPage() {
       <PasteBookingDialog open={pasteOpen} onOpenChange={setPasteOpen} onParsed={handleParsed} />
       <ItemDialog
         open={newOpen}
-        // Closing (Escape/backdrop/last save) abandons any remaining drafts so
-        // a half-confirmed queue never lingers into the next create.
+        // Closing (Escape/backdrop/last save) abandons any remaining drafts and
+        // the held import so a half-confirmed queue never lingers into the next
+        // create.
         onOpenChange={(o) => {
-          setNewOpen(o)
-          if (!o) setPrefillQueue([])
+          if (!o) clearImport()
+          else setNewOpen(true)
         }}
         prefill={prefill}
         onCreated={handleItemCreated}
+        // The re-target control only appears for a paste in flight, never a
+        // blank "Add to itinerary".
+        banner={
+          importCtx ? <RetargetChips value={importTarget} onChange={retarget} /> : undefined
+        }
+      />
+      {/* A pasted lodging/transport confirmation opens the matching structured
+          editor pre-filled; the re-target control lets a member send it to a
+          different card (or the itinerary item) before saving (#380). */}
+      <StayDialog
+        open={importCtx !== null && importTarget === 'stay'}
+        onOpenChange={(o) => !o && clearImport()}
+        prefill={stayPrefill}
+        banner={<RetargetChips value={importTarget} onChange={retarget} />}
+      />
+      <TransportDialog
+        open={importCtx !== null && importTarget === 'transport'}
+        onOpenChange={(o) => !o && clearImport()}
+        prefill={transportPrefill}
+        banner={<RetargetChips value={importTarget} onChange={retarget} />}
       />
       <ItemDialog
         open={editItem !== null}

@@ -121,6 +121,24 @@ function isCalendarDate(s: string): boolean {
 }
 
 /**
+ * True only for a real `http(s)` URL — the same guard `safeHttpUrl` applies on
+ * the write side (#354), re-derived here rather than imported because this
+ * module is runtime-agnostic (it must not pull a path alias into a Workers
+ * bundle or the Node test runner — the same reason ITINERARY_CATEGORIES and
+ * isCalendarDate are duplicated). A booking link is a capability; a model that
+ * echoes a `javascript:` scheme from an injected paste must not have it reach a
+ * rendered href.
+ */
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
  * A field the model may legitimately not know.
  *
  * Missing keys and empty strings both become `null` before validation. Models
@@ -156,6 +174,18 @@ export const ParsedBookingResult = z
     start_time: orNull(z.string().regex(HM)),
     end_time: orNull(z.string().regex(HM)),
     location: orNull(z.string().trim().min(1).max(200)),
+    // The two fields the logistics tables (#348/#350) have and the itinerary
+    // item lacks — the highest-value parts of a confirmation.
+    confirmation_code: orNull(z.string().trim().min(1).max(120)),
+    // A booking link is kept only when it is a real http(s) URL; anything else —
+    // a bare word, a `javascript:` scheme, an over-long string — is coerced to
+    // null rather than failing the whole extraction, so one stray link never
+    // costs an otherwise-good parse (a null is a correct answer, see orNull).
+    booking_url: z.preprocess((v) => {
+      if (typeof v !== 'string') return null
+      const t = v.trim()
+      return t.length > 0 && t.length <= 2000 && isHttpUrl(t) ? t : null
+    }, z.string().nullable()),
   })
   // A closing day before the opening one is a mis-read, not a span — the same
   // rule detectLodging() applies, and the itinerary table would reject it.

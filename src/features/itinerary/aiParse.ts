@@ -55,6 +55,8 @@ function merge(base: ParsedBooking, ai: ParsedBookingResult): ParsedBooking {
     start_time: ai.start_time,
     end_time: ai.end_time,
     location: ai.location,
+    confirmation_code: ai.confirmation_code,
+    booking_url: ai.booking_url,
     matched: true,
   }
 }

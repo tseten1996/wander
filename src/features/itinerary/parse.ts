@@ -1,4 +1,4 @@
-import type { ItineraryCategory } from '@/types'
+import type { ItineraryCategory, TransportMode } from '@/types'
 
 /**
  * Heuristic client-side parser for a pasted booking confirmation (issue #77,
@@ -31,6 +31,16 @@ export interface ParsedBooking {
   end_time: string | null
   location: string | null
   notes: string | null
+  /** Bare booking/confirmation code (no "Confirmation:" prefix), or null. This
+   *  is the dedicated field the Stay/Transport logistics cards (#348/#350) hold
+   *  and the itinerary item lacks; the itinerary path still keeps the code inside
+   *  `notes` (see `detectReference`), so routing a paste into a structured card
+   *  rescues it rather than stranding it. */
+  confirmation_code: string | null
+  /** A booking link, already normalized to an `http(s)` URL (or null). Validated
+   *  with the same guard the Stay/Transport forms apply on save (#354), so an
+   *  unsafe scheme never rides a paste into a rendered `href`. */
+  booking_url: string | null
   /** True when a day, a time, or a location was recognized. */
   matched: boolean
 }
@@ -188,15 +198,41 @@ function detectTitle(text: string): string | null {
   return lines[0]?.slice(0, 120) ?? null
 }
 
-/** A confirmation / booking reference, formatted for the notes field. */
-function detectReference(text: string): string | null {
+/** The bare confirmation / booking code, or null. */
+function detectCode(text: string): string | null {
   // Same-line only (horizontal whitespace, no newline) and the code must
   // contain a digit — so the keyword doesn't reach across a line break and
   // grab an ordinary word like "United" from the following line.
   const m = text.match(
     /\b(?:confirmation|booking|reservation|record locator|conf|pnr|ref(?:erence)?)[^\S\n]*(?:number|no\.?|code|#|id)?[^\S\n]*[:#]?[^\S\n]*(?=[A-Za-z0-9]*\d)([A-Z0-9]{5,12})\b/i
   )
-  return m ? `Confirmation: ${m[1]}` : null
+  return m ? m[1] : null
+}
+
+/** A confirmation / booking reference, formatted for the notes field. */
+function detectReference(text: string): string | null {
+  const code = detectCode(text)
+  return code ? `Confirmation: ${code}` : null
+}
+
+/**
+ * The first safe booking link in the text, normalized to its `http(s)` href, or
+ * null. Mirrors the `safeHttpUrl` guard the Stay/Transport forms use on save
+ * (#354): an `href` is a capability, and a member-pasted link must never carry a
+ * `javascript:`/`data:` scheme into a rendered link. Inlined rather than imported
+ * because this module is deliberately free of runtime imports (only a `type`
+ * import) so the Node test runner exercises it exactly as it ships — the same
+ * discipline schemas.ts follows by re-deriving its own calendar/date checks.
+ */
+function detectBookingUrl(text: string): string | null {
+  const m = text.match(/\bhttps?:\/\/[^\s<>"')\]]+/i)
+  if (!m) return null
+  try {
+    const u = new URL(m[0])
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -228,6 +264,8 @@ export function parseBooking(
       end_time: null,
       location: null,
       notes: raw ? raw.slice(0, 2000) : null,
+      confirmation_code: null,
+      booking_url: null,
       matched: false,
     }
   }
@@ -245,6 +283,8 @@ export function parseBooking(
     // structure (seat, terminal, fare rules), consistent with the "never a
     // silent loss" guarantee the unmatched path already gives.
     notes: detectReference(text) ?? (raw ? raw.slice(0, 2000) : null),
+    confirmation_code: detectCode(text),
+    booking_url: detectBookingUrl(text),
     matched: true,
   }
 }
@@ -343,6 +383,8 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
   const routeStr = `${route.from} → ${route.to}`
   const title = `${code} ${route.from}→${route.to}`
   const notes = reservationNotes(text)
+  const confirmation_code = detectCode(text)
+  const booking_url = detectBookingUrl(text)
 
   // The arrival crosses midnight when the confirmation names a distinct arrival
   // date, or (the red-eye case) when only one date is given and the arrival
@@ -364,14 +406,15 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
     return [
       {
         title, category: 'flight', day: depDay, end_day: null, start_time: depTime,
-        end_time: null, location: routeStr, notes, matched: true,
+        end_time: null, location: routeStr, notes, confirmation_code, booking_url,
+        matched: true,
       },
       {
         title: `${code} arrives ${route.to}`, category: 'flight', day: arrDay,
         end_day: null, start_time: arrTime, end_time: null, location: routeStr,
         // The raw fallback already rode along on the departure item above; the
         // arrival anchor only needs the confirmation code (or nothing).
-        notes: detectReference(text), matched: true,
+        notes: detectReference(text), confirmation_code, booking_url, matched: true,
       },
     ]
   }
@@ -379,7 +422,8 @@ function detectFlight(text: string, referenceYear: number): ParsedBooking[] | nu
   return [
     {
       title, category: 'flight', day: depDay, end_day: null, start_time: depTime,
-      end_time: arrTime, location: routeStr, notes, matched: true,
+      end_time: arrTime, location: routeStr, notes, confirmation_code, booking_url,
+      matched: true,
     },
   ]
 }
@@ -416,6 +460,8 @@ function detectLodging(text: string, referenceYear: number): ParsedBooking[] | n
       end_time: checkOut.time,
       location,
       notes: reservationNotes(text),
+      confirmation_code: detectCode(text),
+      booking_url: detectBookingUrl(text),
       matched: true,
     },
   ]
@@ -454,5 +500,129 @@ export function parseReservation(
     kind: generic.matched ? 'generic' : 'none',
     drafts: [generic],
     matched: generic.matched,
+  }
+}
+
+// ── Routing a parsed confirmation to the card it belongs in (#380) ───────────
+//
+// The reservation-import epic (#76) predates the structured logistics tables
+// (#348 stays, #350 transport), so a parsed draft is itinerary-item-shaped. The
+// helpers below map that draft onto the destination its category implies — a
+// hotel into a Stay, a flight/train/bus into a Transport hop — without a new
+// parse pass. They are pure (no React, no form types) so the paste flow and the
+// Node test runner share one source of truth for the routing, and so the UI can
+// re-target a draft (stay ↔ transport ↔ itinerary item) by re-mapping the same
+// `ParsedBooking`s rather than re-parsing. Nothing here writes: each mapper
+// produces a draft the matching editor opens pre-filled for review before save.
+
+/** Where a parsed confirmation should open for review. */
+export type ImportTarget = 'item' | 'stay' | 'transport'
+
+/**
+ * The editor a parsed category routes to. `hotel` → Stay, `flight`/`transport`
+ * → Transport, everything else (activity/restaurant/free, or an unknown) → the
+ * itinerary item, exactly as before #380. The member can still re-target.
+ */
+export function targetForCategory(category: ItineraryCategory | null): ImportTarget {
+  if (category === 'hotel') return 'stay'
+  if (category === 'flight' || category === 'transport') return 'transport'
+  return 'item'
+}
+
+/**
+ * Best-guess transport mode from the confirmation text. The regex parser folds
+ * train/bus/ferry/car into the single `transport` category, so the mode is
+ * re-derived here when routing into the Transport card, which needs one of the
+ * five concrete modes. Defaults to `flight` (the Transport form's own default)
+ * when nothing matches.
+ */
+export function inferTransportMode(text: string): TransportMode {
+  const t = text.toLowerCase()
+  if (/\b(flight|airlines?|airways|boarding|gate|pnr|e-?ticket|terminal)\b/.test(t)) return 'flight'
+  if (/\b(train|rail|amtrak|eurostar|railways?|platform)\b/.test(t)) return 'train'
+  if (/\b(bus|coach)\b/.test(t)) return 'bus'
+  if (/\b(ferry|boat|sailing)\b/.test(t)) return 'ferry'
+  if (/\b(car rental|rental car|pick-?up|drop-?off)\b/.test(t)) return 'car'
+  return 'flight'
+}
+
+/** A Stay draft, field-named to match the Stay create form so the dialog can
+ *  open pre-filled from it. Coordinates are deliberately absent — the Stay form
+ *  geocodes the address on save, the same path a typed address takes. */
+export interface StayDraft {
+  name: string | null
+  address: string | null
+  check_in: string | null
+  check_out: string | null
+  confirmation_code: string | null
+  booking_url: string | null
+}
+
+/** A Transport draft, field-named to match the Transport create form. */
+export interface TransportDraft {
+  mode: TransportMode
+  depart_place: string | null
+  arrive_place: string | null
+  /** Wall-clock `YYYY-MM-DDTHH:mm`, or null when the day or time is unknown
+   *  (the `datetime-local` control cannot hold a date without a time). */
+  depart_at: string | null
+  arrive_at: string | null
+  confirmation_code: string | null
+  booking_url: string | null
+}
+
+/** Split a parsed "A → B" route (or a plain place) into endpoints. */
+function splitRoute(location: string | null): { from: string | null; to: string | null } {
+  if (!location) return { from: null, to: null }
+  const parts = location.split(/\s*(?:→|->)\s*/)
+  if (parts.length >= 2) return { from: parts[0].trim() || null, to: parts[1].trim() || null }
+  return { from: location.trim() || null, to: null }
+}
+
+/** A `YYYY-MM-DDTHH:mm` datetime, or null unless BOTH the day and time are known. */
+function combineDateTime(day: string | null, time: string | null): string | null {
+  return day && time ? `${day}T${time}` : null
+}
+
+/**
+ * Map the parsed drafts onto a Stay. Uses the first (and, for lodging, only)
+ * draft: title → name, location → address, day/end_day → check-in/check-out,
+ * plus the rescued confirmation code and booking link.
+ */
+export function toStayDraft(drafts: ParsedBooking[]): StayDraft {
+  const b = drafts[0]
+  return {
+    name: b?.title ?? null,
+    address: b?.location ?? null,
+    check_in: b?.day ?? null,
+    check_out: b?.end_day ?? null,
+    confirmation_code: b?.confirmation_code ?? null,
+    booking_url: b?.booking_url ?? null,
+  }
+}
+
+/**
+ * Map the parsed drafts onto a single Transport hop. A red-eye flight parses
+ * into two anchored drafts (one per calendar day — an itinerary item has only
+ * one `day`); a hop carries both a `depart_at` and an `arrive_at`, so the two
+ * collapse back into one: departure from the first draft, arrival from the
+ * second's day+time when present, else the first draft's `end_time`. `text` is
+ * the raw paste, read only to infer the mode the category flattened.
+ */
+export function toTransportDraft(drafts: ParsedBooking[], text: string): TransportDraft {
+  const dep = drafts[0]
+  const arr = drafts.length > 1 ? drafts[1] : null
+  const { from, to } = splitRoute(dep?.location ?? null)
+  const arrive_at = arr
+    ? combineDateTime(arr.day, arr.start_time)
+    : combineDateTime(dep?.day ?? null, dep?.end_time ?? null)
+  return {
+    mode: inferTransportMode(text),
+    depart_place: from,
+    arrive_place: to,
+    depart_at: combineDateTime(dep?.day ?? null, dep?.start_time ?? null),
+    arrive_at,
+    confirmation_code: dep?.confirmation_code ?? null,
+    booking_url: dep?.booking_url ?? null,
   }
 }

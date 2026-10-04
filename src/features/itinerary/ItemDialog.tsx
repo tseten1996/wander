@@ -96,6 +96,7 @@ export function ItemDialog({
   item,
   prefill,
   onCreated,
+  banner,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
@@ -112,6 +113,8 @@ export function ItemDialog({
    * draft (a flight/lodging paste yields two, confirmed one at a time, issue 103).
    */
   onCreated?: () => void
+  /** Optional node rendered above the form — the import re-target control (#380). */
+  banner?: React.ReactNode
 }) {
   const { trip, me } = useTripContext()
   const createItem = useCreateItineraryItem(trip.id, me.id)
@@ -231,6 +234,7 @@ export function ItemDialog({
         <DialogHeader>
           <DialogTitle>{item ? 'Edit itinerary item' : 'Add to itinerary'}</DialogTitle>
         </DialogHeader>
+        {banner}
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="it-title">Title</Label>
