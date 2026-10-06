@@ -28,6 +28,7 @@ import { Input, Textarea } from '@/components/ui/input'
 import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { MemberDatesForm } from '@/features/me/MemberDatesForm'
+import { LinkEmailCard } from '@/features/auth/LinkEmailCard'
 import { useBudget, useRepayments } from '@/features/budget/api'
 import { DestinationsCard } from '@/features/destinations/DestinationsCard'
 import { TripPreferencesCard } from '@/features/preferences/TripPreferencesCard'
@@ -720,9 +721,14 @@ function MembersCard() {
               <LogOut /> Leave this trip
             </Button>
             {isAnonymous && (
-              <p className="mt-2 text-xs text-faint">
-                Heads up: without an account you can only rejoin with a fresh invite link.
-              </p>
+              <div className="mt-3 rounded-xl border border-line bg-sunken/40 p-3">
+                <p className="text-xs text-faint">
+                  Heads up: without an account you can only rejoin with a fresh invite link.
+                </p>
+                {/* The warning no longer stands alone — the upgrade that fixes
+                    it sits right beside it (#383). */}
+                <LinkEmailCard compact />
+              </div>
             )}
           </div>
         )}

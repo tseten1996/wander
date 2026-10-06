@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { getDeviceId } from '@/lib/device'
 import { purgePersistedCache, cancelPendingPurge } from '@/lib/queryClient'
+import { linkEmailWith } from '@/features/auth/linkEmail'
 
 interface AuthContextValue {
   session: Session | null
@@ -10,6 +11,14 @@ interface AuthContextValue {
   /** True when this session was created invisibly for an invited friend. */
   isAnonymous: boolean
   signInWithEmail: (email: string) => Promise<void>
+  /**
+   * Attach an email to the *current* anonymous session (#383). Preserves
+   * `auth.uid()`, so every trip the friend already joined stays theirs — it is
+   * an opt-in upgrade, never a re-sign-in. Resolves once Supabase has sent the
+   * confirmation link; rejects with already-friendly copy on an invalid address
+   * or an email already linked to another account.
+   */
+  linkEmail: (email: string) => Promise<void>
   /**
    * Guarantee a session exists (used by the join flow). Friends get an
    * anonymous session — no email, no password, ~1 network call. Resolves with
@@ -82,6 +91,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         })
         if (error) throw error
+      },
+      linkEmail: async (email: string) => {
+        // Same redirect target as the magic link: return to where the app is
+        // hosted so the confirmation link lands back in this install.
+        await linkEmailWith(
+          supabase.auth,
+          email,
+          window.location.origin + window.location.pathname,
+        )
       },
       ensureSession,
       signOut: async () => {

@@ -30,6 +30,7 @@ import { Card } from '@/components/ui/card'
 import { AvatarStack } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { ErrorState, PageLoader, Skeleton } from '@/components/ui/misc'
+import { LinkEmailCard } from '@/features/auth/LinkEmailCard'
 import { dateRange, daysUntil } from '@/lib/utils'
 
 function Wordmark() {
@@ -225,6 +226,15 @@ function TripsHome() {
             </Button>
           )}
         </div>
+
+        {/* An anonymous friend's session can be evicted in ~7 days, taking every
+            joined trip with it (#383). Offer the durable-email upgrade up front —
+            it shows whether or not they have trips yet, and never for an owner. */}
+        {isAnonymous && (
+          <div className="mb-6">
+            <LinkEmailCard />
+          </div>
+        )}
 
         {trips.isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2">
