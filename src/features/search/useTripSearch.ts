@@ -1,30 +1,20 @@
 import * as React from 'react'
-import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import {
-  Lightbulb, ListChecks, MapPin, MessageCircle, NotebookPen, PiggyBank, Vote,
-  type LucideIcon,
+  BedDouble, Heart, Lightbulb, ListChecks, MapPin, MessageCircle, NotebookPen,
+  PiggyBank, Route, Vote, type LucideIcon,
 } from 'lucide-react'
 import type {
-  BudgetCategory, BudgetEntry, ChecklistItem, InspirationItem, ItineraryItem,
-  Message, Note, Poll, PollOption,
+  BudgetEntry, ChecklistItem, InspirationItem, ItineraryItem, Message, Note,
+  Poll, PollOption, Stay, Transport, WishlistItem,
 } from '@/types'
-import { searchAnchorId } from './anchor'
+import {
+  collectResults, MIN_QUERY_LENGTH, type SearchKind, type SearchResult,
+  type SearchSources,
+} from './collect'
 
-export type SearchKind =
-  | 'poll' | 'message' | 'checklist' | 'note' | 'idea' | 'itinerary' | 'budget'
-
-export interface SearchResult {
-  id: string
-  kind: SearchKind
-  /** Trip-relative route segment, e.g. `polls` → `/trip/:id/polls`. */
-  route: string
-  /** DOM id to deep-link to (`#<anchorId>`). */
-  anchorId: string
-  /** Primary line shown in the result row. */
-  title: string
-  /** Optional context line (the matched field when it isn't the title). */
-  snippet: string | null
-}
+export { MIN_QUERY_LENGTH }
+export type { SearchKind, SearchResult }
 
 export interface SearchGroup {
   kind: SearchKind
@@ -38,195 +28,45 @@ export interface SearchOutcome {
   total: number
 }
 
-/** Minimum query length before we search — one char is all noise. */
-export const MIN_QUERY_LENGTH = 2
-
-/** Cap per section so the palette stays skimmable. */
-const MAX_PER_KIND = 6
-
 const KIND_META: Record<SearchKind, { label: string; icon: LucideIcon }> = {
   itinerary: { label: 'Itinerary', icon: MapPin },
   budget: { label: 'Budget', icon: PiggyBank },
+  stay: { label: 'Stays', icon: BedDouble },
+  transport: { label: 'Transport', icon: Route },
   poll: { label: 'Polls', icon: Vote },
   message: { label: 'Chat', icon: MessageCircle },
   checklist: { label: 'Checklist', icon: ListChecks },
   note: { label: 'Notes', icon: NotebookPen },
   idea: { label: 'Ideas', icon: Lightbulb },
-}
-
-// Itinerary and budget lead — the trip's densest, most-referenced content —
-// followed by the original five in their established order.
-const KIND_ORDER: SearchKind[] = [
-  'itinerary', 'budget', 'poll', 'message', 'checklist', 'note', 'idea',
-]
-
-/** Human labels for a budget entry's category, so a search for "food" matches a
- *  "Food & drinks" expense. Kept here (not imported from BudgetPage) so the
- *  search chunk never pulls in that heavy page module. */
-const BUDGET_CATEGORY_LABELS: Record<BudgetCategory, string> = {
-  stay: 'Stay',
-  transport: 'Transport',
-  food: 'Food & drinks',
-  activities: 'Activities',
-  shopping: 'Shopping',
-  other: 'Other',
-}
-
-/** `q` is expected pre-lowercased. */
-function hit(haystack: string | null | undefined, q: string): boolean {
-  return !!haystack && haystack.toLowerCase().includes(q)
-}
-
-/** A windowed excerpt around the first match, with ellipses when trimmed. */
-function excerpt(text: string, q: string, radius = 60): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  const i = flat.toLowerCase().indexOf(q)
-  if (i < 0) return flat.length > radius * 2 ? `${flat.slice(0, radius * 2)}…` : flat
-  const start = Math.max(0, i - radius)
-  const end = Math.min(flat.length, i + q.length + radius)
-  return `${start > 0 ? '…' : ''}${flat.slice(start, end).trim()}${end < flat.length ? '…' : ''}`
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
+  wishlist: { label: 'Wishlist', icon: Heart },
 }
 
 /**
- * Collect matches from the TanStack Query cache only — no network. A section
- * is searchable once its page has been opened this session (which is what
- * populated its cache); unopened sections simply don't contribute results.
+ * Gather every searchable section from the TanStack Query cache only — no
+ * network. A section is searchable once its cache key is populated (either its
+ * page was opened this session, or the palette's `prefetch` warmed it). The
+ * matching itself is the pure `collectResults`; this just reads the cache.
  */
-function collect(queryClient: QueryClient, tripId: string, q: string): SearchOutcome {
-  const byKind: Record<SearchKind, SearchResult[]> = {
-    itinerary: [], budget: [], poll: [], message: [], checklist: [], note: [], idea: [],
-  }
-
-  const itinerary =
-    queryClient.getQueryData<ItineraryItem[]>(['itinerary_items', tripId]) ?? []
-  for (const it of itinerary) {
-    if (hit(it.title, q) || hit(it.location, q) || hit(it.notes, q)) {
-      byKind.itinerary.push({
-        id: it.id,
-        kind: 'itinerary',
-        route: 'itinerary',
-        anchorId: searchAnchorId(it.id),
-        title: it.title,
-        snippet: hit(it.title, q)
-          ? null
-          : hit(it.location, q)
-            ? it.location
-            : it.notes
-              ? excerpt(it.notes, q)
-              : null,
-      })
-    }
-  }
-
-  const budget = queryClient.getQueryData<BudgetEntry[]>(['budget_entries', tripId]) ?? []
-  for (const e of budget) {
-    const categoryLabel = BUDGET_CATEGORY_LABELS[e.category]
-    if (hit(e.title, q) || hit(categoryLabel, q)) {
-      byKind.budget.push({
-        id: e.id,
-        kind: 'budget',
-        route: 'budget',
-        anchorId: searchAnchorId(e.id),
-        title: e.title,
-        snippet: hit(e.title, q) ? null : `Category: ${categoryLabel}`,
-      })
-    }
-  }
-
-  const polls =
-    queryClient.getQueryData<(Poll & { poll_options: PollOption[] })[]>(['polls', tripId]) ?? []
-  for (const p of polls) {
-    const option = p.poll_options?.find((o) => hit(o.label, q))
-    if (hit(p.question, q) || option) {
-      byKind.poll.push({
-        id: p.id,
-        kind: 'poll',
-        route: 'polls',
-        anchorId: searchAnchorId(p.id),
-        title: p.question,
-        snippet: hit(p.question, q) ? null : option ? `Option: ${option.label}` : null,
-      })
-    }
-  }
-
-  const messages = queryClient.getQueryData<Message[]>(['messages', tripId]) ?? []
-  for (const m of messages) {
-    if (hit(m.content, q)) {
-      byKind.message.push({
-        id: m.id,
-        kind: 'message',
-        route: 'chat',
-        anchorId: searchAnchorId(m.id),
-        title: excerpt(m.content, q),
-        snippet: null,
-      })
-    }
-  }
-
-  const checklist = queryClient.getQueryData<ChecklistItem[]>(['checklist_items', tripId]) ?? []
-  for (const it of checklist) {
-    if (hit(it.title, q) || hit(it.notes, q)) {
-      byKind.checklist.push({
-        id: it.id,
-        kind: 'checklist',
-        route: 'checklist',
-        anchorId: searchAnchorId(it.id),
-        title: it.title,
-        snippet: hit(it.title, q) ? null : it.notes ? excerpt(it.notes, q) : null,
-      })
-    }
-  }
-
-  const notes = queryClient.getQueryData<Note[]>(['notes', tripId]) ?? []
-  for (const n of notes) {
-    if (hit(n.title, q) || hit(n.content, q)) {
-      byKind.note.push({
-        id: n.id,
-        kind: 'note',
-        route: 'notes',
-        anchorId: searchAnchorId(n.id),
-        title: n.title || 'Untitled',
-        snippet: hit(n.title, q) ? null : n.content ? excerpt(n.content, q) : null,
-      })
-    }
-  }
-
-  const ideas = queryClient.getQueryData<InspirationItem[]>(['inspiration_items', tripId]) ?? []
-  for (const it of ideas) {
-    if (hit(it.title, q) || hit(it.note, q) || hit(it.url, q)) {
-      byKind.idea.push({
-        id: it.id,
-        kind: 'idea',
-        route: 'ideas',
-        anchorId: searchAnchorId(it.id),
-        title: it.title || (it.url ? hostOf(it.url) : 'Idea'),
-        snippet: hit(it.title, q)
-          ? null
-          : it.note
-            ? excerpt(it.note, q)
-            : it.url
-              ? hostOf(it.url)
-              : null,
-      })
-    }
+function collect(queryClient: ReturnType<typeof useQueryClient>, tripId: string, q: string): SearchOutcome {
+  const sources: SearchSources = {
+    itinerary: queryClient.getQueryData<ItineraryItem[]>(['itinerary_items', tripId]) ?? [],
+    budget: queryClient.getQueryData<BudgetEntry[]>(['budget_entries', tripId]) ?? [],
+    polls:
+      queryClient.getQueryData<(Poll & { poll_options: PollOption[] })[]>(['polls', tripId]) ?? [],
+    messages: queryClient.getQueryData<Message[]>(['messages', tripId]) ?? [],
+    checklist: queryClient.getQueryData<ChecklistItem[]>(['checklist_items', tripId]) ?? [],
+    notes: queryClient.getQueryData<Note[]>(['notes', tripId]) ?? [],
+    ideas: queryClient.getQueryData<InspirationItem[]>(['inspiration_items', tripId]) ?? [],
+    stays: queryClient.getQueryData<Stay[]>(['stays', tripId]) ?? [],
+    transport: queryClient.getQueryData<Transport[]>(['transport', tripId]) ?? [],
+    wishlist: queryClient.getQueryData<WishlistItem[]>(['wishlist_items', tripId]) ?? [],
   }
 
   const groups: SearchGroup[] = []
   let total = 0
-  for (const kind of KIND_ORDER) {
-    const results = byKind[kind].slice(0, MAX_PER_KIND)
-    if (results.length) {
-      groups.push({ kind, label: KIND_META[kind].label, icon: KIND_META[kind].icon, results })
-      total += results.length
-    }
+  for (const { kind, results } of collectResults(sources, q)) {
+    groups.push({ kind, label: KIND_META[kind].label, icon: KIND_META[kind].icon, results })
+    total += results.length
   }
   return { groups, total }
 }
@@ -248,8 +88,8 @@ export function useTripSearch(tripId: string, rawQuery: string, active: boolean)
   React.useEffect(() => {
     if (!active) return
     let cancelled = false
-    // Loaded lazily so the seven feature fetchers stay out of the eager shell
-    // bundle SearchDialog ships in — they arrive only once the palette opens.
+    // Loaded lazily so the feature fetchers stay out of the eager shell bundle
+    // SearchDialog ships in — they arrive only once the palette opens.
     void import('./prefetch').then(({ prefetchTripSearch }) => {
       if (cancelled) return
       void prefetchTripSearch(queryClient, tripId, () => {

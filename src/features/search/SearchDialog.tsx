@@ -124,7 +124,8 @@ export function SearchDialog({
             <p className="px-1 py-8 text-center text-sm text-muted">
               Type to search across your whole trip.
               <span className="mt-1 block text-xs text-faint">
-                Itinerary, budget, chat, polls, checklist, notes and ideas.
+                Itinerary, budget, stays, transport, chat, polls, checklist,
+                notes, ideas and your wishlist.
               </span>
             </p>
           ) : total === 0 ? (

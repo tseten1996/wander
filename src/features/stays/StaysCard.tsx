@@ -25,6 +25,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { cn, dateRange } from '@/lib/utils'
+import { searchAnchorId } from '@/features/search/anchor'
 import type { Stay } from '@/types'
 
 /**
@@ -435,7 +436,10 @@ export function StaysCard() {
                   return (
                     <li
                       key={s.id}
-                      id={`stay-${s.id}`}
+                      // The search palette deep-links to `#wander-item-<id>`; this
+                      // is also the row the map tap-through (#371) scrolls to via
+                      // the ref below. One shared anchor id, no duplicate.
+                      id={searchAnchorId(s.id)}
                       ref={(el) => {
                         if (el) rowRefs.current.set(s.id, el)
                         else rowRefs.current.delete(s.id)

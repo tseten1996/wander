@@ -11,6 +11,7 @@ import {
 } from './api'
 import { ScheduleDialog } from './ScheduleDialog'
 import { safeHttpUrl } from '@/features/stays/StaysCard'
+import { searchAnchorId } from '@/features/search/anchor'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -313,6 +314,8 @@ export function WishlistCard() {
                   return (
                     <li
                       key={item.id}
+                      // Deep-link target for the search palette (`#wander-item-<id>`).
+                      id={searchAnchorId(item.id)}
                       className="flex items-start gap-3 rounded-xl border border-line bg-sunken/40 px-3 py-2"
                     >
                       <div className="min-w-0 flex-1">

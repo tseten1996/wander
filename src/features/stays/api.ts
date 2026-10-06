@@ -6,23 +6,28 @@ import { friendlyError } from '@/lib/errors'
 import type { Stay } from '@/types'
 
 /** The trip's stays, ordered by check-in (dateless stays sort last, by creation).
- *  Keyed `['stays', tripId]` so realtime and every consumer (the Stays card, the
- *  calendar day surface) share one fetch. */
+ *  Exported as a plain function (not just the hook) so the global search palette
+ *  can warm this same cache key without reaching into Supabase itself — the
+ *  feature's own api.ts stays the only place that touches the table. */
+export async function fetchStays(tripId: string): Promise<Stay[]> {
+  const { data, error } = await supabase
+    .from('stays')
+    .select('*')
+    .eq('trip_id', tripId)
+    // nullsFirst: false → a stay with no check-in date sinks below the dated
+    // ones rather than floating to the top of the list.
+    .order('check_in', { nullsFirst: false })
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
+/** Keyed `['stays', tripId]` so realtime and every consumer (the Stays card, the
+ *  calendar day surface, the search palette) share one fetch. */
 export function useStays(tripId: string) {
   return useQuery({
     queryKey: ['stays', tripId],
-    queryFn: async (): Promise<Stay[]> => {
-      const { data, error } = await supabase
-        .from('stays')
-        .select('*')
-        .eq('trip_id', tripId)
-        // nullsFirst: false → a stay with no check-in date sinks below the dated
-        // ones rather than floating to the top of the list.
-        .order('check_in', { nullsFirst: false })
-        .order('created_at')
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchStays(tripId),
   })
 }
 
