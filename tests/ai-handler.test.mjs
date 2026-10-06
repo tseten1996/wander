@@ -340,6 +340,10 @@ const GOOD = {
   start_time: '15:00',
   end_time: '11:00',
   location: '18 rue Lepic, 75018 Paris',
+  // The two logistics fields (#380). Absent from a model payload, orNull reads
+  // them back as null — the booking shape always carries them.
+  confirmation_code: null,
+  booking_url: null,
 }
 
 const paste = (text = 'Confirmation Hôtel Lumière, 17 septembre') => ({
@@ -479,6 +483,7 @@ test('missing keys and empty strings both read as “not found”', async () => 
   assert.deepEqual(res.body.result.booking, {
     title: null, category: null, day: '2026-09-17', end_day: null,
     start_time: null, end_time: null, location: null,
+    confirmation_code: null, booking_url: null,
   })
 })
 
@@ -486,6 +491,24 @@ test('extra keys the model volunteers are dropped, not carried through', async (
   const provider = fakeProvider({ ...GOOD, price: 240, passenger: 'PARKER/JORDAN' })
   const res = await handleAiRequest(paste(), deps({ provider }))
   assert.deepEqual(res.body.result.booking, GOOD)
+})
+
+test('confirmation_code and a safe booking_url pass through (#380)', async () => {
+  const provider = fakeProvider({
+    ...GOOD, confirmation_code: 'HTL45678', booking_url: 'https://hotel.example/res/HTL45678',
+  })
+  const res = await handleAiRequest(paste(), deps({ provider }))
+  assert.equal(res.body.result.booking.confirmation_code, 'HTL45678')
+  assert.equal(res.body.result.booking.booking_url, 'https://hotel.example/res/HTL45678')
+})
+
+test('an unsafe booking_url is coerced to null, not allowed to fail the parse (#380)', async () => {
+  const provider = fakeProvider({ ...GOOD, booking_url: 'javascript:alert(1)' })
+  const res = await handleAiRequest(paste(), deps({ provider }))
+  assert.equal(res.status, 200)
+  // The rest of the extraction survives; only the bad link is dropped.
+  assert.equal(res.body.result.booking.category, 'hotel')
+  assert.equal(res.body.result.booking.booking_url, null)
 })
 
 test('the model is never reached before membership and quota are settled', async () => {

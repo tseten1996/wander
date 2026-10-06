@@ -70,7 +70,7 @@ const staySchema = z
     path: ['check_out'],
   })
 
-type StayFormValues = z.input<typeof staySchema>
+export type StayFormValues = z.input<typeof staySchema>
 
 const EMPTY: StayFormValues = {
   name: '', address: '', latitude: null, longitude: null,
@@ -78,13 +78,23 @@ const EMPTY: StayFormValues = {
 }
 
 /** Add / edit a single stay. Name is free text (a hotel or "Dana's place");
- *  the address autocompletes and captures a pin, degrading to plain text. */
-function StayDialog({
-  open, onOpenChange, stay,
+ *  the address autocompletes and captures a pin, degrading to plain text.
+ *
+ *  Exported so the paste-a-booking flow (#380) can open it pre-filled from a
+ *  parsed lodging confirmation — `prefill` seeds the create form (ignored when
+ *  editing an existing `stay`), and `banner` renders a re-target control above
+ *  the form so a member can send the paste to Transport or the itinerary item
+ *  instead before saving. */
+export function StayDialog({
+  open, onOpenChange, stay, prefill, banner,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   stay?: Stay
+  /** Create-mode seed values (from a pasted booking, #380). Ignored when editing. */
+  prefill?: Partial<StayFormValues>
+  /** Optional node rendered above the form — the import re-target control. */
+  banner?: React.ReactNode
 }) {
   const { trip, me } = useTripContext()
   const create = useCreateStay(trip.id, me.id)
@@ -110,10 +120,10 @@ function StayDialog({
             confirmation_code: stay.confirmation_code ?? '',
             booking_url: stay.booking_url ?? '',
           }
-        : EMPTY
+        : { ...EMPTY, ...prefill }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, stay])
+  }, [open, stay, prefill])
 
   async function onSubmit(values: StayFormValues) {
     const address = values.address?.trim() || null
@@ -174,6 +184,7 @@ function StayDialog({
             dates, address and check-in details everyone can pull up.
           </DialogDescription>
         </DialogHeader>
+        {banner}
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="stay-name">Name</Label>
