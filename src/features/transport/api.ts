@@ -6,23 +6,29 @@ import { friendlyError } from '@/lib/errors'
 import type { Transport, TransportMode } from '@/types'
 
 /** The trip's transport hops, ordered by departure (time-TBD hops sort last, by
- *  creation). Keyed `['transport', tripId]` so realtime and every consumer (the
- *  Transport card, the calendar day surface) share one fetch. */
+ *  creation). Exported as a plain function (not just the hook) so the global
+ *  search palette can warm this same cache key without reaching into Supabase
+ *  itself — the feature's own api.ts stays the only place that touches the
+ *  table. */
+export async function fetchTransport(tripId: string): Promise<Transport[]> {
+  const { data, error } = await supabase
+    .from('transport')
+    .select('*')
+    .eq('trip_id', tripId)
+    // nullsFirst: false → a hop with no departure time sinks below the dated
+    // ones rather than floating to the top of the list.
+    .order('depart_at', { nullsFirst: false })
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
+/** Keyed `['transport', tripId]` so realtime and every consumer (the Transport
+ *  card, the calendar day surface, the search palette) share one fetch. */
 export function useTransport(tripId: string) {
   return useQuery({
     queryKey: ['transport', tripId],
-    queryFn: async (): Promise<Transport[]> => {
-      const { data, error } = await supabase
-        .from('transport')
-        .select('*')
-        .eq('trip_id', tripId)
-        // nullsFirst: false → a hop with no departure time sinks below the dated
-        // ones rather than floating to the top of the list.
-        .order('depart_at', { nullsFirst: false })
-        .order('created_at')
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchTransport(tripId),
   })
 }
 

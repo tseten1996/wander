@@ -30,6 +30,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { formatTime } from '@/lib/utils'
+import { searchAnchorId } from '@/features/search/anchor'
 import type { Transport, TransportMode } from '@/types'
 
 /** The five modes, in display order, with their icon and label. Single source
@@ -409,7 +410,11 @@ function TransportRow({
   const arrive = whenLabel(hop.arrive_at)
   const hasRoute = hop.depart_place || hop.arrive_place
   return (
-    <li className="flex items-start gap-3 rounded-xl border border-line bg-sunken/40 px-3 py-2">
+    // `wander-item-<id>` is the anchor the search palette deep-links to and flashes.
+    <li
+      id={searchAnchorId(hop.id)}
+      className="flex items-start gap-3 rounded-xl border border-line bg-sunken/40 px-3 py-2"
+    >
       <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-faint text-primary">
         <Icon className="size-4" aria-label={label} />
       </span>

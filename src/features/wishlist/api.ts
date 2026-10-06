@@ -6,21 +6,27 @@ import { friendlyError } from '@/lib/errors'
 import type { WishlistCategory, WishlistItem } from '@/types'
 
 /** The trip's wishlist — saved-but-unscheduled places, ordered by `position`
- *  (seeded on insert so newer saves sink to the bottom of the shelf). Keyed
- *  `['wishlist_items', tripId]` so realtime and every consumer share one fetch. */
+ *  (seeded on insert so newer saves sink to the bottom of the shelf). Exported
+ *  as a plain function (not just the hook) so the global search palette can warm
+ *  this same cache key without reaching into Supabase itself — the feature's own
+ *  api.ts stays the only place that touches the table. */
+export async function fetchWishlist(tripId: string): Promise<WishlistItem[]> {
+  const { data, error } = await supabase
+    .from('wishlist_items')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('position')
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
+/** Keyed `['wishlist_items', tripId]` so realtime and every consumer (the
+ *  Wishlist card, the search palette) share one fetch. */
 export function useWishlist(tripId: string) {
   return useQuery({
     queryKey: ['wishlist_items', tripId],
-    queryFn: async (): Promise<WishlistItem[]> => {
-      const { data, error } = await supabase
-        .from('wishlist_items')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('position')
-        .order('created_at')
-      if (error) throw error
-      return data
-    },
+    queryFn: () => fetchWishlist(tripId),
   })
 }
 
