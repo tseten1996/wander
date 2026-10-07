@@ -4,7 +4,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  BedDouble, Check, Copy, ExternalLink, KeyRound, MapPin, Pencil, Plus, Trash2,
+  BedDouble, MapPin, Pencil, Plus, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -21,6 +21,7 @@ import { PlaceAutocomplete } from '@/components/ui/place-autocomplete'
 import { DateInput } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Skeleton, ErrorState } from '@/components/ui/misc'
+import { BookingChip, CodeChip } from '@/components/ui/booking-chips'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -325,55 +326,6 @@ export function StayDialog({
         </form>
       </DialogContent>
     </Dialog>
-  )
-}
-
-/** Copy-to-clipboard chip for a confirmation code — the front-desk field, so it
- *  is one tap to copy rather than a select-and-hold on mobile. */
-function CodeChip({ code }: { code: string }) {
-  const [copied, setCopied] = React.useState(false)
-  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  React.useEffect(() => () => clearTimeout(timer.current), [])
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(code)
-      setCopied(true)
-      clearTimeout(timer.current)
-      timer.current = setTimeout(() => setCopied(false), 1500)
-    } catch {
-      toast.error('Could not copy the code — try again')
-    }
-  }
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      aria-label={copied ? 'Confirmation code copied' : `Copy confirmation code ${code}`}
-      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-line-strong hover:text-ink"
-    >
-      <KeyRound className="size-3.5 shrink-0 text-primary" aria-hidden />
-      <span className="truncate font-mono">{code}</span>
-      {copied ? (
-        <Check className="size-3.5 shrink-0 text-success" aria-hidden />
-      ) : (
-        <Copy className="size-3.5 shrink-0" aria-hidden />
-      )}
-    </button>
-  )
-}
-
-/** Sanitized external booking link chip. */
-function BookingChip({ url }: { url: string }) {
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-line-strong hover:text-ink"
-    >
-      <ExternalLink className="size-3.5 shrink-0" aria-hidden />
-      <span className="truncate">Booking</span>
-    </a>
   )
 }
 
