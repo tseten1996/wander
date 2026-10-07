@@ -29,6 +29,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // The link-preview card is fetched by crawlers (WhatsApp, iMessage,
+        // Slack), never by the app. Precaching it would put 170 kB on every
+        // install for an image no user ever loads.
+        globIgnores: ['og-image.png'],
         // Never cache Supabase API calls — data must stay live
         navigateFallbackDenylist: [/supabase\.co/],
       },
