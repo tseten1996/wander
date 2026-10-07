@@ -291,6 +291,7 @@ export function WishlistCard() {
                       type="button"
                       onClick={() => setFilter(c)}
                       aria-pressed={active}
+                      data-tap-target
                       className={cn(
                         'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                         active
