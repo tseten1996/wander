@@ -465,6 +465,14 @@ without this step the queue fills and the drain reports failures.
    (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
    value as above). `.github/workflows/email-drain.yml` exits 0 while these are
    unset, so it stays green until you are ready.
+* **Verifying it without sending anything.** `npm run test:email-pipeline`
+  (needs `DATABASE_URL` pointing at the throwaway Postgres
+  `scripts/run-rls-tests.sh` prepares) drives the **real** drain code with the
+  **real** SQL functions, simulating only `api.resend.com`. It exists because
+  the unit tests stub the database and the RLS suite stubs the application, so
+  both can pass while the seam between them is broken — a renamed RPC argument,
+  or the deep-link builder in the migration drifting from
+  `src/features/notifications/route.ts`. It runs in CI on the `rls` job.
 * Build-time: `VITE_EMAIL_ENABLED=true` is what makes the opt-in toggle appear.
   Set it only once the above is real — a toggle that promises email and silently
   delivers none is worse than no toggle.

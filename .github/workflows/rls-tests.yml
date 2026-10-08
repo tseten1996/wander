@@ -10,11 +10,20 @@ name: RLS Tests
 # matrix can only change when a migration does. Entirely free-tier — a stock
 # postgres service container, no live Supabase project, no service-role key, no
 # secret. See supabase/tests/README.md and scripts/run-rls-tests.sh.
+#
+# The same container then runs scripts/verify-email-pipeline.mjs, which drives
+# the REAL drain code with the REAL SQL functions. The unit tests stub the
+# database and the RLS suite stubs the application, so both can pass while the
+# seam between them is broken — a renamed RPC argument, or the deep-link builder
+# in the migration drifting from src/features/notifications/route.ts. This is
+# the only check that would catch that.
 on:
   pull_request:
     paths:
       - 'supabase/**'
       - 'scripts/run-rls-tests.sh'
+      - 'scripts/verify-email-pipeline.mjs'
+      - 'src/server/email/**'
       - '.github/workflows/rls-tests.yml'
   workflow_dispatch:
 
@@ -49,9 +58,20 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+      # The pipeline script imports the drain's TypeScript directly and relies
+      # on Node's type stripping, so it needs the same Node the rest of CI uses
+      # — the runner's default is not guaranteed to be new enough. No `npm ci`:
+      # the script has no dependencies beyond psql and the repo's own source.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install postgres client (psql)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client
       - name: Apply baseline + migrations, run the RLS suite
         run: bash scripts/run-rls-tests.sh
+      # The suite rolls its own transaction back, so the schema is in place and
+      # the outbox is empty — which is exactly this script's precondition.
+      - name: Verify the email pipeline end to end
+        run: node scripts/verify-email-pipeline.mjs
