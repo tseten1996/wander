@@ -77,6 +77,8 @@ const RECIP_MEMBER = '33330000-0000-4000-8000-0000000000e2'
 const NOTIFICATION = '44440000-0000-4000-8000-0000000000e1'
 const APP_ORIGIN = 'https://tseten1996.github.io/wander'
 
+// chat_reads, email_prefs, messages and outbox rows all cascade from the trip
+// or the members it owns, so deleting the trip and the two users is enough.
 const cleanup = () =>
   sql(`
     delete from public.trips where id = '${TRIP}';
@@ -133,6 +135,9 @@ function notifyAndEnqueue() {
 // Same two RPCs, same argument names, same contract as
 // functions/api/email-drain.ts — over psql instead of supabase-js.
 const queue = {
+  async enqueueDigests() {
+    return Number(sql('select enqueue_chat_digests()')) || 0
+  },
   async claim(limit) {
     return JSON.parse(sql(`select coalesce(json_agg(t), '[]') from claim_email_batch(${limit}) t`))
   },
@@ -241,9 +246,75 @@ try {
   check('a 422 is reported as dropped, not retrying', rejected.dropped === 1)
   check('and the row is terminal, not left pending', ours('state') === 'failed')
 
+  /* ── the chat digest path ──────────────────────────────────────────────── */
+
+  // Clear the notification row so the digest is the only thing in flight.
+  sql(`delete from email_outbox where notification_id = '${NOTIFICATION}'`)
+  captured.length = 0
+  globalThis.fetch = async (url, init) => {
+    captured.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ id: 'resend-simulated' }) }
+  }
+
+  // The recipient opts into the digest, as themselves, and is behind: the
+  // actor's message below lands after their read marker.
+  sql(`
+    begin;
+    set local role authenticated;
+    select set_config('request.jwt.claims','{"sub":"${RECIP_USER}","role":"authenticated"}',true);
+    update email_prefs set chat_digest = true;
+    insert into chat_reads (member_id, trip_id, last_read_at)
+    values ('${RECIP_MEMBER}','${TRIP}', now() - interval '2 days');
+    commit;
+  `)
+  sql(`
+    insert into messages (trip_id, member_id, content)
+    select '${TRIP}', m.id, 'message ' || g
+    from members m, generate_series(1, 3) g
+    where m.trip_id = '${TRIP}' and m.role = 'owner';
+  `)
+
+  const digestReport = await drain()
+  check('the drain queued one digest', digestReport.digestsQueued === 1)
+  check('and sent it', digestReport.sent === 1)
+
+  const digestBody = JSON.parse(captured[0].init.body)
+  check('the digest counts only the other member\'s messages',
+    /^3 messages in the trip chat/.test(digestBody.subject))
+  check('the digest subject names the trip',
+    digestBody.subject.endsWith('· Kyoto in Autumn'))
+  check('the digest names no actor', !digestBody.html.includes('Someone'))
+  check('the digest links to the chat tab with no notification id',
+    digestBody.html.includes(`${APP_ORIGIN}/#/trip/${TRIP}/chat"`))
+  check('the digest went to the confirmed address',
+    digestBody.to[0] === 'pipeline-recipient@wander.test')
+
+  // The throttle, and the catch-up withdrawal.
+  const throttled = await drain()
+  check('the interval throttle blocks an immediate second digest',
+    throttled.digestsQueued === 0)
+
+  sql(`update email_prefs set last_digest_at = null`)
+  sql(`delete from email_outbox where kind = 'chat_digest'`)
+  const requeued = await drain()
+  check('a digest is queued again once the throttle is cleared',
+    requeued.digestsQueued === 1)
+
+  sql(`update email_prefs set last_digest_at = null`)
+  sql(`delete from email_outbox where kind = 'chat_digest'`)
+  // Queue one, then have the reader catch up before the next pass claims it.
+  sql('select enqueue_chat_digests()')
+  sql(`update chat_reads set last_read_at = now() where member_id = '${RECIP_MEMBER}'`)
+  const caughtUp = await drain()
+  check('a caught-up reader is never mailed a digest', caughtUp.sent === 0)
+  check('and the digest row is retired as skipped',
+    sql(`select state || '|' || last_error from email_outbox where kind = 'chat_digest'`) ===
+      'sent|skipped: read in app')
+
   console.log(`\nemail pipeline — real SQL functions driving the real drain code`)
-  console.log(`  subject: ${body.subject}`)
-  console.log(`  link:    ${expectedLink}\n`)
+  console.log(`  notification: ${body.subject}`)
+  console.log(`  digest:       ${digestBody.subject}`)
+  console.log(`  link:         ${expectedLink}\n`)
   for (const [name, ok] of checks) console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}`)
 
   const failed = checks.filter(([, ok]) => !ok)

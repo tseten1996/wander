@@ -32,9 +32,8 @@ export async function resolve(specifier, context, nextResolve) {
 }`),
 )
 
-const { escapeHtml, clamp, subjectFor, absoluteLink, renderEmail } = await import(
-  '../src/server/email/render.ts'
-)
+const { escapeHtml, clamp, subjectFor, absoluteLink, renderEmail, isDigest, pluralMessages } =
+  await import('../src/server/email/render.ts')
 const { isRetryableStatus, resendProvider, unsubscribeTarget } = await import(
   '../src/server/email/provider.ts'
 )
@@ -44,6 +43,7 @@ const { drainOnce, DEFAULT_LIMIT } = await import('../src/server/email/drain.ts'
 const job = (over = {}) => ({
   id: 'ob-1',
   to_email: 'friend@example.com',
+  kind: 'notification',
   type: 'mention',
   subject_title: 'are we still doing Kyoto?',
   trip_name: 'Kyoto in Autumn',
@@ -309,7 +309,7 @@ const okProvider = { async send() { return { ok: true, id: 'x', retryable: false
 test('an empty queue is a no-op that reports zeroes', async () => {
   const queue = stubQueue([])
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { claimed: 0, sent: 0, retrying: 0, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 0, sent: 0, retrying: 0, dropped: 0 })
   assert.equal(queue.marks.length, 0)
 })
 
@@ -317,7 +317,7 @@ test('a successful batch marks every row sent', async () => {
   const jobs = [job({ id: 'a' }), job({ id: 'b' }), job({ id: 'c' })]
   const queue = stubQueue(jobs)
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { claimed: 3, sent: 3, retrying: 0, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 3, sent: 3, retrying: 0, dropped: 0 })
   assert.deepEqual(
     queue.marks.map((m) => [m.id, m.sent]).sort(),
     [['a', true], ['b', true], ['c', true]],
@@ -332,7 +332,7 @@ test('a permanent failure is marked TERMINAL so it stops consuming attempts', as
     },
   }
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { claimed: 1, sent: 0, retrying: 0, dropped: 1 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 0, dropped: 1 })
   assert.deepEqual(queue.marks, [
     { id: 'bad', sent: false, error: 'resend 422', terminal: true },
   ])
@@ -346,7 +346,7 @@ test('a transient failure is NOT terminal, so the next run retries it', async ()
     },
   }
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { claimed: 1, sent: 0, retrying: 1, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 1, dropped: 0 })
   assert.equal(queue.marks[0].terminal, false)
 })
 
@@ -387,7 +387,7 @@ test('a drain survives markResult itself failing', async () => {
   // Both the send and the bookkeeping fail; the pass must still return a
   // report rather than rejecting and failing the whole scheduled run.
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { claimed: 1, sent: 0, retrying: 1, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 1, dropped: 0 })
 })
 
 test('the claim limit is clamped to a sane range', async () => {
@@ -427,11 +427,143 @@ test('concurrency is bounded and every job is still delivered exactly once', asy
   assert.equal(new Set(queue.marks.map((m) => m.id)).size, 20, 'no job sent twice')
 })
 
+/* ── render: the chat digest shape ───────────────────────────────────────── */
+
+/** A queued chat digest — no actor, no type, no title, a count instead. */
+const digest = (over = {}) => ({
+  id: 'ob-d1',
+  to_email: 'friend@example.com',
+  kind: 'chat_digest',
+  type: null,
+  subject_title: null,
+  trip_name: 'Kyoto in Autumn',
+  actor_name: null,
+  deep_link: '#/trip/t1/chat',
+  digest_count: 7,
+  attempts: 0,
+  ...over,
+})
+
+test('isDigest distinguishes the two shapes', () => {
+  assert.equal(isDigest(digest()), true)
+  assert.equal(isDigest(job()), false)
+  // A row written before digests existed has no kind and is a notification.
+  assert.equal(isDigest({ ...job(), kind: undefined }), false)
+})
+
+test('pluralMessages agrees with itself at the boundary', () => {
+  assert.equal(pluralMessages(1), '1 message')
+  assert.equal(pluralMessages(2), '2 messages')
+  assert.equal(pluralMessages(0), '0 messages')
+})
+
+test('a digest subject leads with the count, not an actor', () => {
+  // The count is the entire decision the recipient makes from the subject.
+  assert.equal(subjectFor(digest()), '7 messages in the trip chat · Kyoto in Autumn')
+})
+
+test('a digest of one message reads naturally', () => {
+  assert.equal(subjectFor(digest({ digest_count: 1 })), '1 message in the trip chat · Kyoto in Autumn')
+  const { text } = renderEmail(digest({ digest_count: 1 }), 'https://app.test')
+  assert.ok(text.includes('There’s a new message in the trip chat.'))
+})
+
+test('a digest never says "Someone" — it has no actor by nature', () => {
+  const { subject, text, html } = renderEmail(digest(), 'https://app.test')
+  for (const part of [subject, text, html]) {
+    assert.ok(!part.includes('Someone'), 'a digest must not invent an actor')
+  }
+})
+
+test('a digest with a missing count still renders sensibly', () => {
+  // Defensive: the column is NOT NULL for digests, but a renderer that emits
+  // "null messages" would be worse than one that assumes at least one.
+  assert.equal(subjectFor(digest({ digest_count: null })), '1 message in the trip chat · Kyoto in Autumn')
+  assert.equal(subjectFor(digest({ digest_count: 0 })), '1 message in the trip chat · Kyoto in Autumn')
+})
+
+test('a digest links to the chat tab with no notification id', () => {
+  const { html } = renderEmail(digest(), 'https://app.test')
+  assert.ok(html.includes('href="https://app.test/#/trip/t1/chat"'))
+  assert.ok(!html.includes('?n='), 'there is no single notification to point at')
+})
+
+test('a digest has its own call to action', () => {
+  const { html } = renderEmail(digest(), 'https://app.test')
+  assert.ok(html.includes('Catch up on the chat'))
+})
+
+test('a digest carries no quote block — there is no single message to quote', () => {
+  const { html } = renderEmail(digest(), 'https://app.test')
+  assert.ok(!html.includes('border-left'))
+})
+
+test('a malicious trip name is escaped in a digest too', () => {
+  const { html } = renderEmail(
+    digest({ trip_name: '<script>alert(1)</script>' }),
+    'https://app.test',
+  )
+  assert.ok(!html.includes('<script>'))
+  assert.ok(html.includes('&lt;script&gt;'))
+})
+
+/* ── drain: the digest enqueue step ──────────────────────────────────────── */
+
+test('the drain enqueues digests before it claims', async () => {
+  const order = []
+  const queue = {
+    async enqueueDigests() { order.push('enqueue'); return 3 },
+    async claim() { order.push('claim'); return [] },
+    async markResult() {},
+  }
+  const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
+  // Order matters: a digest queued after the claim would wait a whole interval.
+  assert.deepEqual(order, ['enqueue', 'claim'])
+  assert.equal(report.digestsQueued, 3)
+})
+
+test('a failing digest enqueue does not stop event emails going out', async () => {
+  const queue = {
+    async enqueueDigests() { throw new Error('rpc exploded') },
+    async claim() { return [job({ id: 'a' })] },
+    marks: [],
+    async markResult(id, sent) { this.marks.push([id, sent]) },
+  }
+  const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
+  assert.equal(report.digestsQueued, 0)
+  assert.equal(report.sent, 1, 'the unrelated notification email still sent')
+})
+
+test('a queue without enqueueDigests still works', async () => {
+  // The method is optional so a caller that has not migrated keeps working.
+  const queue = stubQueue([job({ id: 'a' })])
+  const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
+  assert.equal(report.digestsQueued, 0)
+  assert.equal(report.sent, 1)
+})
+
+test('a digest is delivered through the same drain as a notification', async () => {
+  const sent = []
+  const queue = {
+    async enqueueDigests() { return 1 },
+    async claim() { return [digest({ id: 'd1' }), job({ id: 'n1' })] },
+    async markResult() {},
+  }
+  const provider = {
+    async send(mail) { sent.push(mail.subject); return { ok: true, retryable: false } },
+  }
+  const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
+  assert.equal(report.sent, 2)
+  assert.ok(sent.some((s) => s.startsWith('7 messages in the trip chat')))
+  assert.ok(sent.some((s) => s.startsWith('Tenzin mentioned you')))
+})
+
 test('a drain report never carries an address', async () => {
   // The report is logged to a public CI run, so this is a real constraint and
   // not a stylistic one.
   const queue = stubQueue([job({ to_email: 'private@person.test' })])
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
   assert.ok(!JSON.stringify(report).includes('private@person.test'))
-  assert.deepEqual(Object.keys(report).sort(), ['claimed', 'dropped', 'retrying', 'sent'])
+  assert.deepEqual(Object.keys(report).sort(),
+    ['claimed', 'digestsQueued', 'dropped', 'retrying', 'sent'])
 })

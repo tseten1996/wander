@@ -10,6 +10,7 @@ import {
   Inbox,
   Mail,
   MailWarning,
+  MessagesSquare,
   ListChecks,
   Loader2,
   Luggage,
@@ -363,6 +364,80 @@ function EmailOptInRow({ tripId, meId }: { tripId: string; meId: string }) {
 }
 
 /**
+ * "Digest of new chat messages" — a sub-toggle of the email row.
+ *
+ * Nested under email and revealed only when email is on, because it is
+ * meaningless otherwise and a second top-level switch would imply two
+ * independent channels. Indented and visually subordinate for the same reason.
+ *
+ * Separate from the per-type choices because a digest is not a notification
+ * type: there is no actor and no single subject, just "the group talked while
+ * you were away, here is how much". Emailing one message at a time is the
+ * mistake this exists to avoid — a trip chat sends bursts, and forty messages
+ * would be forty emails.
+ */
+function ChatDigestRow({ tripId, meId }: { tripId: string; meId: string }) {
+  const prefs = useEmailPrefs(tripId, meId)
+  const setPrefs = useSetEmailPrefs(tripId, meId)
+
+  // Only meaningful once email is actually on for this trip.
+  if (!EMAIL_AVAILABLE || !prefs.data?.enabled) return null
+
+  const busy = setPrefs.isPending
+  const checked = !!prefs.data.chat_digest
+
+  return (
+    <div className="px-2 pb-2">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label="Email me a digest of new chat messages"
+        disabled={busy}
+        onClick={() => setPrefs.mutate({ chat_digest: !checked })}
+        className={cn(
+          'flex min-h-11 w-full items-center justify-between gap-3 rounded-xl py-1.5 pl-11 pr-2 text-left',
+          'transition-colors hover:bg-sunken focus-visible:bg-sunken focus-visible:outline-none',
+          'disabled:cursor-not-allowed'
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sunken text-muted">
+            {busy ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <MessagesSquare className="size-3.5" aria-hidden />
+            )}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm text-ink">Chat catch-up</span>
+            <span className="block truncate text-xs text-muted">
+              One email when the group’s been talking
+            </span>
+          </span>
+        </span>
+        {/* Visual only — the button above is the actual switch. */}
+        <span
+          aria-hidden
+          className={cn(
+            'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+            checked ? 'bg-primary' : 'bg-line-strong',
+            busy && 'opacity-50'
+          )}
+        >
+          <span
+            className={cn(
+              'block size-5 rounded-full bg-white shadow-sm transition-transform',
+              checked ? 'translate-x-5' : 'translate-x-0'
+            )}
+          />
+        </span>
+      </button>
+    </div>
+  )
+}
+
+/**
  * The personal inbox in the app shell header: a bell with a badge and a
  * dropdown. It surfaces two kinds of "things that need me":
  *  - **Reminders (#195)** — time-based, derived on the client from cached data
@@ -495,6 +570,7 @@ export function NotificationBell({ className }: { className?: string }) {
 
         <PushOptInRow tripId={trip.id} meId={me.id} />
         <EmailOptInRow tripId={trip.id} meId={me.id} />
+        <ChatDigestRow tripId={trip.id} meId={me.id} />
       </PopoverContent>
     </Popover>
   )

@@ -34,17 +34,40 @@ export const EMAIL_TYPES = [
 ] as const
 export type EmailType = (typeof EMAIL_TYPES)[number]
 
-/** One queued email, as `claim_email_batch` hands it over. */
+/**
+ * One queued email, as `claim_email_batch` hands it over.
+ *
+ * Two shapes in one row, discriminated by `kind`. A `notification` carries an
+ * actor, an event type and the subject's title; a `chat_digest` carries none of
+ * those — it has no author by nature ("twelve people said things") — and
+ * carries `digest_count` instead. The database enforces the pairing with a
+ * CHECK, so a row can never arrive here half-way between the two.
+ */
 export interface EmailJob {
   id: string
   to_email: string
-  type: string
+  /** 'notification' | 'chat_digest'. Absent on rows written before digests
+   *  existed, which are notifications by definition. */
+  kind?: string | null
+  type: string | null
   subject_title: string | null
   trip_name: string
   actor_name: string | null
   /** The in-app hash route, e.g. `#/trip/<id>/chat?n=<id>`. */
   deep_link: string
+  /** How many unread messages a digest is about; null for a notification. */
+  digest_count?: number | null
   attempts: number
+}
+
+/** True when this job is a chat digest rather than a single event. */
+export function isDigest(job: EmailJob): boolean {
+  return job.kind === 'chat_digest'
+}
+
+/** `n` with a correctly pluralised noun — "1 message", "4 messages". */
+export function pluralMessages(count: number): string {
+  return `${count} ${count === 1 ? 'message' : 'messages'}`
 }
 
 /** A rendered message, ready for any transport. */
@@ -104,6 +127,14 @@ function actor(job: EmailJob): string {
 export function subjectFor(job: EmailJob): string {
   const who = actor(job)
   const trip = clamp(job.trip_name, 60)
+
+  // A digest leads with the count, because that is the entire decision the
+  // recipient makes from the subject line: is it worth opening? There is no
+  // actor to name and no single title to quote.
+  if (isDigest(job)) {
+    return `${pluralMessages(Math.max(1, job.digest_count ?? 1))} in the trip chat · ${trip}`
+  }
+
   const what: Record<EmailType, string> = {
     checklist_assigned: `${who} assigned you a task`,
     poll_opened: `${who} opened a poll`,
@@ -117,6 +148,12 @@ export function subjectFor(job: EmailJob): string {
 /** The one-line explanation under the heading, matching the subject's verb. */
 function bodyLineFor(job: EmailJob): string {
   const who = actor(job)
+  if (isDigest(job)) {
+    const n = Math.max(1, job.digest_count ?? 1)
+    return n === 1
+      ? 'There’s a new message in the trip chat.'
+      : `There are ${n} new messages in the trip chat.`
+  }
   const lines: Record<EmailType, string> = {
     checklist_assigned: `${who} assigned this task to you.`,
     poll_opened: `${who} opened a poll and the group is waiting on your vote.`,
@@ -128,6 +165,7 @@ function bodyLineFor(job: EmailJob): string {
 
 /** The call to action, per type. */
 function ctaFor(job: EmailJob): string {
+  if (isDigest(job)) return 'Catch up on the chat'
   const ctas: Record<EmailType, string> = {
     checklist_assigned: 'View the task',
     poll_opened: 'Cast your vote',

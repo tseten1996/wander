@@ -260,7 +260,11 @@ export function useEmailPrefs(tripId: string, meId: string) {
 export function useSetEmailPrefs(tripId: string, meId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (patch: { enabled?: boolean; types?: NotificationType[] }) => {
+    mutationFn: async (patch: {
+      enabled?: boolean
+      types?: NotificationType[]
+      chat_digest?: boolean
+    }) => {
       const { error } = await supabase.from('email_prefs').upsert(
         {
           member_id: meId,
@@ -282,6 +286,8 @@ export function useSetEmailPrefs(tripId: string, meId: string) {
         // database will actually hold for a first-time toggle.
         enabled: false,
         types: EMAILABLE_TYPES,
+        chat_digest: false,
+        last_digest_at: null,
         updated_at: new Date().toISOString(),
         ...(old ?? {}),
         ...patch,

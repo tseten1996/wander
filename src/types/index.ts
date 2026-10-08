@@ -528,7 +528,34 @@ export interface EmailPrefs {
   enabled: boolean
   /** Which event types to email, a subset of {@link NotificationType}. */
   types: NotificationType[]
+  /**
+   * Also send a periodic digest of new chat messages. Separate from `types`
+   * because a digest is not a notification type — it has no actor and no
+   * single subject — and overloading that array would force every reader to
+   * know which values are real notification types.
+   */
+  chat_digest: boolean
+  /** When a digest was last queued for this member; throttles the next. */
+  last_digest_at: string | null
   updated_at: string
+}
+
+/**
+ * How far a member has read the trip chat, server-side (epic #181).
+ *
+ * The per-tab unread dots (#43) keep last-seen in localStorage, which is right
+ * for a dot but invisible to the server — so nothing scheduled could tell
+ * whether a member was behind. This is that missing fact, and it is the
+ * prerequisite the chat digest needed.
+ *
+ * Self-owned and deliberately NOT readable by other members: "how far Priya
+ * has read" is a read receipt, which is a feature with privacy consequences
+ * nobody asked for. The digest reads these rows through a definer function.
+ */
+export interface ChatRead {
+  member_id: string
+  trip_id: string
+  last_read_at: string
 }
 
 export interface InvitePreview {

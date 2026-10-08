@@ -112,6 +112,7 @@ trips ────────────┬─ members            (person ↔ 
   │               ├─ push_subscriptions  (per-member Web Push opt-in; own-rows-only, device-private)
   │               ├─ email_prefs         (per-member email opt-in; own-rows-only, off by default)
   │               ├─ email_outbox        (queued emails incl. resolved addresses; NO member access at all)
+  │               ├─ chat_reads          (per-member server-side chat read marker; own-rows-only, not even the owner)
   │               ├─ ai_usage            (AI call ledger + per-trip quota; member-read own trip, service-role-only writes)
   │               ├─ trip_preferences    (one row per trip: stated group travel prefs; group read+write, self-attributed, no delete)
   │               ├─ error_reports       (write-only client error telemetry)
@@ -305,6 +306,33 @@ Notable decisions:
   claim-time visibility timeout so an in-flight send is never duplicated.
   Deliberately **not** in `supabase_realtime` — publishing `email_outbox` would
   stream addresses to subscribers and undo all of the above.
+* **Chat digest.** Email for mentions covers the chat case addressed *to* you;
+  the ordinary one — the group talked while you were away — is a **digest**,
+  never one email per message. A trip chat sends bursts, and forty messages
+  would be forty emails, which is the shape the daily cap exists to prevent. At
+  most one per member per trip per 6 hours, carrying a count.
+
+  It needed a prerequisite that did not exist: **`chat_reads`**, a server-side
+  read marker. The per-tab unread dots (#43) keep last-seen in `localStorage`,
+  which is right for a dot — "new since *you* last looked *here*, on this
+  device" — but invisible to the server, so nothing scheduled could tell whether
+  a member was behind. `chat_reads` is that fact, written by the chat page
+  (throttled, fire-and-forget) and read by the digest. The dots are unchanged.
+
+  It is strictly self-owned and **not readable by other members, the owner
+  included** — "how far Priya has read" is a read receipt, a feature with
+  privacy consequences nobody asked for. The RLS suite asserts exactly that.
+
+  A digest has **no actor**, which is why it cannot be a `notifications` row:
+  that table's insert policy requires `actor_id = my_member_id(trip_id)`, and
+  "twelve people said things" has no author. So it is a second `kind` of outbox
+  row, with a CHECK making the two shapes mutually exclusive — a notification
+  row cannot exist without its notification, and a digest row cannot pretend to
+  have one. `enqueue_chat_digests()` is service-role only (it reads
+  `auth.users.email`) and has no member-invoked path at all, since there is no
+  triggering action. The same "never tell someone what they already saw" rule
+  applies: a reader who reaches the chat before the drain runs has their digest
+  withdrawn rather than sent.
 * **Public share link** (read-only): an owner mints an unguessable `share_token`
   on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
   read-only itinerary projection through the `get_public_itinerary` (SECURITY

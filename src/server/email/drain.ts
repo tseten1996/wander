@@ -30,6 +30,15 @@ export interface EmailQueue {
   /** Atomically claim up to `limit` due rows (service role only). */
   claim(limit: number): Promise<EmailJob[]>
   /**
+   * Queue any chat digests that have come due, returning how many.
+   *
+   * Part of the queue rather than a separate step the caller must remember,
+   * because a drain that claims without first enqueueing would silently never
+   * send a digest — and nothing would fail. Optional so a caller that has not
+   * migrated yet still works.
+   */
+  enqueueDigests?(): Promise<number>
+  /**
    * Record the outcome of one send.
    *
    * `terminal` marks a failure as permanent, so the row is retired instead of
@@ -57,6 +66,8 @@ export interface DrainOptions {
 }
 
 export interface DrainReport {
+  /** Chat digests queued by this pass before it claimed anything. */
+  digestsQueued: number
   claimed: number
   sent: number
   /** Failed but left pending — the next run tries again. */
@@ -128,8 +139,26 @@ export async function drainOnce(
   provider: EmailProvider,
   { appOrigin, limit = DEFAULT_LIMIT, concurrency = DEFAULT_CONCURRENCY }: DrainOptions,
 ): Promise<DrainReport> {
+  // Digests first, so anything that just came due is claimable in this same
+  // pass rather than waiting a whole interval for the next one. A failure here
+  // must not stop event emails going out — they are unrelated.
+  let digestsQueued = 0
+  if (queue.enqueueDigests) {
+    try {
+      digestsQueued = (await queue.enqueueDigests()) || 0
+    } catch {
+      // The digest enqueue is best-effort; the next pass tries again.
+    }
+  }
+
   const jobs = await queue.claim(Math.max(1, Math.min(limit, 200)))
-  const report: DrainReport = { claimed: jobs.length, sent: 0, retrying: 0, dropped: 0 }
+  const report: DrainReport = {
+    digestsQueued,
+    claimed: jobs.length,
+    sent: 0,
+    retrying: 0,
+    dropped: 0,
+  }
   if (jobs.length === 0) return report
 
   // A fixed pool of workers pulling from a shared cursor: bounded concurrency

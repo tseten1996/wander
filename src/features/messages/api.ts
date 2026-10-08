@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
@@ -254,4 +255,87 @@ export function useToggleReaction(tripId: string, memberId: string) {
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['messages', tripId] }),
   })
+}
+
+/**
+ * Advance this member's server-side chat read marker (epic #181, chat digest).
+ *
+ * Why the server needs to know at all: the per-tab "new since last visit" dots
+ * (#43) keep last-seen in localStorage, which is correct for a dot — it means
+ * "new since *you* last looked *here*, on this device" — but is invisible to
+ * the server, so no scheduled process can tell whether a member is behind. The
+ * chat digest needs exactly that fact. This writes it; the dots are untouched
+ * and keep using localStorage.
+ *
+ * Fire-and-forget and throttled. It is a read receipt for one person's own
+ * benefit, not content: a failure means at worst one redundant digest email,
+ * so it must never surface an error or block the chat from rendering. The
+ * throttle matters because the obvious implementation — mark on every new
+ * message — would issue a write per message in a busy conversation.
+ */
+export const CHAT_READ_THROTTLE_MS = 30_000
+
+/** Last write time per trip, so a remount does not re-issue immediately. */
+const lastChatReadWrite = new Map<string, number>()
+
+/** Exported for tests; clears the module-level throttle state. */
+export function resetChatReadThrottle() {
+  lastChatReadWrite.clear()
+}
+
+/**
+ * True when enough time has passed to write the marker again for this trip.
+ * Pure and dependency-free so the throttle can be unit-tested without a clock
+ * or a Supabase client.
+ */
+export function shouldWriteChatRead(
+  tripId: string,
+  now: number,
+  last: Map<string, number> = lastChatReadWrite,
+): boolean {
+  const previous = last.get(tripId)
+  if (previous !== undefined && now - previous < CHAT_READ_THROTTLE_MS) return false
+  last.set(tripId, now)
+  return true
+}
+
+/**
+ * Mark the chat read, now, for this member. Call it whenever the chat is on
+ * screen; the throttle makes repeat calls cheap.
+ */
+export function markChatRead(tripId: string, memberId: string): void {
+  if (!shouldWriteChatRead(tripId, Date.now())) return
+  void supabase
+    .from('chat_reads')
+    .upsert(
+      { member_id: memberId, trip_id: tripId, last_read_at: new Date().toISOString() },
+      { onConflict: 'member_id' },
+    )
+    .then(({ error }) => {
+      if (error) {
+        // Nothing to recover: the worst outcome is a digest email about
+        // messages this member has in fact already seen.
+        console.warn('chat read marker failed:', error.message)
+      }
+    })
+}
+
+/**
+ * Keep the marker current while the chat is open.
+ *
+ * Marks on mount, again whenever the newest message changes (so a conversation
+ * read live stays marked), and once more on unmount — the last one is what
+ * catches "scrolled through everything, then navigated away", which is the
+ * most common way to finish reading.
+ */
+export function useMarkChatRead(tripId: string, memberId: string, newestMessageId?: string) {
+  React.useEffect(() => {
+    markChatRead(tripId, memberId)
+    return () => {
+      // Bypass the throttle on the way out: this is the write that matters
+      // most, and it happens at most once per visit.
+      resetChatReadThrottle()
+      markChatRead(tripId, memberId)
+    }
+  }, [tripId, memberId, newestMessageId])
 }

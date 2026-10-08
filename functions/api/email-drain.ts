@@ -122,6 +122,11 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
       if (error || !Array.isArray(data)) return []
       return data as EmailJob[]
     },
+    async enqueueDigests() {
+      const { data, error } = await db.rpc('enqueue_chat_digests')
+      if (error) return 0
+      return typeof data === 'number' ? data : 0
+    },
     async markResult(id, sent, error, terminal) {
       await db.rpc('mark_email_result', {
         p_id: id,
