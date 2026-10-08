@@ -493,6 +493,13 @@ without this step the queue fills and the drain reports failures.
    (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
    value as above). `.github/workflows/email-drain.yml` exits 0 while these are
    unset, so it stays green until you are ready.
+* **Diagnosing a bad setup.** The drain's response carries the provider's own
+  error text alongside the counts, deduped and with addresses stripped
+  (`redactEmails`), and the scheduled workflow echoes it into the run log with a
+  warning annotation. This exists because the most likely first-run failure —
+  `EMAIL_FROM` not being on a verified domain — otherwise reads as
+  `{sent: 0, retrying: 3}` with the reason only in `email_outbox.last_error`, a
+  column nothing but the service role can read.
 * **Verifying it without sending anything.** `npm run test:email-pipeline`
   (needs `DATABASE_URL` pointing at the throwaway Postgres
   `scripts/run-rls-tests.sh` prepares) drives the **real** drain code with the

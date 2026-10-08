@@ -37,7 +37,9 @@ const { escapeHtml, clamp, subjectFor, absoluteLink, renderEmail, isDigest, plur
 const { isRetryableStatus, resendProvider, unsubscribeTarget } = await import(
   '../src/server/email/provider.ts'
 )
-const { drainOnce, DEFAULT_LIMIT } = await import('../src/server/email/drain.ts')
+const { drainOnce, DEFAULT_LIMIT, redactEmails, MAX_REPORTED_ERRORS } = await import(
+  '../src/server/email/drain.ts'
+)
 
 /** A representative queued job; override per test. */
 const job = (over = {}) => ({
@@ -309,7 +311,7 @@ const okProvider = { async send() { return { ok: true, id: 'x', retryable: false
 test('an empty queue is a no-op that reports zeroes', async () => {
   const queue = stubQueue([])
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { digestsQueued: 0, claimed: 0, sent: 0, retrying: 0, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 0, sent: 0, retrying: 0, dropped: 0, errors: [] })
   assert.equal(queue.marks.length, 0)
 })
 
@@ -317,7 +319,7 @@ test('a successful batch marks every row sent', async () => {
   const jobs = [job({ id: 'a' }), job({ id: 'b' }), job({ id: 'c' })]
   const queue = stubQueue(jobs)
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { digestsQueued: 0, claimed: 3, sent: 3, retrying: 0, dropped: 0 })
+  assert.deepEqual(report, { digestsQueued: 0, claimed: 3, sent: 3, retrying: 0, dropped: 0, errors: [] })
   assert.deepEqual(
     queue.marks.map((m) => [m.id, m.sent]).sort(),
     [['a', true], ['b', true], ['c', true]],
@@ -332,7 +334,8 @@ test('a permanent failure is marked TERMINAL so it stops consuming attempts', as
     },
   }
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 0, dropped: 1 })
+  assert.deepEqual(report,
+    { digestsQueued: 0, claimed: 1, sent: 0, retrying: 0, dropped: 1, errors: ['resend 422'] })
   assert.deepEqual(queue.marks, [
     { id: 'bad', sent: false, error: 'resend 422', terminal: true },
   ])
@@ -346,7 +349,8 @@ test('a transient failure is NOT terminal, so the next run retries it', async ()
     },
   }
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 1, dropped: 0 })
+  assert.deepEqual(report,
+    { digestsQueued: 0, claimed: 1, sent: 0, retrying: 1, dropped: 0, errors: ['resend 429'] })
   assert.equal(queue.marks[0].terminal, false)
 })
 
@@ -385,9 +389,18 @@ test('a drain survives markResult itself failing', async () => {
     },
   }
   // Both the send and the bookkeeping fail; the pass must still return a
-  // report rather than rejecting and failing the whole scheduled run.
+  // report rather than rejecting and failing the whole scheduled run — and it
+  // must say why, since a drain whose database is unreachable looks identical
+  // to an idle one from the counts alone.
   const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
-  assert.deepEqual(report, { digestsQueued: 0, claimed: 1, sent: 0, retrying: 1, dropped: 0 })
+  assert.deepEqual(report, {
+    digestsQueued: 0,
+    claimed: 1,
+    sent: 0,
+    retrying: 1,
+    dropped: 0,
+    errors: ['drain error: send blew up'],
+  })
 })
 
 test('the claim limit is clamped to a sane range', async () => {
@@ -558,6 +571,82 @@ test('a digest is delivered through the same drain as a notification', async () 
   assert.ok(sent.some((s) => s.startsWith('Tenzin mentioned you')))
 })
 
+/* ── drain: making a misconfiguration legible ────────────────────────────── */
+
+test('redactEmails strips addresses a provider echoed back', () => {
+  assert.equal(
+    redactEmails('resend 422: invalid `to` field: nope@@example'),
+    'resend 422: invalid `to` field: nope@@example',
+  )
+  assert.equal(
+    redactEmails('could not deliver to priya@example.com (bounced)'),
+    'could not deliver to [redacted] (bounced)',
+  )
+  // Several, and the surrounding words — the diagnosable part — survive.
+  assert.equal(
+    redactEmails('a@b.co and c.d+tag@e.f.gh rejected'),
+    '[redacted] and [redacted] rejected',
+  )
+})
+
+test('redactEmails leaves a clean error untouched', () => {
+  const msg = 'resend 403: The domain is not verified. Please verify a domain.'
+  assert.equal(redactEmails(msg), msg)
+})
+
+test('the unverified-domain failure is reported, not silent', async () => {
+  // The most likely first-run misconfiguration. Before this, the report read
+  // {sent: 0, dropped: 3} with the reason only in a column nothing can read.
+  const queue = stubQueue([job({ id: 'a' }), job({ id: 'b' }), job({ id: 'c' })])
+  const provider = {
+    async send() {
+      return {
+        ok: false,
+        error: 'resend 403: The wander.app domain is not verified.',
+        retryable: true,
+      }
+    },
+  }
+  const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
+  assert.equal(report.retrying, 3)
+  // One entry, not three: the same misconfiguration repeated is one fact.
+  assert.deepEqual(report.errors, ['resend 403: The wander.app domain is not verified.'])
+})
+
+test('reported errors are deduped and capped', async () => {
+  const jobs = Array.from({ length: 20 }, (_, i) => job({ id: `j${i}` }))
+  const queue = stubQueue(jobs)
+  let n = 0
+  const provider = {
+    async send() {
+      // Ten distinct errors across twenty rows.
+      return { ok: false, error: `resend 500 variant ${n++ % 10}`, retryable: true }
+    },
+  }
+  const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
+  assert.equal(report.retrying, 20)
+  assert.equal(report.errors.length, MAX_REPORTED_ERRORS)
+})
+
+test('a reported error never carries an address', async () => {
+  const queue = stubQueue([job({ to_email: 'private@person.test' })])
+  const provider = {
+    async send({ to }) {
+      // A provider quoting the recipient back at us is the realistic case.
+      return { ok: false, error: `resend 422: ${to} is not a valid address`, retryable: false }
+    },
+  }
+  const report = await drainOnce(queue, provider, { appOrigin: 'https://app.test' })
+  assert.ok(!JSON.stringify(report).includes('private@person.test'))
+  assert.deepEqual(report.errors, ['resend 422: [redacted] is not a valid address'])
+})
+
+test('a fully successful pass reports no errors at all', async () => {
+  const queue = stubQueue([job({ id: 'a' }), job({ id: 'b' })])
+  const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
+  assert.deepEqual(report.errors, [])
+})
+
 test('a drain report never carries an address', async () => {
   // The report is logged to a public CI run, so this is a real constraint and
   // not a stylistic one.
@@ -565,5 +654,5 @@ test('a drain report never carries an address', async () => {
   const report = await drainOnce(queue, okProvider, { appOrigin: 'https://app.test' })
   assert.ok(!JSON.stringify(report).includes('private@person.test'))
   assert.deepEqual(Object.keys(report).sort(),
-    ['claimed', 'digestsQueued', 'dropped', 'retrying', 'sent'])
+    ['claimed', 'digestsQueued', 'dropped', 'errors', 'retrying', 'sent'])
 })

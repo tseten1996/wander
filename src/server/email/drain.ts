@@ -74,6 +74,39 @@ export interface DrainReport {
   retrying: number
   /** Failed permanently (bad address, malformed payload). */
   dropped: number
+  /**
+   * Distinct provider errors this pass hit, with addresses redacted.
+   *
+   * Without this a misconfigured deployment is silent in the one place anyone
+   * would look. The single most likely first-run failure is `EMAIL_FROM` not
+   * being on a verified domain: every send 403s, every row retries, and the
+   * report reads `{sent: 0, dropped: 3}` with the reason only in
+   * `email_outbox.last_error` — a column no credential but the service role
+   * can read. The scheduled workflow echoes this response into its log, so
+   * surfacing the provider's own words here is the difference between
+   * "configuration is wrong, here is how" and a silent queue.
+   *
+   * Deduped, capped, and scrubbed: see {@link redactEmails}. A drain's output
+   * must never say who was emailed.
+   */
+  errors: string[]
+}
+
+/** How many distinct error strings a report will carry. */
+export const MAX_REPORTED_ERRORS = 5
+
+/**
+ * Remove anything shaped like an email address from provider error text.
+ *
+ * Providers echo the offending input back: a 422 for a malformed recipient
+ * commonly quotes it. That text ends up in a public CI log via the drain's
+ * response, so it is scrubbed here rather than trusted to be clean. Kept
+ * deliberately broad — over-redacting an error message costs nothing, and the
+ * surrounding words ("domain is not verified", "invalid `to` field") are what
+ * actually makes the failure diagnosable.
+ */
+export function redactEmails(text: string): string {
+  return text.replace(/[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g, '[redacted]')
 }
 
 /** Defaults sized for a hobby-tier provider quota, not for throughput. */
@@ -92,22 +125,23 @@ async function deliver(
   queue: EmailQueue,
   provider: EmailProvider,
   appOrigin: string,
-): Promise<'sent' | 'retrying' | 'dropped'> {
+): Promise<{ outcome: 'sent' | 'retrying' | 'dropped'; error?: string }> {
   try {
     const { subject, html, text } = renderEmail(job, appOrigin)
     const result = await provider.send({ to: job.to_email, subject, html, text })
 
     if (result.ok) {
       await queue.markResult(job.id, true)
-      return 'sent'
+      return { outcome: 'sent' }
     }
 
     // A permanent failure is recorded as terminal, not merely "failed once".
     // Left to the attempt cap it would cost four more sends to an address that
     // will never accept mail, four more slots of provider quota, and four more
     // retry windows of delay for every message queued behind it.
-    await queue.markResult(job.id, false, result.error ?? 'send failed', !result.retryable)
-    return result.retryable ? 'retrying' : 'dropped'
+    const error = result.error ?? 'send failed'
+    await queue.markResult(job.id, false, error, !result.retryable)
+    return { outcome: result.retryable ? 'retrying' : 'dropped', error }
   } catch (err) {
     // A throw here is ours, not the provider's — a render bug, most likely.
     const message = err instanceof Error ? err.message : String(err)
@@ -120,7 +154,7 @@ async function deliver(
       // If even recording fails, the row stays claimed and its retry window
       // expires in due course. Nothing more to do from here.
     }
-    return 'retrying'
+    return { outcome: 'retrying', error: `drain error: ${message}` }
   }
 }
 
@@ -158,8 +192,13 @@ export async function drainOnce(
     sent: 0,
     retrying: 0,
     dropped: 0,
+    errors: [],
   }
   if (jobs.length === 0) return report
+
+  // A Set because one misconfiguration produces the same error once per row,
+  // and fifty copies of it is noise, not information.
+  const errors = new Set<string>()
 
   // A fixed pool of workers pulling from a shared cursor: bounded concurrency
   // without batching into fixed-size waves, so one slow send does not idle the
@@ -171,13 +210,15 @@ export async function drainOnce(
       for (;;) {
         const index = cursor++
         if (index >= jobs.length) return
-        const outcome = await deliver(jobs[index], queue, provider, appOrigin)
+        const { outcome, error } = await deliver(jobs[index], queue, provider, appOrigin)
         if (outcome === 'sent') report.sent++
         else if (outcome === 'dropped') report.dropped++
         else report.retrying++
+        if (error) errors.add(redactEmails(error))
       }
     }),
   )
 
+  report.errors = [...errors].slice(0, MAX_REPORTED_ERRORS)
   return report
 }

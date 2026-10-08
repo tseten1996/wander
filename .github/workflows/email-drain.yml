@@ -74,14 +74,27 @@ jobs:
                    -H 'content-type: application/json' \
                    -d '{}') || code=$?
 
-          # The body is counts only ({"ok":true,"claimed":N,"sent":N,...}), so
-          # echoing it into a public run log is safe by construction.
+          # The body carries counts plus the provider's own error text with
+          # addresses redacted server-side (see redactEmails in
+          # src/server/email/drain.ts), so echoing it into a public run log is
+          # safe by construction and says nothing about who was emailed.
           echo "$body"
 
           if [ "$code" -ne 0 ]; then
             echo "::error::Email drain failed (curl exit $code)."
             exit 1
           fi
+
+          # A pass that claimed rows and sent none is the signature of a
+          # misconfiguration — almost always EMAIL_FROM not being on a verified
+          # domain. Annotate it rather than leaving a green run with a stuck
+          # queue, which is the failure mode nobody notices for a week.
+          case "$body" in
+            *'"errors":[]'*) ;;
+            *'"errors":['*)
+              echo "::warning::The provider rejected sends this pass. See the errors field above — if it mentions domain verification, EMAIL_FROM is not on a verified domain."
+              ;;
+          esac
 
           # A 200 that reports ok:false is a failure the endpoint chose to
           # describe rather than throw — surface it the same way.
