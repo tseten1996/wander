@@ -56,3 +56,27 @@ export function firstFreeMemberColor(taken: readonly string[] = []): string {
   const pool = free.length ? free : MEMBER_COLORS
   return pool[Math.floor(Math.random() * pool.length)]
 }
+
+/**
+ * The palette a notification email may use (epic #181, the email channel).
+ *
+ * An email cannot read a stylesheet: mail clients strip `<link>`, most strip
+ * `<style>`, and none support custom properties — so inline hex is the only
+ * thing that renders everywhere. These values therefore have to be duplicated
+ * out of src/index.css, and they live *here* rather than in the renderer
+ * because this is one of the three files the token lint recognises as a
+ * palette source. That keeps "colour values live in one place" true for email
+ * too, instead of making the renderer a fourth exception.
+ *
+ * Mirrors the app's own tokens: teal-600 primary (the same colour as the
+ * manifest's theme_color and the link-preview card), stone-900 ink, stone-600
+ * muted, the cream page background, and the stone-200 hairline.
+ */
+export const EMAIL_COLORS = {
+  primary: '#0f766e',
+  ink: '#1c1917',
+  muted: '#57534e',
+  page: '#faf9f7',
+  border: '#e7e5e4',
+  surface: '#ffffff',
+} as const

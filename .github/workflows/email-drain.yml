@@ -1,0 +1,106 @@
+# Drains the email outbox (epic #181, the email notification channel).
+#
+# Why a scheduled workflow and not something in the database or the app:
+#
+#   * It cannot be in the app. The drain holds the Supabase service role key
+#     and the Resend key; nothing a browser can reach may hold either.
+#   * It cannot be a Cloudflare Cron Trigger. Cron Triggers belong to Workers,
+#     and the API lives in Pages Functions — Pages has no scheduler.
+#   * It could be pg_cron + pg_net inside Postgres, but that would put the
+#     Resend key in the database (Vault) and make the DB an outbound HTTP
+#     client. A scheduler calling one authenticated endpoint keeps every
+#     secret in exactly one place: the Pages secret store.
+#
+# So this workflow is a clock and nothing else. It presents a shared secret,
+# the endpoint does the work, and the response is counts only — never an
+# address — so a public run log leaks nothing about who was emailed.
+#
+# Cadence. Every 15 minutes, which is deliberately unhurried: the outbox delays
+# each event by two minutes precisely so that somebody actively using the app
+# reads the notification first and is then never emailed at all. Email is not
+# the "right now" channel — Web Push (#309) is. GitHub's scheduled runs are
+# also best-effort and can be minutes late under load, which is fine here and
+# would not be for anything time-critical.
+#
+# Required repo secrets:
+#   EMAIL_DRAIN_URL     https://<deployment>/api/email-drain
+#   EMAIL_DRAIN_SECRET  must equal the Pages secret of the same name
+name: Drain email outbox
+
+on:
+  schedule:
+    # Minute 7 rather than 0: the top of the hour is when every cron on the
+    # platform fires at once, and a queue drain gains nothing from joining it.
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One drain at a time. The endpoint is safe to run concurrently — claims take
+# disjoint rows via `for update skip locked`, and a claimed row is invisible
+# for a retry window — but overlapping runs would still be pointless work.
+concurrency:
+  group: email-drain
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drain the outbox
+        env:
+          URL: ${{ secrets.EMAIL_DRAIN_URL }}
+          SECRET: ${{ secrets.EMAIL_DRAIN_SECRET }}
+        run: |
+          set -uo pipefail
+
+          # An unconfigured repo is not a failure. The channel is off by
+          # default and this workflow must stay green until someone turns it
+          # on, or it becomes a permanently red check everyone learns to
+          # ignore.
+          if [ -z "${URL:-}" ] || [ -z "${SECRET:-}" ]; then
+            echo "EMAIL_DRAIN_URL / EMAIL_DRAIN_SECRET not set — email channel is off. Nothing to do."
+            exit 0
+          fi
+
+          # --fail-with-body so a non-2xx both fails the step AND prints the
+          # endpoint's explanation; -s so the secret never lands in the log via
+          # curl's progress output.
+          code=0
+          body=$(curl -sS --fail-with-body --max-time 60 \
+                   -X POST "$URL" \
+                   -H "Authorization: Bearer $SECRET" \
+                   -H 'content-type: application/json' \
+                   -d '{}') || code=$?
+
+          # The body carries counts plus the provider's own error text with
+          # addresses redacted server-side (see redactEmails in
+          # src/server/email/drain.ts), so echoing it into a public run log is
+          # safe by construction and says nothing about who was emailed.
+          echo "$body"
+
+          if [ "$code" -ne 0 ]; then
+            echo "::error::Email drain failed (curl exit $code)."
+            exit 1
+          fi
+
+          # A pass that claimed rows and sent none is the signature of a
+          # misconfiguration — almost always EMAIL_FROM not being on a verified
+          # domain. Annotate it rather than leaving a green run with a stuck
+          # queue, which is the failure mode nobody notices for a week.
+          case "$body" in
+            *'"errors":[]'*) ;;
+            *'"errors":['*)
+              echo "::warning::The provider rejected sends this pass. See the errors field above — if it mentions domain verification, EMAIL_FROM is not on a verified domain."
+              ;;
+          esac
+
+          # A 200 that reports ok:false is a failure the endpoint chose to
+          # describe rather than throw — surface it the same way.
+          case "$body" in
+            *'"ok":false'*)
+              echo "::error::Email drain reported a failure."
+              exit 1
+              ;;
+          esac

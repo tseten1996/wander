@@ -8,7 +8,7 @@ import { format, isSameDay, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
 import {
-  useDeleteMessage, useEditMessage, useMessages, useSendMessage,
+  useDeleteMessage, useEditMessage, useMarkChatRead, useMessages, useSendMessage,
   useSetPinned, useToggleReaction, validateChatImage, type MessageWithReactions,
 } from './api'
 import { ImageLightbox } from './ImageLightbox'
@@ -294,6 +294,10 @@ export default function ChatPage() {
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const count = messages.data?.length ?? 0
+  // Keep the server-side read marker current while this page is open, so the
+  // chat digest (epic #181) never mails someone about messages they have read.
+  // Keyed on the newest message id, so a conversation read live stays marked.
+  useMarkChatRead(trip.id, me.id, messages.data?.[count - 1]?.id)
   // Whether the reader is currently at/near the live edge. Starts true so the
   // first load lands at the bottom; a scroll handler keeps it current.
   const atBottomRef = React.useRef(true)

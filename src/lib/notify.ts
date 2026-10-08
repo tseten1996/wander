@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { sendPushForNotifications } from '@/features/notifications/pushSend'
+import { queueEmailForNotifications } from '@/features/notifications/emailSend'
 import type { NotificationType } from '@/types'
 
 interface NotifyParams {
@@ -62,7 +63,16 @@ export function notify({
         console.warn('notify failed:', error.message)
         return
       }
-      // Fire-and-forget closed-app delivery (#309); a no-op when unconfigured.
-      sendPushForNotifications(rows.map((r) => r.id))
+      // Fire-and-forget closed-app delivery; both are no-ops when their
+      // channel is unconfigured, which is the default.
+      //
+      // Two channels, deliberately not one: push reaches an installed app that
+      // has been granted notification permission, email reaches everyone else
+      // — and every recipient filters to the channels they actually opted
+      // into, server-side. Ordering is irrelevant (neither is awaited), but
+      // push goes first because it is the channel that arrives in seconds.
+      const ids = rows.map((r) => r.id)
+      sendPushForNotifications(ids)
+      queueEmailForNotifications(ids)
     })
 }
