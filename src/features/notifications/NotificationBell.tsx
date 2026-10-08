@@ -8,6 +8,8 @@ import {
   CalendarClock,
   CheckCheck,
   Inbox,
+  Mail,
+  MailWarning,
   ListChecks,
   Loader2,
   Luggage,
@@ -18,6 +20,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
+import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { MemberAvatar } from '@/components/ui/avatar'
@@ -26,8 +29,11 @@ import { searchAnchorId } from '@/features/search/anchor'
 import { cn, timeAgo } from '@/lib/utils'
 import type { Notification, NotificationType } from '@/types'
 import {
+  EMAIL_AVAILABLE,
   PUSH_AVAILABLE,
   unreadCount,
+  useEmailPrefs,
+  useSetEmailPrefs,
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotifications,
@@ -265,6 +271,98 @@ function PushOptInRow({ tripId, meId }: { tripId: string; meId: string }) {
 }
 
 /**
+ * "Email me instead" — the email opt-in (epic #181), a second footer on the
+ * inbox below the push one. Renders only where the deployment configured
+ * email, so by default it is absent and the inbox is unchanged.
+ *
+ * It exists because push cannot reach everyone: desktop Safari users, anyone
+ * who declined the permission prompt, and anyone whose phone has not opened
+ * the app this week all get nothing from #309. Email is the channel that still
+ * works when the device is wiped — which matters more here than in most apps,
+ * because an invited friend's session is anonymous and lives only in Local
+ * Storage.
+ *
+ * THREE STATES, and the middle one is the point. A member with no email linked
+ * cannot be emailed at all, and a member whose address is still unconfirmed
+ * cannot either (the server refuses to deliver to an unverified address — see
+ * the migration). Both render an explanatory line pointing at where to fix it,
+ * rather than a toggle that would appear to work and then silently deliver
+ * nothing.
+ */
+function EmailOptInRow({ tripId, meId }: { tripId: string; meId: string }) {
+  const { session } = useAuth()
+  const prefs = useEmailPrefs(tripId, meId)
+  const setPrefs = useSetEmailPrefs(tripId, meId)
+
+  if (!EMAIL_AVAILABLE) return null
+
+  // Read straight from the session rather than a table: the address lives in
+  // `auth.users` and this is the one member for whom the client legitimately
+  // holds it — themselves.
+  const email = session?.user?.email ?? null
+  const confirmed = !!session?.user?.email_confirmed_at
+  const usable = !!email && confirmed
+
+  const busy = setPrefs.isPending
+  const checked = !!prefs.data?.enabled && usable
+  const Icon = usable ? Mail : MailWarning
+
+  const detail = !email
+    ? 'Link an email in Settings to use this'
+    : !confirmed
+      ? 'Confirm the link we emailed you first'
+      : 'A quiet email when you’re needed'
+
+  return (
+    <div className="border-t border-line p-2">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label="Email me when someone needs me"
+        disabled={busy || !usable}
+        onClick={() => setPrefs.mutate({ enabled: !checked })}
+        className={cn(
+          'flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left',
+          'transition-colors hover:bg-sunken focus-visible:bg-sunken focus-visible:outline-none',
+          'disabled:cursor-not-allowed'
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sunken text-muted">
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Icon className="size-4" aria-hidden />
+            )}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-ink">Email me when I’m needed</span>
+            <span className="block truncate text-xs text-muted">{detail}</span>
+          </span>
+        </span>
+        {/* Visual only — the button above is the actual switch. */}
+        <span
+          aria-hidden
+          className={cn(
+            'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+            checked ? 'bg-primary' : 'bg-line-strong',
+            (busy || !usable) && 'opacity-50'
+          )}
+        >
+          <span
+            className={cn(
+              'block size-5 rounded-full bg-white shadow-sm transition-transform',
+              checked ? 'translate-x-5' : 'translate-x-0'
+            )}
+          />
+        </span>
+      </button>
+    </div>
+  )
+}
+
+/**
  * The personal inbox in the app shell header: a bell with a badge and a
  * dropdown. It surfaces two kinds of "things that need me":
  *  - **Reminders (#195)** — time-based, derived on the client from cached data
@@ -396,6 +494,7 @@ export function NotificationBell({ className }: { className?: string }) {
         )}
 
         <PushOptInRow tripId={trip.id} meId={me.id} />
+        <EmailOptInRow tripId={trip.id} meId={me.id} />
       </PopoverContent>
     </Popover>
   )

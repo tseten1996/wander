@@ -24,3 +24,16 @@ export const SUPABASE_ANON_KEY =
 // renders and the app is unchanged. So the whole client push surface is dark
 // by default and lights up only once a real key is configured.
 export const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || ''
+
+// Email notifications (epic #181, the email channel). A plain on/off flag
+// rather than a key, because unlike push the client holds no credential for
+// email — the Resend key lives only in the drain function's secret store, and
+// the browser's entire involvement is asking the server to queue a send.
+//
+// This gates the *opt-in surface*: with the flag unset the toggle never
+// renders and no extra request is ever issued, so a deployment that has not
+// configured email behaves exactly as it did before the feature existed. Set
+// VITE_EMAIL_ENABLED=true only once a verified sending domain and the server
+// secrets are actually in place — a toggle that promises email and silently
+// delivers none is worse than no toggle.
+export const EMAIL_ENABLED = (import.meta.env.VITE_EMAIL_ENABLED || '') === 'true'

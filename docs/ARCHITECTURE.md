@@ -110,6 +110,8 @@ trips ────────────┬─ members            (person ↔ 
   │               ├─ comments            (polymorphic threads on itinerary items, budget entries, polls; member-read, self-insert, author/owner-delete, no update)
   │               ├─ notifications       (per-recipient inbox: type, entity, read state)
   │               ├─ push_subscriptions  (per-member Web Push opt-in; own-rows-only, device-private)
+  │               ├─ email_prefs         (per-member email opt-in; own-rows-only, off by default)
+  │               ├─ email_outbox        (queued emails incl. resolved addresses; NO member access at all)
   │               ├─ ai_usage            (AI call ledger + per-trip quota; member-read own trip, service-role-only writes)
   │               ├─ trip_preferences    (one row per trip: stated group travel prefs; group read+write, self-attributed, no delete)
   │               ├─ error_reports       (write-only client error telemetry)
@@ -264,7 +266,45 @@ Notable decisions:
   only the browser's private key decrypts), and the one true secret — the VAPID
   private key — lives solely in the server function's secret store, never here.
   Deliberately **not** in `supabase_realtime` (no member renders another's
-  subscriptions). The send path (VAPID signing, fan-out) is a follow-up slice.
+  subscriptions). The send path (VAPID signing, fan-out) is `functions/api/push.ts`.
+* **Email notifications** are the third delivery channel for the same inbox, for
+  the members push cannot reach (desktop Safari, a declined permission prompt, a
+  phone that has not opened the app this week). Two tables:
+  * `email_prefs` — per member per trip, **off by default** and self-owned, so
+    nobody can enrol anybody else. Carries a per-type subset, because the useful
+    setting is usually "mention me in chat, but don't mail me every expense".
+  * `email_outbox` — the queue, holding the **resolved address**. This is the one
+    table in the schema with **no member access of any kind**: RLS is on, the
+    only policy is an explicit `using (false)`, and the table grants are revoked.
+
+  The flow is **deliberately inverted relative to push**, and this is the part
+  worth understanding before changing any of it. `push_targets_for_notifications`
+  hands the caller's own Pages Function a recipient's push endpoint, which is
+  safe because an endpoint is *inert* without our VAPID private key. An email
+  address is not inert — it is the most portable PII a member has, and `members`
+  deliberately stores none (addresses live in `auth.users`). So the member-invoked
+  RPC, `enqueue_emails_for_notifications`, resolves addresses **inside the
+  database**, writes them to the outbox, and returns **only a count**. No function
+  a member can execute ever returns an address.
+
+  It refuses to queue unless all of: the caller authored the notification, within
+  5 minutes (the same proof push uses); the recipient's address is
+  **`email_confirmed_at is not null`** — we never deliver to an address its owner
+  has not proven they control, or linking a stranger's email would make us the
+  spam vector; the recipient opted in to email for that event type; and they are
+  under a trailing per-recipient daily cap, enforced **within a single batch** as
+  well as across calls.
+
+  Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow. It is
+  the **only** endpoint holding a service role key, which is acceptable precisely
+  because it has no member caller: it is authenticated by a shared secret, takes
+  no input that selects rows, and returns counts. Each event waits two minutes
+  before it may be sent, and **an event the recipient has already read in the app
+  is never emailed at all** — which is the main reason the outbox exists, along
+  with dedupe (one row per notification, unique-indexed), bounded retries, and a
+  claim-time visibility timeout so an in-flight send is never duplicated.
+  Deliberately **not** in `supabase_realtime` — publishing `email_outbox` would
+  stream addresses to subscribers and undo all of the above.
 * **Public share link** (read-only): an owner mints an unguessable `share_token`
   on `trips` via the `set_trip_share` RPC; a token holder reads a whitelisted,
   read-only itinerary projection through the `get_public_itinerary` (SECURITY
@@ -292,7 +332,7 @@ src/
 │   ├── device.ts            # device id in Local Storage
 │   ├── colors.ts            # avatar palette
 │   ├── activity.ts          # fire-and-forget writes to the trip activity feed
-│   ├── notify.ts            # fire-and-forget writes to the per-recipient notification inbox
+│   ├── notify.ts            # fire-and-forget inbox writes, then push + email fan-out (both no-ops when unconfigured)
 │   ├── errors.ts            # Postgres/PostgREST codes → friendly toast copy (friendlyError)
 │   ├── errorReporting.ts    # global onerror/unhandledrejection → error_reports telemetry
 │   ├── confetti.ts          # canvas-confetti burst when planning hits 100%
@@ -400,3 +440,34 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
   tracked separately (#247) and must not be folded into a hosting change.
 * See `README.md` for the one-time Supabase setup checklist (enable
   anonymous sign-ins, set the site URL for magic links).
+
+### Turning on email notifications
+
+The email channel is **dark until configured** — no flag, no toggle, no
+requests, behaviour identical to before the feature existed. It needs a
+**verified sending domain**, which is the one piece that cannot be faked: a
+provider will not deliver to arbitrary recipients from an unverified domain, so
+without this step the queue fills and the drain reports failures.
+
+1. Verify a domain with the mail provider (Resend) and note a `from` address on
+   it.
+2. Cloudflare Pages → Settings → Environment variables, **production**:
+   | Name | Kind | Value |
+   |---|---|---|
+   | `EMAIL_ENABLED` | plain | `true` |
+   | `EMAIL_FROM` | plain | `Wander <trips@yourdomain>` — must be the verified domain |
+   | `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
+   | `EMAIL_REPLY_TO` | plain | optional |
+   | `RESEND_API_KEY` | **secret** | provider key |
+   | `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
+   | `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
+3. Repo secrets, for the scheduler: `EMAIL_DRAIN_URL`
+   (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
+   value as above). `.github/workflows/email-drain.yml` exits 0 while these are
+   unset, so it stays green until you are ready.
+* Build-time: `VITE_EMAIL_ENABLED=true` is what makes the opt-in toggle appear.
+  Set it only once the above is real — a toggle that promises email and silently
+  delivers none is worse than no toggle.
+* The service role key belongs **only** in the drain's environment. Every other
+  function forwards the browser's JWT and must never be given one; see §3 for
+  why the drain is the single exception.

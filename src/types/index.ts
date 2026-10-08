@@ -509,6 +509,28 @@ export interface PushSubscriptionRow {
   updated_at: string
 }
 
+/**
+ * A member's email-notification preference for one trip (epic #181, the email
+ * channel). One row per membership, self-owned: RLS lets a member read and
+ * write only their own, so nobody can enrol anybody else in email.
+ *
+ * `enabled` is the master switch and defaults to FALSE. Email is the only
+ * channel a member cannot silence from their own device settings, so it is
+ * never on because someone else acted.
+ *
+ * Note there is no address here, and no table in this app stores one — the
+ * address lives in `auth.users` and is resolved inside the database at queue
+ * time. Nothing a browser can call ever returns it.
+ */
+export interface EmailPrefs {
+  member_id: string
+  trip_id: string
+  enabled: boolean
+  /** Which event types to email, a subset of {@link NotificationType}. */
+  types: NotificationType[]
+  updated_at: string
+}
+
 export interface InvitePreview {
   trip_name: string
   destination: string | null

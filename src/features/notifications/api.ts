@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { friendlyError } from '@/lib/errors'
-import { VAPID_PUBLIC_KEY } from '@/lib/config'
+import { EMAIL_ENABLED, VAPID_PUBLIC_KEY } from '@/lib/config'
 import {
   PUSH_SUPPORTED,
   getExistingSubscription,
@@ -10,7 +10,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from '@/lib/push'
-import type { Notification } from '@/types'
+import type { EmailPrefs, Notification, NotificationType } from '@/types'
 
 /** Newest slice of the personal inbox — plenty for a badge + dropdown. */
 const INBOX_LIMIT = 50
@@ -200,5 +200,98 @@ export function usePushOptOut(tripId: string, meId: string) {
       toast.error(friendlyError(err, 'Could not turn off notifications')),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ['push_subscription', tripId] }),
+  })
+}
+
+// ── Email opt-in (epic #181, the email channel) ─────────────────────────────
+// The channel for members push cannot reach: desktop Safari, a declined
+// permission prompt, a phone that has not opened the app in a week. Shaped
+// like the push hooks above, with one structural difference — push state is
+// per *device* (the browser owns the subscription), while email is per
+// *member* (one address, every device), so this reads and writes a row rather
+// than reconciling with a browser API.
+
+/** The opt-in surface renders at all only where the deployment configured email. */
+export const EMAIL_AVAILABLE = EMAIL_ENABLED
+
+/** Every type a member can choose to be emailed about. */
+export const EMAILABLE_TYPES: NotificationType[] = [
+  'mention',
+  'checklist_assigned',
+  'poll_opened',
+  'expense_owed',
+]
+
+/**
+ * This member's email preference for this trip, or null when they have never
+ * set one (which is the same as "off" — the column defaults to false, and the
+ * absence of a row is how a member who has never opened the toggle looks).
+ */
+export function useEmailPrefs(tripId: string, meId: string) {
+  return useQuery({
+    queryKey: ['email_prefs', tripId],
+    queryFn: async (): Promise<EmailPrefs | null> => {
+      const { data, error } = await supabase
+        .from('email_prefs')
+        .select('*')
+        .eq('member_id', meId)
+        // RLS already pins this to the caller; the explicit filters keep the
+        // query honest and its result stable regardless of policy changes.
+        .eq('trip_id', tripId)
+        .maybeSingle()
+      if (error) throw error
+      return data
+    },
+    enabled: EMAIL_AVAILABLE,
+  })
+}
+
+/**
+ * Turn email on or off, or narrow which events it covers.
+ *
+ * An upsert rather than an insert-then-update: the first toggle creates the
+ * row and every later one edits it, and a member who has never opened this
+ * surface has no row at all. `onConflict: 'member_id'` matches the table's
+ * primary key — the member *is* the key, one row per membership.
+ *
+ * Optimistic, like mark-read: a toggle that waits for a round trip feels
+ * broken, and the failure path is a toast plus a rollback.
+ */
+export function useSetEmailPrefs(tripId: string, meId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (patch: { enabled?: boolean; types?: NotificationType[] }) => {
+      const { error } = await supabase.from('email_prefs').upsert(
+        {
+          member_id: meId,
+          trip_id: tripId,
+          ...patch,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'member_id' }
+      )
+      if (error) throw error
+    },
+    onMutate: async (patch) => {
+      await queryClient.cancelQueries({ queryKey: ['email_prefs', tripId] })
+      const previous = queryClient.getQueryData<EmailPrefs | null>(['email_prefs', tripId])
+      queryClient.setQueryData<EmailPrefs | null>(['email_prefs', tripId], (old) => ({
+        member_id: meId,
+        trip_id: tripId,
+        // Mirrors the column defaults, so the optimistic row matches what the
+        // database will actually hold for a first-time toggle.
+        enabled: false,
+        types: EMAILABLE_TYPES,
+        updated_at: new Date().toISOString(),
+        ...(old ?? {}),
+        ...patch,
+      }))
+      return { previous }
+    },
+    onError: (err, _patch, ctx) => {
+      if (ctx) queryClient.setQueryData(['email_prefs', tripId], ctx.previous)
+      toast.error(friendlyError(err, 'Could not change your email settings'))
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['email_prefs', tripId] }),
   })
 }

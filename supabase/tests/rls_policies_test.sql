@@ -888,6 +888,187 @@ select pg_temp.expect_dml('wishlist: author can delete own',                    
 select pg_temp.expect_dml('wishlist: owner can delete a member place',           'aaaa0000-0000-0000-0000-000000000001', false, $$delete from wishlist_items where id='ab250000-0000-4000-8000-000000000002'$$, 1);
 
 -- ═════════════════════════════════════════════════════════════════════════════
+-- Email notification channel (20261008120000_email_notifications.sql)
+--
+-- These assertions exist because the email channel is the ONE place in this
+-- schema where a member-invoked function touches personally identifying data
+-- that `members` deliberately does not store: the address in `auth.users`. The
+-- comments in the migration explain why the design inverts the push send path;
+-- this section is the proof that it actually holds, so that a future "small
+-- fix" to `email_outbox` or `enqueue_emails_for_notifications` fails loudly
+-- here instead of quietly turning the group's inboxes into a readable table.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Recipient fixtures. The owner (uA) has a CONFIRMED address and is the
+-- recipient throughout. uG is given an UNCONFIRMED address, which is the
+-- single most important negative case: Wander must never deliver to an address
+-- whose owner has not proven they control it, or linking a stranger's email
+-- turns us into the spam vector.
+update auth.users set email = 'friendg@wander.test', email_confirmed_at = null
+  where id = 'aaaa0000-0000-0000-0000-000000000003';
+
+-- Notifications authored by member F, addressed to the owner. Fresh, so they
+-- sit inside the enqueue function's 5-minute authorship window.
+insert into public.notifications (id, trip_id, recipient_id, actor_id, type, title) values
+  ('ef010000-0000-4000-8000-000000000001', 'bbbb0000-0000-0000-0000-000000000001',
+   (select id from public.members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'),
+   'cccc0000-0000-0000-0000-000000000002', 'mention', 'F mentioned you'),
+  ('ef010000-0000-4000-8000-000000000002', 'bbbb0000-0000-0000-0000-000000000001',
+   (select id from public.members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'),
+   'cccc0000-0000-0000-0000-000000000002', 'poll_opened', 'F opened a poll'),
+  -- Addressed to uG, whose address is unconfirmed.
+  ('ef010000-0000-4000-8000-000000000003', 'bbbb0000-0000-0000-0000-000000000001',
+   'cccc0000-0000-0000-0000-000000000003',
+   'cccc0000-0000-0000-0000-000000000002', 'mention', 'F mentioned G');
+
+-- ── The outbox is unreachable from any member credential ────────────────────
+-- RLS is on with no policies and the grants are revoked, so this is denied by
+-- default-deny rather than by a predicate we have to get right. A member, the
+-- trip owner and an outsider are all equally shut out.
+select pg_temp.expect_count('email_outbox: member cannot read it',   'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from email_outbox$$, -1);
+select pg_temp.expect_count('email_outbox: owner cannot read it',    'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from email_outbox$$, -1);
+select pg_temp.expect_count('email_outbox: outsider cannot read it', 'aaaa0000-0000-0000-0000-000000000005', false, $$select count(*) from email_outbox$$, -1);
+select pg_temp.expect_dml('email_outbox: member cannot insert into it', 'aaaa0000-0000-0000-0000-000000000002', false, $$insert into email_outbox(notification_id, trip_id, recipient_id, to_email, type, trip_name, deep_link) values('ef010000-0000-4000-8000-000000000001','bbbb0000-0000-0000-0000-000000000001','cccc0000-0000-0000-0000-000000000002','x@y.test','mention','T','#/x')$$, -1);
+
+-- ── The drain functions are service-role only ───────────────────────────────
+-- claim_email_batch RETURNS addresses, so execute is revoked from
+-- authenticated. If this ever starts passing as a member, the channel leaks
+-- every queued address to anyone with a session.
+select pg_temp.expect_count('claim_email_batch: member cannot execute',    'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from claim_email_batch(10)$$, -1);
+select pg_temp.expect_count('claim_email_batch: owner cannot execute',     'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from claim_email_batch(10)$$, -1);
+select pg_temp.expect_count('mark_email_result: member cannot execute',    'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from (select mark_email_result('ef010000-0000-4000-8000-000000000001', true)) q$$, -1);
+select pg_temp.expect_count('prune_email_outbox: member cannot execute',   'aaaa0000-0000-0000-0000-000000000002', false, $$select prune_email_outbox(1)$$, -1);
+
+-- ── Opt-in is per member, and nobody can enrol anybody else ─────────────────
+select pg_temp.expect_dml('email_prefs: member can opt themselves in',          'aaaa0000-0000-0000-0000-000000000001', false, $$insert into email_prefs(member_id, trip_id, enabled) select id, trip_id, true from members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'$$, 1);
+select pg_temp.expect_dml('email_prefs: member cannot enrol another member',    'aaaa0000-0000-0000-0000-000000000002', false, $$insert into email_prefs(member_id, trip_id, enabled) values('cccc0000-0000-0000-0000-000000000003','bbbb0000-0000-0000-0000-000000000001',true)$$, -1);
+select pg_temp.expect_dml('email_prefs: outsider cannot opt a member in',       'aaaa0000-0000-0000-0000-000000000005', false, $$insert into email_prefs(member_id, trip_id, enabled) values('cccc0000-0000-0000-0000-000000000002','bbbb0000-0000-0000-0000-000000000001',true)$$, -1);
+select pg_temp.expect_count('email_prefs: member sees only their own row',      'aaaa0000-0000-0000-0000-000000000002', false, $$select count(*) from email_prefs$$, 0);
+select pg_temp.expect_count('email_prefs: opted-in member sees their own row',  'aaaa0000-0000-0000-0000-000000000001', false, $$select count(*) from email_prefs$$, 1);
+select pg_temp.expect_dml('email_prefs: member cannot flip another''s switch',  'aaaa0000-0000-0000-0000-000000000002', false, $$update email_prefs set enabled = false$$, 0);
+
+-- ── Enqueue: returns a COUNT, never an address ──────────────────────────────
+-- The whole point of the inversion. A member may call this (it runs under their
+-- authorship proof) and gets back an integer.
+select pg_temp.expect_count('enqueue: actor queues the owner''s mention',  'aaaa0000-0000-0000-0000-000000000002', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000001']::uuid[])$$, 1);
+-- Re-running is free: the unique index on notification_id makes a retried
+-- request a no-op rather than a second email.
+select pg_temp.expect_count('enqueue: re-running is deduped to zero',      'aaaa0000-0000-0000-0000-000000000002', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000001']::uuid[])$$, 0);
+-- Authorship: a member who did not cause the event cannot mail anyone about it.
+select pg_temp.expect_count('enqueue: non-actor cannot queue someone else''s event', 'aaaa0000-0000-0000-0000-000000000003', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000002']::uuid[])$$, 0);
+select pg_temp.expect_count('enqueue: outsider queues nothing',            'aaaa0000-0000-0000-0000-000000000005', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000002']::uuid[])$$, 0);
+-- An unconfirmed address is never queued, even with prefs enabled.
+select pg_temp.expect_dml('email_prefs: uG opts in',                       'aaaa0000-0000-0000-0000-000000000003', false, $$insert into email_prefs(member_id, trip_id, enabled) values('cccc0000-0000-0000-0000-000000000003','bbbb0000-0000-0000-0000-000000000001',true)$$, 1);
+select pg_temp.expect_count('enqueue: unconfirmed address is never queued', 'aaaa0000-0000-0000-0000-000000000002', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000003']::uuid[])$$, 0);
+
+-- Per-type opt-out: narrowing `types` to mentions only must stop a poll email.
+select pg_temp.expect_dml('email_prefs: owner narrows types to mention only', 'aaaa0000-0000-0000-0000-000000000001', false, $$update email_prefs set types = array['mention'] where member_id = (select id from members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner')$$, 1);
+select pg_temp.expect_count('enqueue: a de-selected type is not queued',     'aaaa0000-0000-0000-0000-000000000002', false, $$select enqueue_emails_for_notifications(array['ef010000-0000-4000-8000-000000000002']::uuid[])$$, 0);
+
+-- ── The daily cap holds for a single batch, not just across calls ───────────
+-- 20 fresh mentions aimed at one recipient in ONE call. The cap is 12 and one
+-- is already queued from the assertions above, so exactly 11 may be added.
+-- Without the per-recipient row_number() in the enqueue function all 20 would
+-- pass, each individually "under" a cap none of them could see the others
+-- consuming.
+insert into public.notifications (id, trip_id, recipient_id, actor_id, type, title)
+select ('ef020000-0000-4000-8000-0000000000' || lpad(g::text, 2, '0'))::uuid,
+       'bbbb0000-0000-0000-0000-000000000001',
+       (select id from public.members where trip_id='bbbb0000-0000-0000-0000-000000000001' and role='owner'),
+       'cccc0000-0000-0000-0000-000000000002', 'mention', 'spam ' || g
+from generate_series(1, 20) g;
+
+-- The ids are built from generate_series rather than read back from
+-- `notifications`: the actor is not the recipient of these rows, so RLS
+-- (correctly) returns none of them to the caller — the same constraint that
+-- makes notify.ts mint ids client-side instead of selecting them.
+select pg_temp.expect_count('enqueue: batch cannot exceed the daily cap', 'aaaa0000-0000-0000-0000-000000000002', false,
+  $$select enqueue_emails_for_notifications((select array_agg(('ef020000-0000-4000-8000-0000000000' || lpad(g::text, 2, '0'))::uuid) from generate_series(1, 20) g))$$, 11);
+
+-- ── The drain, as the service role ─────────────────────────────────────────
+-- Everything below runs as `postgres`, standing in for the service role the
+-- scheduled drain holds. First: nothing is claimable yet, because every row was
+-- queued with `send_after = now() + email_send_delay()`. That delay is what
+-- gives the recipient a chance to read the event in-app first.
+select pg_temp.rec('drain: nothing is due before the send delay elapses',
+  (select count(*)::text from claim_email_batch(100)), '0');
+
+-- Make everything due, as if the delay had passed.
+update email_outbox set send_after = now() - interval '1 minute';
+
+-- An event the recipient has already READ in the app must never be emailed.
+update public.notifications set read_at = now()
+  where id = 'ef010000-0000-4000-8000-000000000001';
+
+select pg_temp.rec('drain: a read notification is withheld from the batch',
+  (select count(*)::text from claim_email_batch(100)
+   where id = (select id from email_outbox where notification_id = 'ef010000-0000-4000-8000-000000000001')),
+  '0');
+select pg_temp.rec('drain: the read row is retired as sent, not left pending',
+  (select state from email_outbox where notification_id = 'ef010000-0000-4000-8000-000000000001'),
+  'sent');
+select pg_temp.rec('drain: the read row records why it was skipped',
+  (select last_error from email_outbox where notification_id = 'ef010000-0000-4000-8000-000000000001'),
+  'skipped: read in app');
+
+-- A claim charges the attempt up front, so a run that dies mid-send cannot
+-- leave a row to be retried forever.
+select pg_temp.rec('drain: claiming increments attempts',
+  (select min(attempts)::text from email_outbox where state = 'pending'), '1');
+
+-- A row just claimed is invisible to the next drain until its retry window
+-- elapses. This is what stops a drain that starts while the previous one is
+-- still waiting on the provider from sending the same email twice.
+select pg_temp.rec('drain: a just-claimed row is invisible to the next pass',
+  (select count(*)::text from claim_email_batch(100)), '0');
+-- Once the window passes it becomes retryable again, and the attempt counter
+-- is what eventually retires it.
+update email_outbox set send_after = now() - interval '1 minute' where state = 'pending';
+select pg_temp.rec('drain: after the retry window the row is claimable again',
+  (select (count(*) > 0)::text from claim_email_batch(100)), 'true');
+select pg_temp.rec('drain: the retry is charged as attempt 2',
+  (select min(attempts)::text from email_outbox where state = 'pending'), '2');
+
+-- Terminal states. The call and the assertion must be separate statements —
+-- reading the row in the same statement that calls mark_email_result sees the
+-- pre-update snapshot.
+--
+-- A failure with retries left stays pending, so the next drain picks it up.
+update email_outbox set attempts = 1, last_error = null
+  where id = (select id from email_outbox where state = 'pending' limit 1);
+select mark_email_result(
+  (select id from email_outbox where state = 'pending' and attempts = 1 limit 1),
+  false, 'smtp 421 try later');
+select pg_temp.rec('drain: a retryable failure stays pending',
+  (select state from email_outbox where last_error = 'smtp 421 try later'), 'pending');
+
+-- Out of retries is terminal: a permanently bad address must not be retried
+-- forever.
+update email_outbox set attempts = 5
+  where id = (select id from email_outbox where last_error = 'smtp 421 try later');
+select mark_email_result(
+  (select id from email_outbox where last_error = 'smtp 421 try later'),
+  false, 'smtp 550 no such user');
+select pg_temp.rec('drain: mark_email_result retires an out-of-retries row as failed',
+  (select state from email_outbox where last_error = 'smtp 550 no such user'), 'failed');
+
+-- A successful send clears the error and stamps sent_at. The row is pinned by
+-- id rather than picked by `order by sent_at` — `now()` is the TRANSACTION
+-- timestamp, so every row this suite marks sent carries an identical sent_at
+-- and the ordering would be arbitrary.
+create temp table _email_probe(id uuid) on commit drop;
+insert into _email_probe select id from email_outbox where state = 'pending' limit 1;
+select mark_email_result((select id from _email_probe), true);
+select pg_temp.rec('drain: a successful send is recorded with no error',
+  (select (state = 'sent' and sent_at is not null and last_error is null)::text
+   from email_outbox where id = (select id from _email_probe)), 'true');
+
+-- Housekeeping removes settled rows (every one holds an address).
+update email_outbox set state = 'sent', sent_at = now() - interval '90 days' where state = 'sent';
+select pg_temp.rec('drain: prune removes long-settled rows',
+  (select (prune_email_outbox(30) > 0)::text), 'true');
+
+-- ═════════════════════════════════════════════════════════════════════════════
 -- Finalize — print a summary row (always visible), then RAISE (non-zero exit)
 -- if anything regressed.
 -- ═════════════════════════════════════════════════════════════════════════════

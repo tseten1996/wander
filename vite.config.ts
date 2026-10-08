@@ -14,9 +14,15 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
+        // A stable identity for the installed app, independent of where it is
+        // served from. Without it the browser derives identity from start_url,
+        // so moving the deploy (or changing `base`) would read as a *different*
+        // app and silently orphan everyone's installed copy.
+        id: './',
         name: 'Wander — Trip Planner',
         short_name: 'Wander',
         description: 'Plan trips together with your friends',
+        categories: ['travel', 'productivity'],
         theme_color: '#0f766e',
         background_color: '#faf9f7',
         display: 'standalone',
