@@ -1553,6 +1553,13 @@ async function runDuplicateTrip(browser) {
     await page.getByText('Duplicate this trip').waitFor({ state: 'visible', timeout: 10_000 })
     ok('the duplicate dialog opens with the trip to copy')
 
+    // The wishlist carries forward too (#393): its toggle is present and, like
+    // the other sections, defaulted on so saved-but-unvisited places seed trip #2.
+    const wishlistToggle = page.getByRole('checkbox', { name: /Wishlist/ })
+    await wishlistToggle.waitFor({ state: 'visible', timeout: 10_000 })
+    if (!(await wishlistToggle.isChecked())) throw new Error('wishlist section should default on')
+    ok('the duplicate dialog offers a Wishlist section, defaulted on')
+
     // Submit → duplicate_trip RPC returns the new id → navigate into the copy.
     await page.getByRole('button', { name: 'Create duplicate' }).click()
     await page.waitForURL((url) => url.hash.includes(`/trip/${NEW_TRIP_ID}`), { timeout: 10_000 })
