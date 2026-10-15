@@ -31,9 +31,7 @@ import { createClient } from '@supabase/supabase-js'
 import { PUBLIC_SUPABASE_URL } from '../../src/lib/supabase-public'
 import { drainOnce, redactEmails } from '../../src/server/email/drain'
 import type { EmailQueue } from '../../src/server/email/drain'
-import { resendProvider } from '../../src/server/email/provider'
 import { gmailProvider } from '../../src/server/email/gmail'
-import type { EmailProvider } from '../../src/server/email/provider'
 import type { EmailJob } from '../../src/server/email/render'
 
 interface Env {
@@ -44,8 +42,6 @@ interface Env {
   EMAIL_ENABLED?: string
   /** Bearer token the scheduler must present. A TRUE SECRET. */
   EMAIL_DRAIN_SECRET?: string
-  /** Resend API key. A TRUE SECRET. Set this OR the three GMAIL_* values. */
-  RESEND_API_KEY?: string
   /** Gmail OAuth2 client id. Not secret on its own, but pointless alone. */
   GMAIL_CLIENT_ID?: string
   /** Gmail OAuth2 client secret. A TRUE SECRET. */
@@ -100,19 +96,18 @@ function bearer(request: Request): string {
 }
 
 export async function onRequestPost({ request, env }: PagesContext): Promise<Response> {
-  // Which transport this deployment uses is decided by which credentials are
-  // present — Gmail first, because a deployment that has gone to the trouble of
-  // an OAuth refresh token means it. No EMAIL_PROVIDER switch: a flag that can
-  // disagree with the credentials actually configured is a third state to get
-  // wrong, and the credentials are already unambiguous.
-  const gmailReady =
-    !!env.GMAIL_CLIENT_ID && !!env.GMAIL_CLIENT_SECRET && !!env.GMAIL_REFRESH_TOKEN
+  // One transport, so one way to be configured and one way to be wrong. Every
+  // value below is required; missing any of them degrades to a clean no-op
+  // rather than a 500, so a half-configured deployment sends nothing instead
+  // of erroring.
   const configured =
     env.EMAIL_ENABLED === 'true' &&
     !!env.EMAIL_DRAIN_SECRET &&
     !!env.SUPABASE_SERVICE_KEY &&
     !!env.EMAIL_FROM &&
-    (gmailReady || !!env.RESEND_API_KEY)
+    !!env.GMAIL_CLIENT_ID &&
+    !!env.GMAIL_CLIENT_SECRET &&
+    !!env.GMAIL_REFRESH_TOKEN
   if (!configured) return json({ ok: true, disabled: true }, 200)
 
   // Authenticate the scheduler before anything else touches a credential.
@@ -122,21 +117,16 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     return json({ ok: false, message: 'Unauthorized.' }, 401)
   }
 
-  const transport = gmailReady ? 'gmail' : 'resend'
-  const provider: EmailProvider = gmailReady
-    ? gmailProvider({
-        clientId: env.GMAIL_CLIENT_ID as string,
-        clientSecret: env.GMAIL_CLIENT_SECRET as string,
-        refreshToken: env.GMAIL_REFRESH_TOKEN as string,
-        // Gmail will not send as an arbitrary address: EMAIL_FROM must be the
-        // authenticated account or one of its "Send mail as" aliases.
-        from: env.EMAIL_FROM as string,
-        replyTo: env.EMAIL_REPLY_TO,
-      })
-    : resendProvider(env.RESEND_API_KEY as string, {
-        from: env.EMAIL_FROM as string,
-        replyTo: env.EMAIL_REPLY_TO,
-      })
+  const transport = 'gmail'
+  const provider = gmailProvider({
+    clientId: env.GMAIL_CLIENT_ID as string,
+    clientSecret: env.GMAIL_CLIENT_SECRET as string,
+    refreshToken: env.GMAIL_REFRESH_TOKEN as string,
+    // Gmail will not send as an arbitrary address: EMAIL_FROM must be the
+    // authenticated account or one of its "Send mail as" aliases.
+    from: env.EMAIL_FROM as string,
+    replyTo: env.EMAIL_REPLY_TO,
+  })
 
   // A preflight, requested with {"check": true}: verify the configured
   // transport's credentials and return WITHOUT draining.

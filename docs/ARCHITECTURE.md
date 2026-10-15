@@ -297,7 +297,7 @@ Notable decisions:
   well as across calls.
 
   Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow,
-  over whichever transport is configured (Gmail or Resend — see §7). It is
+  over Gmail (see §7). It is
   the **only** endpoint holding a service role key, which is acceptable precisely
   because it has no member caller: it is authenticated by a shared secret, takes
   no input that selects rows, and returns counts. Each event waits two minutes
@@ -475,37 +475,39 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
 The email channel is **dark until configured** — no flag, no toggle, no
 requests, behaviour identical to before the feature existed.
 
-**Pick a transport first.** The drain supports two, and the choice is a real
-trade rather than a preference:
+**One transport: Gmail.** Resend — and every transactional provider — refuses
+to deliver to arbitrary recipients until you own and verify a domain. This
+project has no domain, so that was not a "better option for later", it was dead
+configuration that could silently become the active transport if a stray
+`RESEND_API_KEY` were ever set. Gmail needs no domain: it sends as an account
+that already exists.
 
-| | Gmail | Resend |
-|---|---|---|
-| Needs a verified domain | **no** | **yes — hard stop without one** |
-| Sends as | a person's Gmail account | `trips@yourdomain` |
-| Replies go to | that person's inbox | wherever you point `EMAIL_REPLY_TO` |
-| Daily ceiling | ~500 (free) / 2,000 (Workspace) | 100/day, 3,000/month on the free tier |
-| Deliverability | good, but it is personal mail | built for transactional mail |
+The trade is identity — mail arrives from a person's address rather than the
+product's, and replies land in their inbox — and that is the right trade until
+there is a domain. Gmail's ceiling (~500 recipients/day on a free account,
+2,000 on Workspace) is far above what the per-recipient cap of 12/24h and the
+six-hourly digest can generate, so the binding constraint stays ours.
 
-Gmail is the sensible default for a free-tier project with no domain — it works
-today. Resend is where to move once a domain exists. The drain picks whichever
-has credentials, Gmail first; switching is purely configuration, and no code
-changes (see `src/server/email/provider.ts`).
+The Resend implementation lived in `src/server/email/provider.ts` through
+commit `cfd24ae` and is one `git revert` away if a domain ever appears; nothing
+outside the `EmailProvider` contract ever knew which transport was in use, which
+is why adding it and removing it both cost about one file.
 
-**Shared settings** — Cloudflare Pages → Settings → Environment variables,
+**Settings** — Cloudflare Pages → Settings → Environment variables,
 **production**:
 
 | Name | Kind | Value |
 |---|---|---|
 | `EMAIL_ENABLED` | plain | `true` |
-| `EMAIL_FROM` | plain | the sender — see the per-transport note below |
+| `EMAIL_FROM` | plain | the Gmail account the token was minted for |
 | `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
 | `EMAIL_REPLY_TO` | plain | optional |
 | `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
 | `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
 
-**For Gmail**, add three more and make `EMAIL_FROM` the authenticated account
-(Gmail rejects a From it does not own — it must be that account or one of its
-"Send mail as" aliases):
+Plus the three Gmail credentials. `EMAIL_FROM` must be the authenticated
+account — Gmail rejects a From it does not own, so it has to be that account
+or one of its "Send mail as" aliases.
 
 | Name | Kind |
 |---|---|
@@ -532,9 +534,6 @@ scope that can send, and one that cannot read, search or delete mail. Store
 only the refresh token; the drain exchanges it for a short-lived access token
 per pass and caches that in memory for that pass alone.
 
-**For Resend**, verify a domain, set `RESEND_API_KEY` as a secret, and make
-`EMAIL_FROM` an address on that domain.
-
 **Finally, the scheduler.** Repo secrets `EMAIL_DRAIN_URL`
 (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
 value as above). `.github/workflows/email-drain.yml` exits 0 while these are
@@ -550,9 +549,9 @@ active.
   ```
 
   It verifies the configured transport's credentials and returns **without
-  draining or sending anything** — for Gmail it performs only the refresh-token
-  exchange (where essentially every Gmail misconfiguration shows up), for Resend
-  a read-only GET against `/domains`. It answers
+  draining or sending anything** — it performs only the refresh-token
+  exchange, which is where essentially every Gmail misconfiguration shows up.
+  It answers
   `{"transport": "gmail", "credentials": "valid"}`, or `"invalid"` with the
   provider's own words and a 502 so `curl --fail` notices. Addresses are
   stripped, so the output is safe to paste into an issue.
@@ -570,7 +569,7 @@ active.
 * **Verifying it without sending anything.** `npm run test:email-pipeline`
   (needs `DATABASE_URL` pointing at the throwaway Postgres
   `scripts/run-rls-tests.sh` prepares) drives the **real** drain code with the
-  **real** SQL functions, simulating only `api.resend.com`. It exists because
+  **real** SQL functions, simulating only Google's token and send endpoints. It exists because
   the unit tests stub the database and the RLS suite stubs the application, so
   both can pass while the seam between them is broken — a renamed RPC argument,
   or the deep-link builder in the migration drifting from

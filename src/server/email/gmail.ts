@@ -27,6 +27,7 @@
   is exchanged for a short-lived access token at send time; no access token is
   ever stored.
 */
+import { unsubscribeTarget } from './provider'
 import type { EmailProvider, OutgoingEmail, SendResult, VerifyResult } from './provider'
 
 /** OAuth2 installed-app credentials plus the long-lived refresh token. */
@@ -122,11 +123,21 @@ export function buildMimeMessage(
   // The boundary must not occur in either part. Base64 bodies can only contain
   // the base64 alphabet, so a boundary carrying `=_` cannot collide.
   const boundary = `=_${boundarySeed}_${Math.random().toString(36).slice(2, 12)}`
+
+  // One-tap unsubscribe. A notification email is exactly the kind of mail that
+  // must be trivial to stop: mailbox providers increasingly expect this header,
+  // and a recipient who cannot find the off switch marks the sender as spam
+  // instead of hunting for a setting. The URL is pulled back out of the
+  // rendered HTML so the header and the footer link can never disagree, and is
+  // omitted entirely rather than emitted empty if it cannot be found.
+  const unsubscribe = unsubscribeTarget(email.html)
+
   const headers = [
     `From: ${sender.from}`,
     `To: ${email.to}`,
     `Subject: ${encodeHeader(email.subject)}`,
     ...(sender.replyTo ? [`Reply-To: ${sender.replyTo}`] : []),
+    ...(unsubscribe ? [`List-Unsubscribe: <${unsubscribe}>`] : []),
     'MIME-Version: 1.0',
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ]

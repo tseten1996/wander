@@ -34,9 +34,7 @@ export async function resolve(specifier, context, nextResolve) {
 
 const { escapeHtml, clamp, subjectFor, absoluteLink, renderEmail, isDigest, pluralMessages } =
   await import('../src/server/email/render.ts')
-const { isRetryableStatus, resendProvider, unsubscribeTarget } = await import(
-  '../src/server/email/provider.ts'
-)
+const { unsubscribeTarget } = await import('../src/server/email/provider.ts')
 const { drainOnce, DEFAULT_LIMIT, redactEmails, MAX_REPORTED_ERRORS } = await import(
   '../src/server/email/drain.ts'
 )
@@ -180,106 +178,15 @@ test('links are absolute — a relative one is a dead end in an email client', (
 
 /* ── provider: the retry classification ───────────────────────────────────── */
 
-test('rate limits and provider outages are retryable', () => {
-  for (const status of [429, 500, 502, 503, 504]) {
-    assert.equal(isRetryableStatus(status), true, `${status} should be retryable`)
-  }
-})
 
-test('a malformed request or bad address is permanent, not retryable', () => {
-  // The whole point: a 422 will be rejected identically forever, so retrying
-  // it four more times only burns quota and delays the rest of the queue.
-  for (const status of [400, 404, 409, 422]) {
-    assert.equal(isRetryableStatus(status), false, `${status} should be permanent`)
-  }
-})
 
-test('an auth failure is retryable so a rotated key drains the backlog', () => {
-  assert.equal(isRetryableStatus(401), true)
-  assert.equal(isRetryableStatus(403), true)
-})
 
-test('the provider reports a 2xx as sent and carries the provider id', async () => {
-  const calls = []
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url, init })
-    return { ok: true, status: 200, json: async () => ({ id: 'resend-123' }) }
-  }
-  const result = await resendProvider('key_abc', { from: 'Wander <t@w.test>' }).send({
-    to: 'a@b.test',
-    subject: 's',
-    html: '<p>h</p>',
-    text: 't',
-  })
-  assert.deepEqual(result, { ok: true, id: 'resend-123', retryable: false })
-  const body = JSON.parse(calls[0].init.body)
-  assert.deepEqual(body.to, ['a@b.test'])
-  assert.equal(body.from, 'Wander <t@w.test>')
-  assert.equal(calls[0].init.headers.authorization, 'Bearer key_abc')
-})
 
-test('a 2xx with an unreadable body is still a successful send', async () => {
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => {
-      throw new Error('not json')
-    },
-  })
-  const result = await resendProvider('k', { from: 'f' }).send({
-    to: 'a@b.test',
-    subject: 's',
-    html: 'h',
-    text: 't',
-  })
-  assert.equal(result.ok, true, 'the message was accepted; the body is incidental')
-})
 
-test('a provider error keeps a slice of its own words for last_error', async () => {
-  globalThis.fetch = async () => ({
-    ok: false,
-    status: 422,
-    text: async () => 'invalid `to` field',
-  })
-  const result = await resendProvider('k', { from: 'f' }).send({
-    to: 'nope',
-    subject: 's',
-    html: 'h',
-    text: 't',
-  })
-  assert.equal(result.ok, false)
-  assert.equal(result.retryable, false)
-  assert.match(result.error, /resend 422: invalid `to` field/)
-})
 
-test('a thrown fetch (timeout, DNS) is retryable', async () => {
-  globalThis.fetch = async () => {
-    throw new Error('The operation was aborted due to timeout')
-  }
-  const result = await resendProvider('k', { from: 'f' }).send({
-    to: 'a@b.test',
-    subject: 's',
-    html: 'h',
-    text: 't',
-  })
-  assert.equal(result.ok, false)
-  assert.equal(result.retryable, true)
-})
 
-test('reply_to is sent only when configured', async () => {
-  const bodies = []
-  globalThis.fetch = async (_u, init) => {
-    bodies.push(JSON.parse(init.body))
-    return { ok: true, status: 200, json: async () => ({}) }
-  }
-  const mail = { to: 'a@b.test', subject: 's', html: 'h', text: 't' }
-  await resendProvider('k', { from: 'f' }).send(mail)
-  await resendProvider('k', { from: 'f', replyTo: 'r@w.test' }).send(mail)
-  assert.ok(!('reply_to' in bodies[0]))
-  assert.equal(bodies[1].reply_to, 'r@w.test')
-})
 
-test('List-Unsubscribe points at the same URL the footer link does', () => {
+test('unsubscribeTarget finds the URL the footer link uses', () => {
   const { html } = renderEmail(job(), 'https://app.test')
   assert.equal(unsubscribeTarget(html), 'https://app.test/#/trip/t1/chat?n=n1')
 })
@@ -845,6 +752,26 @@ test('a thrown fetch is retryable', async () => {
   assert.match(result.error, /gmail token failed: network down/)
 })
 
+test('the MIME message carries a one-tap List-Unsubscribe header', () => {
+  // Mailbox providers increasingly expect this, and a recipient who cannot
+  // find the off switch marks the sender as spam instead of hunting for a
+  // setting. It must match the footer link exactly.
+  const { html, subject, text } = renderEmail(job(), 'https://app.test')
+  const msg = buildMimeMessage({ to: 'a@b.test', subject, html, text }, { from: creds.from })
+  assert.ok(
+    msg.includes('List-Unsubscribe: <https://app.test/#/trip/t1/chat?n=n1>'),
+    'header must carry the same URL as the footer link',
+  )
+})
+
+test('List-Unsubscribe is omitted rather than empty when no link is found', () => {
+  const msg = buildMimeMessage(
+    { to: 'a@b.test', subject: 's', html: '<p>no links</p>', text: 't' },
+    { from: creds.from },
+  )
+  assert.ok(!msg.includes('List-Unsubscribe'))
+})
+
 test('gmail plugs into the drain with no change to the drain', async () => {
   // The point of the EmailProvider interface: drainOnce cannot tell them apart.
   stubGoogle()
@@ -891,26 +818,7 @@ test('gmail verify warms the cache, so a following send skips the exchange', asy
   assert.equal(calls.filter((c) => String(c.url).includes('oauth2')).length, 1)
 })
 
-test('resend verify probes the domains endpoint with a GET, costing no quota', async () => {
-  const calls = []
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), method: init?.method })
-    return { ok: true, status: 200, text: async () => '{"data":[]}' }
-  }
-  const result = await resendProvider('re_key', { from: 'f' }).verify()
-  assert.deepEqual(result, { ok: true })
-  assert.match(calls[0].url, /api\.resend\.com\/domains/)
-  // No method set means GET; crucially it is not the /emails endpoint.
-  assert.ok(!calls[0].method || calls[0].method === 'GET')
-  assert.ok(!calls[0].url.includes('/emails'))
-})
 
-test('resend verify reports a bad key', async () => {
-  globalThis.fetch = async () => ({ ok: false, status: 401, text: async () => 'invalid key' })
-  const result = await resendProvider('re_bad', { from: 'f' }).verify()
-  assert.equal(result.ok, false)
-  assert.match(result.error, /resend 401: invalid key/)
-})
 
 test('a verify error is redactable, since the response may be pasted publicly', async () => {
   globalThis.fetch = async () => ({
@@ -918,7 +826,7 @@ test('a verify error is redactable, since the response may be pasted publicly', 
     status: 403,
     text: async () => 'not allowed for someone@private.test',
   })
-  const result = await resendProvider('re_key', { from: 'f' }).verify()
+  const result = await gmailProvider(creds).verify()
   assert.ok(!redactEmails(result.error).includes('someone@private.test'))
   assert.match(redactEmails(result.error), /not allowed for \[redacted\]/)
 })

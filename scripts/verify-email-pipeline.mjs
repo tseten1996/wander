@@ -11,9 +11,10 @@
  * drifting from src/features/notifications/route.ts. This script exercises the
  * seam: the REAL SQL functions driving the REAL drain code.
  *
- * The only simulated component is api.resend.com, replaced by a fetch
- * interceptor that asserts the outgoing request is what Resend's API expects.
- * Nothing is ever sent, and no credential is needed.
+ * The only simulated component is Google, replaced by a fetch interceptor
+ * that answers the OAuth token exchange and the Gmail send endpoint, and
+ * asserts the outgoing request is what the Gmail API expects. Nothing is ever
+ * sent, and no credential is needed.
  *
  * HOW TO RUN. Needs a throwaway Postgres with the baseline + migrations already
  * applied — exactly what scripts/run-rls-tests.sh sets up:
@@ -50,7 +51,7 @@ export async function resolve(specifier, context, nextResolve) {
 )
 
 const { drainOnce } = await import('../src/server/email/drain.ts')
-const { resendProvider } = await import('../src/server/email/provider.ts')
+const { gmailProvider } = await import('../src/server/email/gmail.ts')
 
 const sql = (query) =>
   execFileSync('psql', ['-tA', '--no-psqlrc', '-v', 'ON_ERROR_STOP=1', DB, '-c', query], {
@@ -67,6 +68,19 @@ const sql = (query) =>
  */
 const ours = (expr) =>
   sql(`select ${expr} from email_outbox where notification_id = '${NOTIFICATION}'`)
+
+/** Decode an RFC 2047 encoded-word subject back to text. */
+function decodeMimeSubject(value) {
+  const m = /^=\?UTF-8\?B\?(.+)\?=$/.exec(value)
+  return m ? Buffer.from(m[1], 'base64').toString('utf8') : value
+}
+
+/** Pull one base64 body part out of a multipart/alternative message. */
+function decodeMimePart(mime, contentType) {
+  const section = mime.split(/--=_[^\r\n]+/).find((p) => p.includes(contentType))
+  if (!section) return ''
+  return Buffer.from(section.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8')
+}
 
 /* ── fixtures ─────────────────────────────────────────────────────────────── */
 
@@ -152,13 +166,23 @@ const queue = {
 const checks = []
 const check = (name, ok) => checks.push([name, !!ok])
 
+// `captured` holds only the SEND calls; the OAuth token exchange is answered
+// but not recorded, so the assertions below count messages rather than HTTP
+// round trips.
 const captured = []
-globalThis.fetch = async (url, init) => {
+const fakeGoogle = async (url, init) => {
+  if (String(url).includes('oauth2.googleapis.com')) {
+    return { ok: true, status: 200, json: async () => ({ access_token: 'at', expires_in: 3600 }) }
+  }
   captured.push({ url, init })
-  return { ok: true, status: 200, json: async () => ({ id: 'resend-simulated' }) }
+  return { ok: true, status: 200, json: async () => ({ id: 'gmail-simulated' }) }
 }
-const provider = resendProvider('re_simulated_key_not_real', {
-  from: 'Wander <trips@example-verified.test>',
+globalThis.fetch = fakeGoogle
+const provider = gmailProvider({
+  clientId: 'simulated.apps.googleusercontent.com',
+  clientSecret: 'simulated',
+  refreshToken: 'simulated-refresh-token',
+  from: 'Wander <trips@example.test>',
 })
 const drain = () => drainOnce(queue, provider, { appOrigin: APP_ORIGIN })
 
@@ -221,9 +245,21 @@ try {
   check('the drain report carries no address', !JSON.stringify(report).includes('@'))
 
   // 4. The request Resend would actually receive.
-  const body = JSON.parse(captured[0].init.body)
-  check('posted to the Resend endpoint', captured[0].url === 'https://api.resend.com/emails')
+  // Gmail takes one base64url-encoded RFC 5322 message rather than JSON
+  // fields, so the assertions decode it back.
+  const raw = JSON.parse(captured[0].init.body).raw
+  const mime = Buffer.from(raw, 'base64url').toString('utf8')
+  const body = {
+    to: [/^To: (.+)$/m.exec(mime)[1]],
+    subject: decodeMimeSubject(/^Subject: (.+)$/m.exec(mime)[1]),
+    html: decodeMimePart(mime, 'text/html'),
+    text: decodeMimePart(mime, 'text/plain'),
+    headers: { 'List-Unsubscribe': /^List-Unsubscribe: (.+)$/m.exec(mime)?.[1] },
+  }
+  check('posted to the Gmail send endpoint',
+    String(captured[0].url).startsWith('https://gmail.googleapis.com/'))
   check('bearer auth is set', captured[0].init.headers.authorization.startsWith('Bearer '))
+  check('the raw message is base64url', !/[+/=]/.test(raw))
   check('addressed to the confirmed address', body.to[0] === 'pipeline-recipient@wander.test')
   check('the actor name was resolved from the members row', !body.subject.startsWith('Someone'))
   check('the subject names the actor and the trip',
@@ -251,10 +287,7 @@ try {
   // Clear the notification row so the digest is the only thing in flight.
   sql(`delete from email_outbox where notification_id = '${NOTIFICATION}'`)
   captured.length = 0
-  globalThis.fetch = async (url, init) => {
-    captured.push({ url, init })
-    return { ok: true, status: 200, json: async () => ({ id: 'resend-simulated' }) }
-  }
+  globalThis.fetch = fakeGoogle
 
   // The recipient opts into the digest, as themselves, and is behind: the
   // actor's message below lands after their read marker.
@@ -278,7 +311,12 @@ try {
   check('the drain queued one digest', digestReport.digestsQueued === 1)
   check('and sent it', digestReport.sent === 1)
 
-  const digestBody = JSON.parse(captured[0].init.body)
+  const digestMime = Buffer.from(JSON.parse(captured[0].init.body).raw, 'base64url').toString('utf8')
+  const digestBody = {
+    to: [/^To: (.+)$/m.exec(digestMime)[1]],
+    subject: decodeMimeSubject(/^Subject: (.+)$/m.exec(digestMime)[1]),
+    html: decodeMimePart(digestMime, 'text/html'),
+  }
   check('the digest counts only the other member\'s messages',
     /^3 messages in the trip chat/.test(digestBody.subject))
   check('the digest subject names the trip',
