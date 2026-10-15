@@ -115,6 +115,7 @@ export interface DuplicateSections {
   packing: boolean
   budget: boolean
   notes: boolean
+  wishlist: boolean
 }
 
 export interface DuplicateTripInput {
@@ -149,6 +150,7 @@ export function useDuplicateTrip() {
         p_include_packing: input.sections.packing,
         p_include_budget: input.sections.budget,
         p_include_notes: input.sections.notes,
+        p_include_wishlist: input.sections.wishlist,
       })
       if (error) throw error
       return data as string

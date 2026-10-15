@@ -4,7 +4,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { Copy, ListChecks, Luggage, Map, StickyNote, Wallet } from 'lucide-react'
+import { Copy, Heart, ListChecks, Luggage, Map, StickyNote, Wallet } from 'lucide-react'
 import { friendlyError } from '@/lib/errors'
 import { isMobileViewport } from '@/lib/utils'
 import { useDuplicateTrip, type DuplicateSections } from './api'
@@ -28,6 +28,7 @@ const SECTIONS: {
   { key: 'packing', label: 'Packing list', hint: 'Items, reset to unpacked', Icon: Luggage },
   { key: 'budget', label: 'Budget', hint: 'Categories & estimates, without the actuals', Icon: Wallet },
   { key: 'notes', label: 'Notes', hint: 'Shared notes, copied as-is', Icon: StickyNote },
+  { key: 'wishlist', label: 'Wishlist', hint: 'Saved places you never got to — none scheduled', Icon: Heart },
 ]
 
 const schema = z
@@ -41,6 +42,7 @@ const schema = z
       packing: z.boolean(),
       budget: z.boolean(),
       notes: z.boolean(),
+      wishlist: z.boolean(),
     }),
   })
   .refine((v) => !v.start_date || !v.end_date || v.end_date >= v.start_date, {
@@ -67,7 +69,7 @@ export function DuplicateTripDialog({
       name: `Copy of ${trip.name}`.slice(0, 80),
       start_date: '',
       end_date: '',
-      sections: { itinerary: true, checklist: true, packing: true, budget: true, notes: true },
+      sections: { itinerary: true, checklist: true, packing: true, budget: true, notes: true, wishlist: true },
     },
   })
 
@@ -78,7 +80,7 @@ export function DuplicateTripDialog({
         name: `Copy of ${trip.name}`.slice(0, 80),
         start_date: '',
         end_date: '',
-        sections: { itinerary: true, checklist: true, packing: true, budget: true, notes: true },
+        sections: { itinerary: true, checklist: true, packing: true, budget: true, notes: true, wishlist: true },
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
