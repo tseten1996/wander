@@ -855,3 +855,70 @@ test('gmail plugs into the drain with no change to the drain', async () => {
   assert.equal(report.sent, 2)
   assert.deepEqual(report.errors, [])
 })
+
+/* ── verify(): the preflight ──────────────────────────────────────────────── */
+
+test('gmail verify succeeds on a working refresh token, sending nothing', async () => {
+  const calls = stubGoogle()
+  const result = await gmailProvider(creds).verify()
+  assert.deepEqual(result, { ok: true })
+  // Exactly one call, to the token endpoint — no message was sent.
+  assert.equal(calls.length, 1)
+  assert.match(String(calls[0].url), /oauth2\.googleapis\.com/)
+})
+
+test('gmail verify reports a revoked refresh token', async () => {
+  stubGoogle({ tokenStatus: 400 })
+  const result = await gmailProvider(creds).verify()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /gmail token 400.*invalid_grant/)
+})
+
+test('gmail verify reports an unreachable token endpoint', async () => {
+  globalThis.fetch = async () => {
+    throw new Error('dns failure')
+  }
+  const result = await gmailProvider(creds).verify()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /dns failure/)
+})
+
+test('gmail verify warms the cache, so a following send skips the exchange', async () => {
+  const calls = stubGoogle()
+  const provider = gmailProvider(creds)
+  await provider.verify()
+  await provider.send(mail())
+  assert.equal(calls.filter((c) => String(c.url).includes('oauth2')).length, 1)
+})
+
+test('resend verify probes the domains endpoint with a GET, costing no quota', async () => {
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method })
+    return { ok: true, status: 200, text: async () => '{"data":[]}' }
+  }
+  const result = await resendProvider('re_key', { from: 'f' }).verify()
+  assert.deepEqual(result, { ok: true })
+  assert.match(calls[0].url, /api\.resend\.com\/domains/)
+  // No method set means GET; crucially it is not the /emails endpoint.
+  assert.ok(!calls[0].method || calls[0].method === 'GET')
+  assert.ok(!calls[0].url.includes('/emails'))
+})
+
+test('resend verify reports a bad key', async () => {
+  globalThis.fetch = async () => ({ ok: false, status: 401, text: async () => 'invalid key' })
+  const result = await resendProvider('re_bad', { from: 'f' }).verify()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /resend 401: invalid key/)
+})
+
+test('a verify error is redactable, since the response may be pasted publicly', async () => {
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 403,
+    text: async () => 'not allowed for someone@private.test',
+  })
+  const result = await resendProvider('re_key', { from: 'f' }).verify()
+  assert.ok(!redactEmails(result.error).includes('someone@private.test'))
+  assert.match(redactEmails(result.error), /not allowed for \[redacted\]/)
+})

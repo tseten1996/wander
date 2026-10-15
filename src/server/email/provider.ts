@@ -58,8 +58,29 @@ export interface SendResult {
   retryable: boolean
 }
 
+/** Whether a transport's credentials actually work, without sending anything. */
+export interface VerifyResult {
+  ok: boolean
+  /** Why not, with anything address-shaped already stripped by the caller. */
+  error?: string
+}
+
 export interface EmailProvider {
   send(email: OutgoingEmail): Promise<SendResult>
+  /**
+   * Check the credentials without sending a message.
+   *
+   * This exists because of the order people do things in: you set the secrets,
+   * turn the channel on, and then wait for someone to be @-mentioned before
+   * finding out whether any of it was right. A wrong refresh token or an
+   * unverified domain is then discovered by a stuck queue, not by a check you
+   * could run the moment you finished pasting values in.
+   *
+   * Optional, so a transport with no cheap read-only probe simply omits it and
+   * the preflight reports that it could not be checked — which is honest, and
+   * better than inventing a probe that sends a real email to somebody.
+   */
+  verify?(): Promise<VerifyResult>
 }
 
 /** The `from` header. A display name plus an address on a verified domain. */
@@ -100,8 +121,37 @@ export function isRetryableStatus(status: number): boolean {
  * increasingly require it, and a recipient who cannot find the off switch
  * reports the whole domain as spam instead.
  */
+const RESEND_DOMAINS_ENDPOINT = 'https://api.resend.com/domains'
+
 export function resendProvider(apiKey: string, sender: EmailSender): EmailProvider {
   return {
+    /**
+     * Probe the key against the domains endpoint — a GET, so it sends nothing
+     * and costs no quota. A 200 proves the key is live; a 401/403 proves it is
+     * not. It deliberately does NOT assert that `sender.from` is on a verified
+     * domain: that would mean parsing the response and guessing at Resend's
+     * shape, and the drain's error reporting already names the real failure
+     * clearly when a send is rejected.
+     */
+    async verify(): Promise<VerifyResult> {
+      try {
+        const res = await fetch(RESEND_DOMAINS_ENDPOINT, {
+          headers: { authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+        })
+        if (res.ok) return { ok: true }
+        let detail = ''
+        try {
+          detail = (await res.text()).slice(0, 200)
+        } catch {
+          detail = ''
+        }
+        return { ok: false, error: `resend ${res.status}${detail ? `: ${detail}` : ''}` }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return { ok: false, error: `resend unreachable: ${message}` }
+      }
+    },
     async send({ to, subject, html, text }: OutgoingEmail): Promise<SendResult> {
       try {
         const res = await fetch(RESEND_ENDPOINT, {

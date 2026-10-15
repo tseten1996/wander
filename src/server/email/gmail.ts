@@ -27,7 +27,7 @@
   is exchanged for a short-lived access token at send time; no access token is
   ever stored.
 */
-import type { EmailProvider, OutgoingEmail, SendResult } from './provider'
+import type { EmailProvider, OutgoingEmail, SendResult, VerifyResult } from './provider'
 
 /** OAuth2 installed-app credentials plus the long-lived refresh token. */
 export interface GmailCredentials {
@@ -232,6 +232,23 @@ export function gmailProvider(credentials: GmailCredentials): EmailProvider {
   }
 
   return {
+    /**
+     * Exchange the refresh token and stop there. That single step is where
+     * essentially every Gmail misconfiguration shows up — a revoked or
+     * mistyped refresh token, a client id/secret mismatch, a project without
+     * the Gmail API enabled — so proving it works proves the hard part,
+     * without sending a message to anybody.
+     *
+     * It deliberately cannot prove that `from` is an address this account may
+     * send as; only a real send can, and the drain reports that clearly.
+     */
+    async verify(): Promise<VerifyResult> {
+      const auth = await accessToken()
+      return 'error' in auth
+        ? { ok: false, error: auth.error.error ?? 'gmail token exchange failed' }
+        : { ok: true }
+    },
+
     async send(email: OutgoingEmail): Promise<SendResult> {
       const auth = await accessToken()
       if ('error' in auth) return auth.error

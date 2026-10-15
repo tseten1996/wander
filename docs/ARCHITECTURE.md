@@ -541,6 +541,25 @@ value as above). `.github/workflows/email-drain.yml` exits 0 while these are
 unset, so it stays green until you are ready. The drain's response names the
 transport it used, so a run log never leaves you guessing which one was
 active.
+* **Checking the setup before trusting it.** Once the secrets are in place:
+
+  ```
+  curl -sS -X POST https://<deployment>/api/email-drain \
+    -H "Authorization: Bearer $EMAIL_DRAIN_SECRET" \
+    -H 'content-type: application/json' -d '{"check": true}'
+  ```
+
+  It verifies the configured transport's credentials and returns **without
+  draining or sending anything** — for Gmail it performs only the refresh-token
+  exchange (where essentially every Gmail misconfiguration shows up), for Resend
+  a read-only GET against `/domains`. It answers
+  `{"transport": "gmail", "credentials": "valid"}`, or `"invalid"` with the
+  provider's own words and a 502 so `curl --fail` notices. Addresses are
+  stripped, so the output is safe to paste into an issue.
+
+  This exists because of the order people do things in: without it you set the
+  secrets, turn the channel on, and then discover a mistyped refresh token via a
+  queue that silently never empties.
 * **Diagnosing a bad setup.** The drain's response carries the provider's own
   error text alongside the counts, deduped and with addresses stripped
   (`redactEmails`), and the scheduled workflow echoes it into the run log with a

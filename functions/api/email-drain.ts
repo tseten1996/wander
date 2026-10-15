@@ -29,7 +29,7 @@
 */
 import { createClient } from '@supabase/supabase-js'
 import { PUBLIC_SUPABASE_URL } from '../../src/lib/supabase-public'
-import { drainOnce } from '../../src/server/email/drain'
+import { drainOnce, redactEmails } from '../../src/server/email/drain'
 import type { EmailQueue } from '../../src/server/email/drain'
 import { resendProvider } from '../../src/server/email/provider'
 import { gmailProvider } from '../../src/server/email/gmail'
@@ -122,6 +122,64 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     return json({ ok: false, message: 'Unauthorized.' }, 401)
   }
 
+  const transport = gmailReady ? 'gmail' : 'resend'
+  const provider: EmailProvider = gmailReady
+    ? gmailProvider({
+        clientId: env.GMAIL_CLIENT_ID as string,
+        clientSecret: env.GMAIL_CLIENT_SECRET as string,
+        refreshToken: env.GMAIL_REFRESH_TOKEN as string,
+        // Gmail will not send as an arbitrary address: EMAIL_FROM must be the
+        // authenticated account or one of its "Send mail as" aliases.
+        from: env.EMAIL_FROM as string,
+        replyTo: env.EMAIL_REPLY_TO,
+      })
+    : resendProvider(env.RESEND_API_KEY as string, {
+        from: env.EMAIL_FROM as string,
+        replyTo: env.EMAIL_REPLY_TO,
+      })
+
+  // A preflight, requested with {"check": true}: verify the configured
+  // transport's credentials and return WITHOUT draining.
+  //
+  // This exists because of the order people do things in. You set the secrets,
+  // turn the channel on, and then wait for someone to be @-mentioned before
+  // finding out whether any of it was right — so a mistyped refresh token or
+  // an unverified domain is discovered via a queue that silently never
+  // empties. This turns that into a check you run the moment you finish
+  // pasting values in.
+  //
+  // Answered before the Supabase client is built: a credential check should
+  // not need the database, and "your mail credentials are fine" must not
+  // depend on an unrelated service being up.
+  let wantsCheck = false
+  try {
+    const body = (await request.clone().json()) as { check?: unknown }
+    wantsCheck = body?.check === true
+  } catch {
+    // No body, or not JSON — the scheduler posts `{}`. Not a check.
+  }
+
+  if (wantsCheck) {
+    if (!provider.verify) {
+      return json({ ok: true, transport, credentials: 'unchecked' }, 200)
+    }
+    const result = await provider.verify()
+    return json(
+      {
+        ok: result.ok,
+        transport,
+        credentials: result.ok ? 'valid' : 'invalid',
+        // Scrubbed with the same helper the drain report uses: a provider can
+        // echo an address back, and this response is meant to be safe to paste
+        // into an issue or a public run log.
+        ...(result.error ? { error: redactEmails(result.error) } : {}),
+      },
+      // 502 on a bad credential, so a `curl --fail` in a setup script or a
+      // workflow step notices without having to parse the body.
+      result.ok ? 200 : 502,
+    )
+  }
+
   // The service role client. RLS does not apply to it, which is exactly why it
   // exists here (the outbox denies every member credential) and exactly why
   // this endpoint must never grow a parameter that chooses rows.
@@ -152,21 +210,6 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     },
   }
 
-  const provider: EmailProvider = gmailReady
-    ? gmailProvider({
-        clientId: env.GMAIL_CLIENT_ID as string,
-        clientSecret: env.GMAIL_CLIENT_SECRET as string,
-        refreshToken: env.GMAIL_REFRESH_TOKEN as string,
-        // Gmail will not send as an arbitrary address: EMAIL_FROM must be the
-        // authenticated account or one of its "Send mail as" aliases.
-        from: env.EMAIL_FROM as string,
-        replyTo: env.EMAIL_REPLY_TO,
-      })
-    : resendProvider(env.RESEND_API_KEY as string, {
-        from: env.EMAIL_FROM as string,
-        replyTo: env.EMAIL_REPLY_TO,
-      })
-
   // APP_ORIGIN decides where every link in every email points, so a wrong
   // value is a batch of dead ends. Falling back to the canonical GitHub Pages
   // origin (docs/ARCHITECTURE.md §1) keeps a minimally-configured deployment
@@ -175,12 +218,11 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
 
   try {
     const report = await drainOnce(queue, provider, { appOrigin })
-    // Name the transport in the response: when a send fails, the first
-    // question is always "which provider was that?", and the run log should
-    // not require guessing from which secrets happen to be set.
-    // Counts only — a drain's response is safe to log or surface in a CI run
-    // because it never says who was emailed.
-    return json({ ok: true, transport: gmailReady ? 'gmail' : 'resend', ...report }, 200)
+    // Counts and redacted errors only — never who was emailed — so this is
+    // safe in a public run log. `transport` is named because when a send
+    // fails the first question is always "which provider was that?", and the
+    // answer should not require guessing from which secrets happen to be set.
+    return json({ ok: true, transport, ...report }, 200)
   } catch (err) {
     // A thrown drain is a bug or an outage, not a caller error. Report it
     // plainly so the scheduled run goes red and someone looks.
