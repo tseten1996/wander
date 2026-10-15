@@ -32,6 +32,8 @@ import { PUBLIC_SUPABASE_URL } from '../../src/lib/supabase-public'
 import { drainOnce } from '../../src/server/email/drain'
 import type { EmailQueue } from '../../src/server/email/drain'
 import { resendProvider } from '../../src/server/email/provider'
+import { gmailProvider } from '../../src/server/email/gmail'
+import type { EmailProvider } from '../../src/server/email/provider'
 import type { EmailJob } from '../../src/server/email/render'
 
 interface Env {
@@ -42,8 +44,14 @@ interface Env {
   EMAIL_ENABLED?: string
   /** Bearer token the scheduler must present. A TRUE SECRET. */
   EMAIL_DRAIN_SECRET?: string
-  /** Resend API key. A TRUE SECRET. */
+  /** Resend API key. A TRUE SECRET. Set this OR the three GMAIL_* values. */
   RESEND_API_KEY?: string
+  /** Gmail OAuth2 client id. Not secret on its own, but pointless alone. */
+  GMAIL_CLIENT_ID?: string
+  /** Gmail OAuth2 client secret. A TRUE SECRET. */
+  GMAIL_CLIENT_SECRET?: string
+  /** Gmail long-lived refresh token. A TRUE SECRET. */
+  GMAIL_REFRESH_TOKEN?: string
   /** `Wander <trips@yourdomain.com>` — must be on a VERIFIED sending domain. */
   EMAIL_FROM?: string
   /** Where replies go. Optional. */
@@ -92,12 +100,19 @@ function bearer(request: Request): string {
 }
 
 export async function onRequestPost({ request, env }: PagesContext): Promise<Response> {
+  // Which transport this deployment uses is decided by which credentials are
+  // present — Gmail first, because a deployment that has gone to the trouble of
+  // an OAuth refresh token means it. No EMAIL_PROVIDER switch: a flag that can
+  // disagree with the credentials actually configured is a third state to get
+  // wrong, and the credentials are already unambiguous.
+  const gmailReady =
+    !!env.GMAIL_CLIENT_ID && !!env.GMAIL_CLIENT_SECRET && !!env.GMAIL_REFRESH_TOKEN
   const configured =
     env.EMAIL_ENABLED === 'true' &&
     !!env.EMAIL_DRAIN_SECRET &&
     !!env.SUPABASE_SERVICE_KEY &&
-    !!env.RESEND_API_KEY &&
-    !!env.EMAIL_FROM
+    !!env.EMAIL_FROM &&
+    (gmailReady || !!env.RESEND_API_KEY)
   if (!configured) return json({ ok: true, disabled: true }, 200)
 
   // Authenticate the scheduler before anything else touches a credential.
@@ -137,10 +152,20 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     },
   }
 
-  const provider = resendProvider(env.RESEND_API_KEY as string, {
-    from: env.EMAIL_FROM as string,
-    replyTo: env.EMAIL_REPLY_TO,
-  })
+  const provider: EmailProvider = gmailReady
+    ? gmailProvider({
+        clientId: env.GMAIL_CLIENT_ID as string,
+        clientSecret: env.GMAIL_CLIENT_SECRET as string,
+        refreshToken: env.GMAIL_REFRESH_TOKEN as string,
+        // Gmail will not send as an arbitrary address: EMAIL_FROM must be the
+        // authenticated account or one of its "Send mail as" aliases.
+        from: env.EMAIL_FROM as string,
+        replyTo: env.EMAIL_REPLY_TO,
+      })
+    : resendProvider(env.RESEND_API_KEY as string, {
+        from: env.EMAIL_FROM as string,
+        replyTo: env.EMAIL_REPLY_TO,
+      })
 
   // APP_ORIGIN decides where every link in every email points, so a wrong
   // value is a batch of dead ends. Falling back to the canonical GitHub Pages
@@ -150,9 +175,12 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
 
   try {
     const report = await drainOnce(queue, provider, { appOrigin })
+    // Name the transport in the response: when a send fails, the first
+    // question is always "which provider was that?", and the run log should
+    // not require guessing from which secrets happen to be set.
     // Counts only — a drain's response is safe to log or surface in a CI run
     // because it never says who was emailed.
-    return json({ ok: true, ...report }, 200)
+    return json({ ok: true, transport: gmailReady ? 'gmail' : 'resend', ...report }, 200)
   } catch (err) {
     // A thrown drain is a bug or an outage, not a caller error. Report it
     // plainly so the scheduled run goes red and someone looks.

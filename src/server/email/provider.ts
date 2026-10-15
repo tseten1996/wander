@@ -1,11 +1,26 @@
 /*
   Transport for the email channel (epic #181).
 
-  One interface, one implementation, same shape and same reasoning as
-  src/server/ai/provider.ts: the interface exists so the provider decision stays
-  cheap to reverse — swapping Resend for Postmark, SES or plain SMTP means
-  writing a second `send()` and nothing else — not because several providers are
-  expected to coexist.
+  One interface, now TWO implementations — the interface earning its keep rather
+  than contradicting its own comment. Resend lives here; Gmail lives in
+  ./gmail.ts. Adding it cost one new file and one line of selection in
+  functions/api/email-drain.ts, with the renderer, the drain, the outbox, the
+  schema and every existing test untouched.
+
+  Which one a deployment uses is a real decision, not a preference:
+
+    * Resend — and every transactional provider — will not deliver to arbitrary
+      recipients until you own and verify a DOMAIN. Better deliverability and a
+      genuine "Wander" sender identity, but a hard stop until that domain
+      exists: the queue fills and every send is rejected.
+    * Gmail needs no domain, because it sends as an account that already
+      exists. So the channel can actually work today. The trade is that mail
+      arrives from a person's address rather than the product's, and replies
+      land in their inbox.
+
+  Gmail is therefore the sensible default for a free-tier project with no
+  domain, and Resend the thing to move to once there is one. The drain picks
+  whichever has credentials configured.
 
   Runtime-agnostic and import-free, so it runs unchanged on Workers and can be
   unit-tested under `node --test` with a stub `fetch`.

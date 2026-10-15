@@ -656,3 +656,202 @@ test('a drain report never carries an address', async () => {
   assert.deepEqual(Object.keys(report).sort(),
     ['claimed', 'digestsQueued', 'dropped', 'errors', 'retrying', 'sent'])
 })
+
+/* ── gmail: the transport that needs no verified domain ──────────────────── */
+
+const {
+  base64Utf8, base64Url, encodeHeader, wrap76, buildMimeMessage,
+  isRetryableGmailStatus, gmailProvider,
+} = await import('../src/server/email/gmail.ts')
+
+const creds = {
+  clientId: 'cid.apps.googleusercontent.com',
+  clientSecret: 'secret',
+  refreshToken: 'refresh-token',
+  from: 'Wander <someone@gmail.com>',
+}
+
+/** A token endpoint + send endpoint stub. Returns the captured requests. */
+function stubGoogle({ tokenStatus = 200, sendStatus = 200, expiresIn = 3600 } = {}) {
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init })
+    if (String(url).includes('oauth2.googleapis.com')) {
+      return tokenStatus === 200
+        ? { ok: true, status: 200, json: async () => ({ access_token: 'at-1', expires_in: expiresIn }) }
+        : { ok: false, status: tokenStatus, text: async () => 'invalid_grant' }
+    }
+    return sendStatus === 200
+      ? { ok: true, status: 200, json: async () => ({ id: 'gmail-msg-1' }) }
+      : { ok: false, status: sendStatus, text: async () => 'gmail said no' }
+  }
+  return calls
+}
+
+const mail = () => ({
+  to: 'friend@example.com',
+  subject: 'Tenzin mentioned you · Kyoto in Autumn',
+  html: '<p>hello</p>',
+  text: 'hello',
+})
+
+test('base64Utf8 handles multi-byte characters btoa alone would reject', () => {
+  // This is not hypothetical: every subject this app generates contains '·',
+  // and btoa throws on any code point above U+00FF.
+  assert.equal(base64Utf8('·'), 'wrc=')
+  assert.equal(base64Utf8('a·b'), 'YcK3Yg==')
+  assert.doesNotThrow(() => base64Utf8('You’re invited — Kyoto 🗾'))
+})
+
+test('base64Url uses the URL-safe alphabet and drops padding', () => {
+  const out = base64Url('ûÿ')
+  assert.ok(!out.includes('+') && !out.includes('/') && !out.includes('='))
+})
+
+test('encodeHeader leaves pure ASCII readable', () => {
+  assert.equal(encodeHeader('A plain subject'), 'A plain subject')
+})
+
+test('encodeHeader RFC 2047-encodes a non-ASCII subject', () => {
+  // A raw 8-bit header is invalid and renders as mojibake or gets dropped.
+  const encoded = encodeHeader('Tenzin mentioned you · Kyoto')
+  assert.match(encoded, /^=\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=$/)
+  assert.equal(
+    Buffer.from(encoded.slice(10, -2), 'base64').toString('utf8'),
+    'Tenzin mentioned you · Kyoto',
+  )
+})
+
+test('wrap76 keeps base64 body lines legal', () => {
+  const lines = wrap76('x'.repeat(200)).split('\r\n')
+  assert.equal(lines.length, 3)
+  assert.ok(lines.every((l) => l.length <= 76))
+})
+
+test('the MIME message puts text BEFORE html', () => {
+  // Load-bearing: a client renders the LAST part it understands, so reversing
+  // these shows everyone plain text.
+  const msg = buildMimeMessage(mail(), { from: creds.from })
+  assert.ok(msg.indexOf('text/plain') < msg.indexOf('text/html'))
+})
+
+test('the MIME message is well-formed and self-consistent', () => {
+  const msg = buildMimeMessage(mail(), { from: creds.from, replyTo: 'r@x.test' })
+  const boundary = /boundary="([^"]+)"/.exec(msg)[1]
+  assert.ok(msg.includes(`From: ${creds.from}`))
+  assert.ok(msg.includes('To: friend@example.com'))
+  assert.ok(msg.includes('Reply-To: r@x.test'))
+  assert.ok(msg.includes('MIME-Version: 1.0'))
+  // Opens both parts and closes the multipart.
+  assert.equal(msg.split(`--${boundary}`).length - 1, 3)
+  assert.ok(msg.trimEnd().endsWith(`--${boundary}--`))
+  // The boundary must not appear inside either base64 body.
+  assert.ok(!base64Utf8(mail().html).includes(boundary))
+})
+
+test('the MIME message carries both bodies, decodable', () => {
+  const msg = buildMimeMessage(mail(), { from: creds.from })
+  const parts = msg.split(/--=_wander_[a-z0-9]+/)
+  const decoded = parts
+    .filter((p) => p.includes('Content-Transfer-Encoding: base64'))
+    .map((p) => Buffer.from(p.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8'))
+  assert.deepEqual(decoded, ['hello', '<p>hello</p>'])
+})
+
+test('Reply-To is omitted when not configured', () => {
+  assert.ok(!buildMimeMessage(mail(), { from: creds.from }).includes('Reply-To:'))
+})
+
+test('gmail send exchanges the refresh token then posts the message', async () => {
+  const calls = stubGoogle()
+  const result = await gmailProvider(creds).send(mail())
+  assert.deepEqual(result, { ok: true, id: 'gmail-msg-1', retryable: false })
+  assert.equal(calls.length, 2)
+  assert.match(String(calls[0].url), /oauth2\.googleapis\.com/)
+  assert.match(calls[0].init.body, /grant_type=refresh_token/)
+  assert.match(String(calls[1].url), /gmail\.googleapis\.com.*messages\/send/)
+  assert.equal(calls[1].init.headers.authorization, 'Bearer at-1')
+  // The body is a base64url raw message, not JSON fields.
+  const raw = JSON.parse(calls[1].init.body).raw
+  assert.ok(!/[+/=]/.test(raw), 'raw must be base64url')
+  assert.match(Buffer.from(raw, 'base64url').toString('utf8'), /^From: Wander </)
+})
+
+test('the access token is reused across a batch, not re-fetched per message', async () => {
+  // A twenty-message pass must not perform twenty token exchanges.
+  const calls = stubGoogle()
+  const provider = gmailProvider(creds)
+  for (let i = 0; i < 5; i++) await provider.send(mail())
+  const tokenCalls = calls.filter((c) => String(c.url).includes('oauth2'))
+  assert.equal(tokenCalls.length, 1)
+  assert.equal(calls.length, 6)
+})
+
+test('a near-expiry token is refreshed rather than reused', async () => {
+  // expires_in below the skew means the cache is immediately stale.
+  const calls = stubGoogle({ expiresIn: 10 })
+  const provider = gmailProvider(creds)
+  await provider.send(mail())
+  await provider.send(mail())
+  assert.equal(calls.filter((c) => String(c.url).includes('oauth2')).length, 2)
+})
+
+test('a revoked refresh token is retryable so re-consenting drains the backlog', async () => {
+  stubGoogle({ tokenStatus: 400 })
+  const result = await gmailProvider(creds).send(mail())
+  assert.equal(result.ok, false)
+  assert.equal(result.retryable, true)
+  assert.match(result.error, /gmail token 400.*invalid_grant/)
+})
+
+test('a 401 mid-batch clears the cached token so the next send refreshes', async () => {
+  let sendStatus = 401
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push(String(url))
+    if (String(url).includes('oauth2')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 'at', expires_in: 3600 }) }
+    }
+    const s = sendStatus
+    sendStatus = 200
+    return s === 200
+      ? { ok: true, status: 200, json: async () => ({ id: 'ok' }) }
+      : { ok: false, status: 401, text: async () => 'expired' }
+  }
+  const provider = gmailProvider(creds)
+  const first = await provider.send(mail())
+  assert.equal(first.retryable, true)
+  await provider.send(mail())
+  // Two token exchanges: the 401 invalidated the cache.
+  assert.equal(calls.filter((u) => u.includes('oauth2')).length, 2)
+})
+
+test('gmail retry classification matches the failure kinds', () => {
+  for (const s of [429, 500, 503, 401, 403]) {
+    assert.equal(isRetryableGmailStatus(s), true, `${s} should be retryable`)
+  }
+  // A malformed address or a From the account may not use fails forever.
+  for (const s of [400, 404, 422]) {
+    assert.equal(isRetryableGmailStatus(s), false, `${s} should be permanent`)
+  }
+})
+
+test('a thrown fetch is retryable', async () => {
+  globalThis.fetch = async () => {
+    throw new Error('network down')
+  }
+  const result = await gmailProvider(creds).send(mail())
+  assert.equal(result.retryable, true)
+  assert.match(result.error, /gmail token failed: network down/)
+})
+
+test('gmail plugs into the drain with no change to the drain', async () => {
+  // The point of the EmailProvider interface: drainOnce cannot tell them apart.
+  stubGoogle()
+  const queue = stubQueue([job({ id: 'a' }), job({ id: 'b' })])
+  const report = await drainOnce(queue, gmailProvider(creds), {
+    appOrigin: 'https://app.test',
+  })
+  assert.equal(report.sent, 2)
+  assert.deepEqual(report.errors, [])
+})

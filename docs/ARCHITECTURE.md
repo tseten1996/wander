@@ -296,7 +296,8 @@ Notable decisions:
   under a trailing per-recipient daily cap, enforced **within a single batch** as
   well as across calls.
 
-  Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow. It is
+  Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow,
+  over whichever transport is configured (Gmail or Resend — see §7). It is
   the **only** endpoint holding a service role key, which is acceptable precisely
   because it has no member caller: it is authenticated by a shared secret, takes
   no input that selects rows, and returns counts. Each event waits two minutes
@@ -472,27 +473,62 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
 ### Turning on email notifications
 
 The email channel is **dark until configured** — no flag, no toggle, no
-requests, behaviour identical to before the feature existed. It needs a
-**verified sending domain**, which is the one piece that cannot be faked: a
-provider will not deliver to arbitrary recipients from an unverified domain, so
-without this step the queue fills and the drain reports failures.
+requests, behaviour identical to before the feature existed.
 
-1. Verify a domain with the mail provider (Resend) and note a `from` address on
-   it.
-2. Cloudflare Pages → Settings → Environment variables, **production**:
-   | Name | Kind | Value |
-   |---|---|---|
-   | `EMAIL_ENABLED` | plain | `true` |
-   | `EMAIL_FROM` | plain | `Wander <trips@yourdomain>` — must be the verified domain |
-   | `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
-   | `EMAIL_REPLY_TO` | plain | optional |
-   | `RESEND_API_KEY` | **secret** | provider key |
-   | `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
-   | `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
-3. Repo secrets, for the scheduler: `EMAIL_DRAIN_URL`
-   (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
-   value as above). `.github/workflows/email-drain.yml` exits 0 while these are
-   unset, so it stays green until you are ready.
+**Pick a transport first.** The drain supports two, and the choice is a real
+trade rather than a preference:
+
+| | Gmail | Resend |
+|---|---|---|
+| Needs a verified domain | **no** | **yes — hard stop without one** |
+| Sends as | a person's Gmail account | `trips@yourdomain` |
+| Replies go to | that person's inbox | wherever you point `EMAIL_REPLY_TO` |
+| Daily ceiling | ~500 (free) / 2,000 (Workspace) | 100/day, 3,000/month on the free tier |
+| Deliverability | good, but it is personal mail | built for transactional mail |
+
+Gmail is the sensible default for a free-tier project with no domain — it works
+today. Resend is where to move once a domain exists. The drain picks whichever
+has credentials, Gmail first; switching is purely configuration, and no code
+changes (see `src/server/email/provider.ts`).
+
+**Shared settings** — Cloudflare Pages → Settings → Environment variables,
+**production**:
+
+| Name | Kind | Value |
+|---|---|---|
+| `EMAIL_ENABLED` | plain | `true` |
+| `EMAIL_FROM` | plain | the sender — see the per-transport note below |
+| `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
+| `EMAIL_REPLY_TO` | plain | optional |
+| `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
+| `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
+
+**For Gmail**, add three more and make `EMAIL_FROM` the authenticated account
+(Gmail rejects a From it does not own — it must be that account or one of its
+"Send mail as" aliases):
+
+| Name | Kind |
+|---|---|
+| `GMAIL_CLIENT_ID` | plain |
+| `GMAIL_CLIENT_SECRET` | **secret** |
+| `GMAIL_REFRESH_TOKEN` | **secret** |
+
+Getting the refresh token is a one-time, out-of-band OAuth consent: create an
+OAuth client (Desktop app) in a Google Cloud project with the Gmail API
+enabled, request the `https://www.googleapis.com/auth/gmail.send` scope — the
+narrowest one that works; it cannot read mail — and exchange the resulting code
+for a refresh token. Store only the refresh token; the drain exchanges it for a
+short-lived access token per pass and caches that in memory for the pass only.
+
+**For Resend**, verify a domain, set `RESEND_API_KEY` as a secret, and make
+`EMAIL_FROM` an address on that domain.
+
+**Finally, the scheduler.** Repo secrets `EMAIL_DRAIN_URL`
+(`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
+value as above). `.github/workflows/email-drain.yml` exits 0 while these are
+unset, so it stays green until you are ready. The drain's response names the
+transport it used, so a run log never leaves you guessing which one was
+active.
 * **Diagnosing a bad setup.** The drain's response carries the provider's own
   error text alongside the counts, deduped and with addresses stripped
   (`redactEmails`), and the scheduled workflow echoes it into the run log with a
