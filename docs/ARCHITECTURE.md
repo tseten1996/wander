@@ -513,12 +513,24 @@ changes (see `src/server/email/provider.ts`).
 | `GMAIL_CLIENT_SECRET` | **secret** |
 | `GMAIL_REFRESH_TOKEN` | **secret** |
 
-Getting the refresh token is a one-time, out-of-band OAuth consent: create an
-OAuth client (Desktop app) in a Google Cloud project with the Gmail API
-enabled, request the `https://www.googleapis.com/auth/gmail.send` scope — the
-narrowest one that works; it cannot read mail — and exchange the resulting code
-for a refresh token. Store only the refresh token; the drain exchanges it for a
-short-lived access token per pass and caches that in memory for the pass only.
+Getting the refresh token is a one-time OAuth consent, and
+`scripts/gmail-refresh-token.mjs` does it for you:
+
+```
+GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... npm run gmail:token
+```
+
+It runs a one-shot loopback server, prints a consent URL, and prints the
+refresh token once you approve. Locally — nothing leaves your machine except
+the standard exchange with Google, which is the reason not to use the public
+OAuth Playground for this. The script's header has the four Google Cloud setup
+steps; you do **not** need to publish the consent screen or get it verified,
+since adding yourself as a test user is enough for an app with one user.
+
+It requests only `https://www.googleapis.com/auth/gmail.send` — the narrowest
+scope that can send, and one that cannot read, search or delete mail. Store
+only the refresh token; the drain exchanges it for a short-lived access token
+per pass and caches that in memory for that pass alone.
 
 **For Resend**, verify a domain, set `RESEND_API_KEY` as a secret, and make
 `EMAIL_FROM` an address on that domain.
