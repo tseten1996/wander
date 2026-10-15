@@ -271,6 +271,7 @@ export function BookingCostChip({ entryId }: { entryId: string }) {
     <button
       type="button"
       onClick={() => navigate(budgetHref(trip.id, entryId))}
+      data-tap-target
       className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-line-strong hover:text-ink"
     >
       <PiggyBank className="size-3.5 shrink-0 text-primary" aria-hidden />

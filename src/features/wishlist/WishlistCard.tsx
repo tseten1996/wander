@@ -227,6 +227,7 @@ function LinkChip({ url }: { url: string }) {
       href={url}
       target="_blank"
       rel="noreferrer noopener"
+      data-tap-target
       className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-line-strong hover:text-ink"
     >
       <ExternalLink className="size-3.5 shrink-0" aria-hidden />
