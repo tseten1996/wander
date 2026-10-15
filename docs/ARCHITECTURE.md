@@ -296,7 +296,8 @@ Notable decisions:
   under a trailing per-recipient daily cap, enforced **within a single batch** as
   well as across calls.
 
-  Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow. It is
+  Sending is `functions/api/email-drain.ts`, driven by a scheduled workflow,
+  over Gmail (see §7). It is
   the **only** endpoint holding a service role key, which is acceptable precisely
   because it has no member caller: it is authenticated by a shared secret, takes
   no input that selects rows, and returns counts. Each event waits two minutes
@@ -472,27 +473,92 @@ Tokens are defined once in `index.css` with Tailwind v4 `@theme`:
 ### Turning on email notifications
 
 The email channel is **dark until configured** — no flag, no toggle, no
-requests, behaviour identical to before the feature existed. It needs a
-**verified sending domain**, which is the one piece that cannot be faked: a
-provider will not deliver to arbitrary recipients from an unverified domain, so
-without this step the queue fills and the drain reports failures.
+requests, behaviour identical to before the feature existed.
 
-1. Verify a domain with the mail provider (Resend) and note a `from` address on
-   it.
-2. Cloudflare Pages → Settings → Environment variables, **production**:
-   | Name | Kind | Value |
-   |---|---|---|
-   | `EMAIL_ENABLED` | plain | `true` |
-   | `EMAIL_FROM` | plain | `Wander <trips@yourdomain>` — must be the verified domain |
-   | `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
-   | `EMAIL_REPLY_TO` | plain | optional |
-   | `RESEND_API_KEY` | **secret** | provider key |
-   | `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
-   | `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
-3. Repo secrets, for the scheduler: `EMAIL_DRAIN_URL`
-   (`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
-   value as above). `.github/workflows/email-drain.yml` exits 0 while these are
-   unset, so it stays green until you are ready.
+**One transport: Gmail.** Resend — and every transactional provider — refuses
+to deliver to arbitrary recipients until you own and verify a domain. This
+project has no domain, so that was not a "better option for later", it was dead
+configuration that could silently become the active transport if a stray
+`RESEND_API_KEY` were ever set. Gmail needs no domain: it sends as an account
+that already exists.
+
+The trade is identity — mail arrives from a person's address rather than the
+product's, and replies land in their inbox — and that is the right trade until
+there is a domain. Gmail's ceiling (~500 recipients/day on a free account,
+2,000 on Workspace) is far above what the per-recipient cap of 12/24h and the
+six-hourly digest can generate, so the binding constraint stays ours.
+
+The Resend implementation lived in `src/server/email/provider.ts` through
+commit `cfd24ae` and is one `git revert` away if a domain ever appears; nothing
+outside the `EmailProvider` contract ever knew which transport was in use, which
+is why adding it and removing it both cost about one file.
+
+**Settings** — Cloudflare Pages → Settings → Environment variables,
+**production**:
+
+| Name | Kind | Value |
+|---|---|---|
+| `EMAIL_ENABLED` | plain | `true` |
+| `EMAIL_FROM` | plain | the Gmail account the token was minted for |
+| `APP_ORIGIN` | plain | the origin every email links to, e.g. `https://tseten1996.github.io/wander` |
+| `EMAIL_REPLY_TO` | plain | optional |
+| `SUPABASE_SERVICE_KEY` | **secret** | service role key — the strongest credential in the project |
+| `EMAIL_DRAIN_SECRET` | **secret** | any long random string |
+
+Plus the three Gmail credentials. `EMAIL_FROM` must be the authenticated
+account — Gmail rejects a From it does not own, so it has to be that account
+or one of its "Send mail as" aliases.
+
+| Name | Kind |
+|---|---|
+| `GMAIL_CLIENT_ID` | plain |
+| `GMAIL_CLIENT_SECRET` | **secret** |
+| `GMAIL_REFRESH_TOKEN` | **secret** |
+
+Getting the refresh token is a one-time OAuth consent, and
+`scripts/gmail-refresh-token.mjs` does it for you:
+
+```
+GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... npm run gmail:token
+```
+
+It runs a one-shot loopback server, prints a consent URL, and prints the
+refresh token once you approve. Locally — nothing leaves your machine except
+the standard exchange with Google, which is the reason not to use the public
+OAuth Playground for this. The script's header has the four Google Cloud setup
+steps; you do **not** need to publish the consent screen or get it verified,
+since adding yourself as a test user is enough for an app with one user.
+
+It requests only `https://www.googleapis.com/auth/gmail.send` — the narrowest
+scope that can send, and one that cannot read, search or delete mail. Store
+only the refresh token; the drain exchanges it for a short-lived access token
+per pass and caches that in memory for that pass alone.
+
+**Finally, the scheduler.** Repo secrets `EMAIL_DRAIN_URL`
+(`https://<deployment>/api/email-drain`) and `EMAIL_DRAIN_SECRET` (the same
+value as above). `.github/workflows/email-drain.yml` exits 0 while these are
+unset, so it stays green until you are ready. The drain's response names the
+transport it used, so a run log never leaves you guessing which one was
+active.
+* **Checking the setup before trusting it.** Once the secrets are in place:
+
+  ```
+  curl -sS -X POST https://<deployment>/api/email-drain \
+    -H "Authorization: Bearer $EMAIL_DRAIN_SECRET" \
+    -H 'content-type: application/json' -d '{"check": true}'
+  ```
+
+  It verifies the configured transport's credentials and returns **without
+  draining or sending anything** — it performs only the refresh-token
+  exchange, which is where essentially every Gmail misconfiguration shows up.
+  It answers
+  `{"transport": "gmail", "credentials": "valid"}`, or `"invalid"` with the
+  provider's own words and a 502 so `curl --fail` notices. Addresses are
+  stripped, so the output is safe to paste into an issue.
+
+  This exists because of the order people do things in: without it you set the
+  secrets, turn the channel on, and then discover a mistyped refresh token via a
+  queue that silently never empties.
 * **Diagnosing a bad setup.** The drain's response carries the provider's own
   error text alongside the counts, deduped and with addresses stripped
   (`redactEmails`), and the scheduled workflow echoes it into the run log with a
@@ -503,7 +569,7 @@ without this step the queue fills and the drain reports failures.
 * **Verifying it without sending anything.** `npm run test:email-pipeline`
   (needs `DATABASE_URL` pointing at the throwaway Postgres
   `scripts/run-rls-tests.sh` prepares) drives the **real** drain code with the
-  **real** SQL functions, simulating only `api.resend.com`. It exists because
+  **real** SQL functions, simulating only Google's token and send endpoints. It exists because
   the unit tests stub the database and the RLS suite stubs the application, so
   both can pass while the seam between them is broken — a renamed RPC argument,
   or the deep-link builder in the migration drifting from
