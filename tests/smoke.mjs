@@ -823,8 +823,18 @@ async function routeSupabase(route) {
       chatMessages.push(row)
       return json({ id: row.id }, 201)
     }
-    // Already in created_at-ascending order (seed first, then each send).
-    if (method === 'GET') return json([...chatMessages])
+    // The store is kept created_at-ascending (seed first, then each send).
+    // fetchMessages reads the NEWEST 300 (`order=created_at.desc&limit=300`,
+    // then reverses to ascending for display, #395), so mirror real PostgREST:
+    // honour the order direction and the row cap the client asks for.
+    if (method === 'GET') {
+      const desc = search.includes('created_at.desc')
+      const limitMatch = search.match(/limit=(\d+)/)
+      const limit = limitMatch ? Number(limitMatch[1]) : chatMessages.length
+      // Newest `limit` rows, in the requested direction.
+      const newest = chatMessages.slice(-limit)
+      return json(desc ? [...newest].reverse() : newest)
+    }
     return json([]) // edit/delete/pin PATCH + DELETE unused by this scenario
   }
 
@@ -1973,6 +1983,17 @@ async function runChat(browser) {
     // has cleared — the send round-tripped end to end.
     await page.getByText(sent).waitFor({ state: 'visible', timeout: 10_000 })
     ok('a sent message appears in the thread')
+
+    // Oldest-first render survives the newest-300 flip (#395): the seeded
+    // (older) message stays above the just-sent (newer) one. This fails if the
+    // descending fetch were rendered without the reverse back to ascending.
+    const seedBox = await page.getByText('Kicking off the planning here 🎒').boundingBox()
+    const sentBox = await page.getByText(sent).boundingBox()
+    if (!seedBox || !sentBox || seedBox.y >= sentBox.y) {
+      throw new Error('messages not rendered oldest-first (seed should sit above the newer send)')
+    }
+    ok('messages render oldest-first (newest-300 fetch reversed back to ascending)')
+
     if ((await composer.inputValue()) !== '') {
       throw new Error('composer did not clear after a successful send')
     }

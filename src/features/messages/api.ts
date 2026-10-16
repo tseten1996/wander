@@ -39,20 +39,25 @@ export function validateChatImage(file: File): string | null {
   return null
 }
 
-/** The trip's chat messages (capped at 300, oldest first) with reactions
- *  embedded and image messages' short-lived signed URLs resolved. Exported as a
- *  plain function (not just the hook) so the global search palette can warm this
- *  same cache key without touching Supabase itself — this api.ts stays the only
- *  place that reads the table and mints the image URLs. */
+/** The trip's chat messages — the newest 300, returned oldest-first — with
+ *  reactions embedded and image messages' short-lived signed URLs resolved.
+ *  The cap takes the newest 300 (descending + limit) and the rows are reversed
+ *  back to ascending for display: on a trip past 300 messages the thread shows
+ *  the recent conversation, not the first 300 messages frozen at trip creation.
+ *  Exported as a plain function (not just the hook) so the global search palette
+ *  can warm this same cache key without touching Supabase itself — this api.ts
+ *  stays the only place that reads the table and mints the image URLs. */
 export async function fetchMessages(tripId: string): Promise<MessageWithReactions[]> {
   const { data, error } = await supabase
     .from('messages')
     .select('*, message_reactions(*)')
     .eq('trip_id', tripId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(300)
   if (error) throw error
-  const rows = data as MessageWithReactions[]
+  // Fetched newest-first so the 300-row cap keeps the most recent messages;
+  // reverse to the oldest-first order the thread renders in.
+  const rows = (data as MessageWithReactions[]).reverse()
   // The bucket is private, so an image is readable only through a short-lived
   // signed URL that the SELECT policy gates on membership. Mint them for
   // every image message on this page in one round-trip and attach them, so
