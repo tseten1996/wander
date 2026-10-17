@@ -2,10 +2,13 @@ import * as React from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { motion } from '@/lib/motion'
-import { CalendarClock, MapPin, Navigation } from 'lucide-react'
+import { BedDouble, CalendarClock, MapPin, Navigation } from 'lucide-react'
 import { useTripContext } from '@/hooks/useTrip'
 import { useItinerary } from '@/features/itinerary/api'
 import { useDestinations } from '@/features/destinations/api'
+import { useStays } from '@/features/stays/api'
+import { useTransport } from '@/features/transport/api'
+import { MODE_MAP } from '@/features/transport/modes'
 import { useTripWeather } from '@/hooks/useWeather'
 import { useTempUnit } from '@/hooks/useTempUnit'
 import { describeWeather } from '@/lib/weather'
@@ -17,7 +20,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/misc'
 import { cn, formatTime, longDate } from '@/lib/utils'
-import { todaysItems, nextUpcomingId } from './today'
+import {
+  todaysItems,
+  todaysTimeline,
+  nextTimelineId,
+  stayTransitionsForDay,
+  type DayEntry,
+  type StayTransition,
+} from './today'
 import type { ItineraryItem } from '@/types'
 
 const fadeUp = {
@@ -81,6 +91,71 @@ function TodaySpanRow({ item, day }: { item: ItineraryItem; day: string }) {
   )
 }
 
+/** A check-in / check-out landing on today (#405), pinned with the day's bands.
+ *  Stays carry date-only windows, so there is no clock time to show — only which
+ *  place the group is leaving this morning or arriving at today. */
+function StayTransitionRow({ transition }: { transition: StayTransition }) {
+  const checkOut = transition.kind === 'check-out'
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken/60 px-3 py-2">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-faint text-primary">
+        <BedDouble className="size-4.5" aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold">
+          {checkOut ? 'Check out' : 'Check in'}
+          <span className="font-normal text-muted">{checkOut ? ' of ' : ' to '}</span>
+          {transition.stay.name}
+        </p>
+        <p className="truncate text-xs text-muted">
+          {checkOut ? 'Leaving today' : 'Tonight’s stay'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/** A transport hop departing or arriving today (#405), interleaved by wall-clock
+ *  time with the day's itinerary rows; the next upcoming one is lifted with the
+ *  same primary tint and "Next" tag as TodayRow so the group sees what's next. */
+function TodayTransportRow({
+  entry,
+  isNext,
+}: {
+  entry: Extract<DayEntry, { kind: 'transport' }>
+  isNext: boolean
+}) {
+  const { hop, direction, time } = entry
+  const { Icon, label } = MODE_MAP[hop.mode]
+  const route = [hop.depart_place, hop.arrive_place].filter(Boolean).join(' → ') || label
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-3 rounded-xl p-2.5',
+        isNext && 'bg-primary-faint ring-1 ring-primary/40'
+      )}
+      aria-current={isNext ? 'true' : undefined}
+    >
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-on-primary">
+        <Icon className="size-4.5" aria-label={label} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-semibold">{route}</p>
+          {isNext && (
+            <span className="shrink-0 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-on-primary">
+              Next
+            </span>
+          )}
+        </div>
+        <p className="truncate text-xs text-muted">
+          {`${direction === 'depart' ? 'Departs' : 'Arrives'} ${formatTime(time)}`}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 /** "Directions" for today's route — the same whole-day hand-off the itinerary
  *  offers (#167), pointing the maps app at today's ordered, geocoded stops. */
 function TodayDirections({ items }: { items: ItineraryItem[] }) {
@@ -129,15 +204,28 @@ export function Today({ today }: { today: string }) {
   const destinations = useDestinations(trip.id).data ?? []
   const weather = useTripWeather(trip, destinations)
   const { unit } = useTempUnit()
+  // Logistics (#405): already cached for the trip by the calendar/search — reused
+  // here, not re-fetched, so the card dedupes against the live cache like the rest.
+  const stays = useStays(trip.id).data ?? []
+  const transport = useTransport(trip.id).data ?? []
 
   const items = itinerary.data ?? []
   const dayItems = React.useMemo(() => todaysItems(items, today), [items, today])
   const spans = React.useMemo(() => spansCovering(items, today), [items, today])
+  // Itinerary items and today's transport hops, merged in the order they happen.
+  const timeline = React.useMemo(
+    () => todaysTimeline(items, transport, today),
+    [items, transport, today]
+  )
+  const stayTransitions = React.useMemo(
+    () => stayTransitionsForDay(today, stays),
+    [stays, today]
+  )
   // "Now" only needs recomputing each render — there's no live clock elsewhere
   // in the app; a refetch or reopen re-marks the next stop, which is enough.
-  const nextId = nextUpcomingId(dayItems, format(new Date(), 'HH:mm:ss'))
+  const nextId = nextTimelineId(timeline, format(new Date(), 'HH:mm'))
   const todayWeather = weather.data.get(today)
-  const empty = dayItems.length === 0 && spans.length === 0
+  const empty = timeline.length === 0 && spans.length === 0 && stayTransitions.length === 0
 
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.3, delay: 0.05 }}>
@@ -179,18 +267,25 @@ export function Today({ today }: { today: string }) {
             </div>
           ) : (
             <>
-              {spans.length > 0 && (
+              {(spans.length > 0 || stayTransitions.length > 0) && (
                 <div className="space-y-2">
                   {spans.map((s) => (
                     <TodaySpanRow key={s.id} item={s} day={today} />
                   ))}
+                  {stayTransitions.map((t) => (
+                    <StayTransitionRow key={`${t.kind}-${t.stay.id}`} transition={t} />
+                  ))}
                 </div>
               )}
-              {dayItems.length > 0 ? (
+              {timeline.length > 0 ? (
                 <div className="space-y-1.5">
-                  {dayItems.map((item) => (
-                    <TodayRow key={item.id} item={item} isNext={item.id === nextId} />
-                  ))}
+                  {timeline.map((entry) =>
+                    entry.kind === 'item' ? (
+                      <TodayRow key={entry.id} item={entry.item} isNext={entry.id === nextId} />
+                    ) : (
+                      <TodayTransportRow key={entry.id} entry={entry} isNext={entry.id === nextId} />
+                    )
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-muted">

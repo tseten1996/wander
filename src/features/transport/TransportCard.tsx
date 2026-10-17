@@ -3,8 +3,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  ArrowRight, Bus, Car, Pencil, Plane,
-  Plus, Route, Ship, TrainFront, Trash2,
+  ArrowRight, Pencil, Plus, Route, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTripContext } from '@/hooks/useTrip'
@@ -32,22 +31,13 @@ import {
 } from '@/components/ui/dialog'
 import { formatTime } from '@/lib/utils'
 import { searchAnchorId } from '@/features/search/anchor'
-import type { Transport, TransportMode } from '@/types'
+import type { Transport } from '@/types'
 
-/** The five modes, in display order, with their icon and label. Single source
- *  for the select options, the card icon, the readable mode name, and the
- *  calendar surface (which imports `MODE_MAP` to render a hop's mode). */
-export const MODES: { value: TransportMode; label: string; Icon: typeof Plane }[] = [
-  { value: 'flight', label: 'Flight', Icon: Plane },
-  { value: 'train', label: 'Train', Icon: TrainFront },
-  { value: 'bus', label: 'Bus', Icon: Bus },
-  { value: 'car', label: 'Car', Icon: Car },
-  { value: 'ferry', label: 'Ferry', Icon: Ship },
-]
-export const MODE_MAP = Object.fromEntries(MODES.map((m) => [m.value, m])) as Record<
-  TransportMode,
-  (typeof MODES)[number]
->
+// The mode icon/label map lives in its own icon-only module (`./modes`) so a
+// light consumer like the dashboard's Today card can read it without pulling in
+// this editor's form code; re-exported here where the calendar still imports it.
+import { MODES, MODE_MAP } from './modes'
+export { MODES, MODE_MAP }
 
 const transportSchema = z
   .object({
