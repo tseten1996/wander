@@ -29,6 +29,7 @@ import {
   applyMention, detectActiveMention, matchMembers, mentionsToPlainText,
   type ActiveMention,
 } from './mentions'
+import { advanceSeenId } from './reads'
 
 const EMOJI = ['👍', '❤️', '😂', '😮', '🎉', '🤔']
 const MESSAGE_MAX_LENGTH = 4000
@@ -294,13 +295,19 @@ export default function ChatPage() {
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const count = messages.data?.length ?? 0
-  // Keep the server-side read marker current while this page is open, so the
-  // chat digest (epic #181) never mails someone about messages they have read.
-  // Keyed on the newest message id, so a conversation read live stays marked.
-  useMarkChatRead(trip.id, me.id, messages.data?.[count - 1]?.id)
+  const newestId = messages.data?.[count - 1]?.id
   // Whether the reader is currently at/near the live edge. Starts true so the
   // first load lands at the bottom; a scroll handler keeps it current.
   const atBottomRef = React.useRef(true)
+  // The newest message the reader has actually reached the live edge for (#396).
+  // While scrolled up (the "N new messages" pill showing) this holds, so the
+  // server read marker — and the chat digest that reads it — is never advanced
+  // past messages they have not seen; scrolling back to the bottom catches it up.
+  const [seenId, setSeenId] = React.useState<string | undefined>(newestId)
+  // Keep the server-side read marker current while this page is open, so the
+  // chat digest (epic #181) never mails someone about messages they have read —
+  // keyed on the gated `seenId`, and gated again on unmount by the live edge.
+  useMarkChatRead(trip.id, me.id, seenId, atBottomRef)
   // Set when the local member sends: their own message always brings them down,
   // even if they were reading older chat when they hit send.
   const forceScrollRef = React.useRef(false)
@@ -319,6 +326,9 @@ export default function ChatPage() {
     // Scrolling back down to the live edge clears the unread pill. setState bails
     // out when already 0, so this is a no-op on the common mid-scroll events.
     if (atBottom) setNewCount(0)
+    // Reaching the live edge catches the read marker up to the newest message;
+    // scrolled up it holds (#396).
+    setSeenId((prev) => advanceSeenId(prev, newestId, atBottom))
   }
 
   function jumpToLatest() {
@@ -326,6 +336,7 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' })
     atBottomRef.current = true
     setNewCount(0)
+    setSeenId((prev) => advanceSeenId(prev, newestId, true))
   }
 
   function attachImage(file: File | null | undefined) {
@@ -387,11 +398,14 @@ export default function ChatPage() {
     // Following to the live edge means nothing is unread — clear the pill even
     // when a force-scroll (the reader sent while scrolled up) brought us here.
     setNewCount(0)
+    // Caught up to the live edge: advance the read marker to the newest message
+    // (#396). The scrolled-up branch above returns first, holding it.
+    setSeenId((prev) => advanceSeenId(prev, newestId, true))
     // A raw scrollIntoView isn't governed by the root MotionConfig, so honour
     // prefers-reduced-motion by hand (matching SearchHighlighter/Itinerary).
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     bottomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' })
-  }, [count])
+  }, [count, newestId])
 
   const byId = React.useMemo(
     () => new Map((messages.data ?? []).map((m) => [m.id, m])),
