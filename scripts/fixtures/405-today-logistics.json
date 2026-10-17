@@ -1,0 +1,153 @@
+{
+  "//": "Fixture for #405 (day-of Today card wired to stays + transport) screenshots. A during-phase trip whose dates bracket the real 'today' (the card uses new Date()), with a stay the group checks out of today and one they check into today, a ferry arriving this morning and a train departing this afternoon, interleaved with the day's itinerary. Dashboard route renders the Today card in place of the planning countdown.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de400000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de400000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Lisbon & the Coast",
+        "destination": "Lisbon, Portugal",
+        "description": "A week of pastéis, trams and ocean.",
+        "cover_url": null,
+        "start_date": "2026-10-14",
+        "end_date": "2026-10-20",
+        "estimated_budget": 2400,
+        "currency": "EUR",
+        "invite_code": "demoinvite405",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-08-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Ana",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-08-01T00:00:00Z"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Tomás",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-08-02T00:00:00Z"
+      }
+    ],
+    "stays": [
+      {
+        "id": "57300000-0000-4000-8000-000000000001",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "name": "Baixa Boutique Hotel",
+        "address": "Rua da Prata 12, Lisbon",
+        "latitude": null,
+        "longitude": null,
+        "check_in": "2026-10-14",
+        "check_out": "2026-10-17",
+        "confirmation_code": "BBH-4471",
+        "booking_url": null,
+        "budget_entry_id": null,
+        "created_at": "2026-08-03T00:00:00Z"
+      },
+      {
+        "id": "57300000-0000-4000-8000-000000000002",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "name": "Cascais Seaside Guesthouse",
+        "address": "Av. Dom Carlos I 48, Cascais",
+        "latitude": null,
+        "longitude": null,
+        "check_in": "2026-10-17",
+        "check_out": "2026-10-20",
+        "confirmation_code": "CSG-9920",
+        "booking_url": null,
+        "budget_entry_id": null,
+        "created_at": "2026-08-03T00:00:00Z"
+      }
+    ],
+    "transport": [
+      {
+        "id": "57400000-0000-4000-8000-000000000001",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "mode": "ferry",
+        "depart_place": "Cacilhas",
+        "arrive_place": "Cais do Sodré",
+        "depart_at": "2026-10-17T06:40",
+        "arrive_at": "2026-10-17T07:05",
+        "confirmation_code": null,
+        "booking_url": null,
+        "budget_entry_id": null,
+        "created_at": "2026-08-04T00:00:00Z"
+      },
+      {
+        "id": "57400000-0000-4000-8000-000000000002",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444402",
+        "mode": "train",
+        "depart_place": "Cais do Sodré",
+        "arrive_place": "Cascais",
+        "depart_at": "2026-10-17T14:30",
+        "arrive_at": "2026-10-17T15:10",
+        "confirmation_code": "CP-3312",
+        "booking_url": null,
+        "budget_entry_id": null,
+        "created_at": "2026-08-04T00:00:00Z"
+      }
+    ],
+    "itinerary_items": [
+      {
+        "id": "17300000-0000-4000-8000-000000000001",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "title": "Breakfast at Manteigaria",
+        "category": "restaurant",
+        "day": "2026-10-17",
+        "start_time": "08:30",
+        "end_time": "09:15",
+        "location": "Rua do Loreto 2",
+        "notes": null,
+        "cost": 0,
+        "position": 1,
+        "created_at": "2026-08-05T00:00:00Z"
+      },
+      {
+        "id": "17300000-0000-4000-8000-000000000002",
+        "trip_id": "de400000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "title": "Cascais old town & beach",
+        "category": "activity",
+        "day": "2026-10-17",
+        "start_time": "16:00",
+        "end_time": "18:30",
+        "location": "Cascais",
+        "notes": null,
+        "cost": 0,
+        "position": 2,
+        "created_at": "2026-08-05T00:00:00Z"
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de400000-0000-4000-8000-000000000001"
+  },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
