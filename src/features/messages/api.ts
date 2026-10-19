@@ -328,19 +328,33 @@ export function markChatRead(tripId: string, memberId: string): void {
 /**
  * Keep the marker current while the chat is open.
  *
- * Marks on mount, again whenever the newest message changes (so a conversation
- * read live stays marked), and once more on unmount — the last one is what
- * catches "scrolled through everything, then navigated away", which is the
- * most common way to finish reading.
+ * Marks on mount, again whenever `seenMessageId` changes, and once more on
+ * unmount — the last one is what catches "scrolled through everything, then
+ * navigated away", which is the most common way to finish reading.
+ *
+ * `seenMessageId` is the newest message the reader has reached the *live edge*
+ * for, not the unconditional live newest (#396): while they are scrolled up
+ * re-reading, it holds, so an arrival does not re-fire the mark and the marker
+ * never advances past messages they have not seen. `atLiveEdge` is an optional
+ * ref gating the unmount write — leaving the chat still scrolled up should keep
+ * the unseen arrivals unread so the digest can still reach them; omitting it
+ * marks on unmount as before.
  */
-export function useMarkChatRead(tripId: string, memberId: string, newestMessageId?: string) {
+export function useMarkChatRead(
+  tripId: string,
+  memberId: string,
+  seenMessageId?: string,
+  atLiveEdge?: React.RefObject<boolean>,
+) {
   React.useEffect(() => {
     markChatRead(tripId, memberId)
     return () => {
       // Bypass the throttle on the way out: this is the write that matters
       // most, and it happens at most once per visit.
       resetChatReadThrottle()
-      markChatRead(tripId, memberId)
+      // ...but only if the reader is actually caught up. A reader who navigates
+      // away still scrolled up has not seen the latest, so their marker holds.
+      if (atLiveEdge?.current !== false) markChatRead(tripId, memberId)
     }
-  }, [tripId, memberId, newestMessageId])
+  }, [tripId, memberId, seenMessageId])
 }
