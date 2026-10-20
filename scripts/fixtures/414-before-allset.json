@@ -1,0 +1,19 @@
+{
+  "//": "#414 — readiness card, all-clear positive empty state. Dates set for both members, a stay covering every night, all tasks done, the only poll already voted in by the viewer (Mika).",
+  "auth": { "as": "owner", "userId": "22222222-2222-4222-8222-222222222222", "email": "planner@example.com", "tripId": "de300000-0000-4000-8000-000000000001" },
+  "tables": {
+    "trips": [ { "id": "de300000-0000-4000-8000-000000000001", "owner_id": "22222222-2222-4222-8222-222222222222", "name": "Kyoto in Autumn", "destination": "Kyoto, Japan", "description": null, "cover_url": null, "start_date": "2026-11-14", "end_date": "2026-11-18", "estimated_budget": 3200, "currency": "USD", "invite_code": "demoinvite2026", "invite_enabled": true, "share_token": null, "recap_shared": false, "archived": false, "checklist_starter_dismissed": true, "created_at": "2026-07-01T00:00:00Z" } ],
+    "members": [
+      { "id": "44444444-4444-4444-8444-444444444401", "trip_id": "de300000-0000-4000-8000-000000000001", "user_id": "22222222-2222-4222-8222-222222222222", "display_name": "Mika", "color": "#0e7490", "role": "owner", "joined_at": "2026-07-01T00:00:00Z", "arrives_on": "2026-11-14", "departs_on": "2026-11-18", "payment_link": null },
+      { "id": "44444444-4444-4444-8444-444444444402", "trip_id": "de300000-0000-4000-8000-000000000001", "user_id": "55555555-5555-4555-8555-555555555502", "display_name": "Sam", "color": "#b45309", "role": "member", "joined_at": "2026-07-02T00:00:00Z", "arrives_on": "2026-11-14", "departs_on": "2026-11-18", "payment_link": null }
+    ],
+    "stays": [ { "id": "57300000-0000-4000-8000-000000000001", "trip_id": "de300000-0000-4000-8000-000000000001", "member_id": "44444444-4444-4444-8444-444444444401", "name": "Gion Ryokan", "address": null, "latitude": null, "longitude": null, "check_in": "2026-11-14", "check_out": "2026-11-18", "confirmation_code": null, "booking_url": null, "budget_entry_id": null, "created_at": "2026-07-05T00:00:00Z" } ],
+    "checklist_items": [ { "id": "c1300000-0000-4000-8000-000000000001", "trip_id": "de300000-0000-4000-8000-000000000001", "title": "Book flights", "notes": null, "assignee_id": "44444444-4444-4444-8444-444444444401", "due_date": null, "done": true, "position": 1, "created_by": "44444444-4444-4444-8444-444444444401", "created_at": "2026-07-03T00:00:00Z" } ],
+    "polls": [ { "id": "90300000-0000-4000-8000-000000000001", "trip_id": "de300000-0000-4000-8000-000000000001", "created_by": "44444444-4444-4444-8444-444444444402", "question": "Which neighbourhood should we base in?", "category": "stay", "closes_at": null, "closed": false, "created_at": "2026-07-04T00:00:00Z" } ],
+    "votes": [ { "id": "d0300000-0000-4000-8000-000000000001", "trip_id": "de300000-0000-4000-8000-000000000001", "poll_id": "90300000-0000-4000-8000-000000000001", "option_id": "0b300000-0000-4000-8000-000000000001", "member_id": "44444444-4444-4444-8444-444444444401", "created_at": "2026-07-04T01:00:00Z" } ]
+  },
+  "rpcs": { "join_trip": "de300000-0000-4000-8000-000000000001" },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [ { "name": "desktop", "width": 1280 } ],
+  "colorScheme": "light"
+}

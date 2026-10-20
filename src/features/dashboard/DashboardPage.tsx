@@ -13,6 +13,7 @@ import { useDashboard, planningProgress } from './api'
 import { JoinWelcome } from './JoinWelcome'
 import { TripRecap } from './TripRecap'
 import { Today } from './Today'
+import { BeforeTrip } from './BeforeTrip'
 import { tripPhase } from './today'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
@@ -164,10 +165,13 @@ export default function DashboardPage() {
       <Hero />
 
       {/* During the trip: the Today card (#281). After it: the recap (#206).
-          Before/undated: the planning-progress card. Budget stays alongside. */}
+          Before/undated: the readiness card (#414) above the planning-progress
+          card. Budget stays alongside. */}
       {phase === 'after' ? (
         <TripRecap />
       ) : (
+      <>
+      {(phase === 'before' || phase === 'undated') && <BeforeTrip />}
       <div className="grid gap-5 md:grid-cols-2">
         {phase === 'during' ? (
           <Today today={today} />
@@ -255,6 +259,7 @@ export default function DashboardPage() {
           </Link>
         </motion.div>
       </div>
+      </>
       )}
 
       {/* Quick nav */}
