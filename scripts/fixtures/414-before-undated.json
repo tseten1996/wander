@@ -1,0 +1,12 @@
+{
+  "//": "#414 — readiness card, undated trip (no start/end yet): the lighter 'set your dates to start planning' prompt instead of a readiness list.",
+  "auth": { "as": "owner", "userId": "22222222-2222-4222-8222-222222222222", "email": "planner@example.com", "tripId": "de300000-0000-4000-8000-000000000001" },
+  "tables": {
+    "trips": [ { "id": "de300000-0000-4000-8000-000000000001", "owner_id": "22222222-2222-4222-8222-222222222222", "name": "Somewhere, someday", "destination": null, "description": null, "cover_url": null, "start_date": null, "end_date": null, "estimated_budget": null, "currency": "USD", "invite_code": "demoinvite2026", "invite_enabled": true, "share_token": null, "recap_shared": false, "archived": false, "checklist_starter_dismissed": true, "created_at": "2026-07-01T00:00:00Z" } ],
+    "members": [ { "id": "44444444-4444-4444-8444-444444444401", "trip_id": "de300000-0000-4000-8000-000000000001", "user_id": "22222222-2222-4222-8222-222222222222", "display_name": "Mika", "color": "#0e7490", "role": "owner", "joined_at": "2026-07-01T00:00:00Z", "arrives_on": null, "departs_on": null, "payment_link": null } ]
+  },
+  "rpcs": { "join_trip": "de300000-0000-4000-8000-000000000001" },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [ { "name": "desktop", "width": 1280 } ],
+  "colorScheme": "light"
+}

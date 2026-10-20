@@ -1,0 +1,119 @@
+{
+  "//": "#414 — dashboard 'Before you go' readiness card, pre-trip phase with every signal firing. A future-dated trip (before phase), two members who haven't set their trip dates, no stays booked (every night uncovered), open checklist tasks, and an open poll the viewer hasn't voted in.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de300000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de300000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Kyoto in Autumn",
+        "destination": "Kyoto, Japan",
+        "description": "Temples, momiji and too much ramen.",
+        "cover_url": null,
+        "start_date": "2026-11-14",
+        "end_date": "2026-11-18",
+        "estimated_budget": 3200,
+        "currency": "USD",
+        "invite_code": "demoinvite2026",
+        "invite_enabled": true,
+        "share_token": null,
+        "recap_shared": false,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-07-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-07-01T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null,
+        "payment_link": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-07-02T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null,
+        "payment_link": null
+      }
+    ],
+    "checklist_items": [
+      {
+        "id": "c1300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "title": "Book flights",
+        "notes": null,
+        "assignee_id": null,
+        "due_date": null,
+        "done": false,
+        "position": 1,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-07-03T00:00:00Z"
+      },
+      {
+        "id": "c1300000-0000-4000-8000-000000000002",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "title": "Reserve a ryokan",
+        "notes": null,
+        "assignee_id": "44444444-4444-4444-8444-444444444402",
+        "due_date": null,
+        "done": false,
+        "position": 2,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-07-03T00:00:00Z"
+      },
+      {
+        "id": "c1300000-0000-4000-8000-000000000003",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "title": "Check passports",
+        "notes": null,
+        "assignee_id": "44444444-4444-4444-8444-444444444401",
+        "due_date": null,
+        "done": true,
+        "position": 3,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-07-03T00:00:00Z"
+      }
+    ],
+    "polls": [
+      {
+        "id": "90300000-0000-4000-8000-000000000001",
+        "trip_id": "de300000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444402",
+        "question": "Which neighbourhood should we base in?",
+        "category": "stay",
+        "closes_at": null,
+        "closed": false,
+        "created_at": "2026-07-04T00:00:00Z",
+        "poll_options": [],
+        "votes": []
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de300000-0000-4000-8000-000000000001"
+  },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}
