@@ -1,0 +1,52 @@
+{
+  "//": "Fixture for #414 (pre-trip readiness card), the undated variant. A trip with no start/end dates (tripPhase === 'undated') renders the lighter 'Set your trip dates to start planning' prompt instead of the full readiness list — proving the card degrades rather than erroring when there are no dates to reason about.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de410000-0000-4000-8000-000000000002"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de410000-0000-4000-8000-000000000002",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Somewhere Warm (TBD)",
+        "destination": null,
+        "description": "We know we want to go — just not when yet.",
+        "cover_url": null,
+        "start_date": null,
+        "end_date": null,
+        "estimated_budget": null,
+        "currency": "USD",
+        "invite_code": "demoinvite414u",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-09-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444411",
+        "trip_id": "de410000-0000-4000-8000-000000000002",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-09-01T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null
+      }
+    ]
+  },
+  "rpcs": {
+    "join_trip": "de410000-0000-4000-8000-000000000002"
+  },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}

@@ -1,0 +1,174 @@
+{
+  "//": "Fixture for #414 (pre-trip readiness card) screenshots. A before-phase trip (future start, so tripPhase === 'before'): two members have shared no travel dates, a stay covers only the first two of four nights, several checklist tasks are open (two with no owner), and an open poll the viewer hasn't voted in. The dashboard route renders the new 'Before you go' readiness card above the planning/budget grid.",
+  "auth": {
+    "as": "owner",
+    "userId": "22222222-2222-4222-8222-222222222222",
+    "email": "planner@example.com",
+    "tripId": "de410000-0000-4000-8000-000000000001"
+  },
+  "tables": {
+    "trips": [
+      {
+        "id": "de410000-0000-4000-8000-000000000001",
+        "owner_id": "22222222-2222-4222-8222-222222222222",
+        "name": "Hokkaido Powder Week",
+        "destination": "Niseko, Japan",
+        "description": "Early-season snow with the whole crew.",
+        "cover_url": null,
+        "start_date": "2026-12-18",
+        "end_date": "2026-12-22",
+        "estimated_budget": 4200,
+        "currency": "USD",
+        "invite_code": "demoinvite414",
+        "invite_enabled": true,
+        "archived": false,
+        "checklist_starter_dismissed": true,
+        "created_at": "2026-09-01T00:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "44444444-4444-4444-8444-444444444401",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "user_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Mika",
+        "color": "#0e7490",
+        "role": "owner",
+        "joined_at": "2026-09-01T00:00:00Z",
+        "arrives_on": "2026-12-18",
+        "departs_on": "2026-12-22"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444402",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555502",
+        "display_name": "Sam",
+        "color": "#b45309",
+        "role": "member",
+        "joined_at": "2026-09-02T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444403",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "user_id": "55555555-5555-4555-8555-555555555503",
+        "display_name": "Priya",
+        "color": "#7c3aed",
+        "role": "member",
+        "joined_at": "2026-09-02T00:00:00Z",
+        "arrives_on": null,
+        "departs_on": null
+      }
+    ],
+    "stays": [
+      {
+        "id": "57410000-0000-4000-8000-000000000001",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "member_id": "44444444-4444-4444-8444-444444444401",
+        "name": "Niseko Base Lodge",
+        "address": "Hirafu, Kutchan",
+        "latitude": null,
+        "longitude": null,
+        "check_in": "2026-12-18",
+        "check_out": "2026-12-20",
+        "confirmation_code": "NBL-7781",
+        "booking_url": null,
+        "budget_entry_id": null,
+        "created_at": "2026-09-05T00:00:00Z"
+      }
+    ],
+    "checklist_items": [
+      {
+        "id": "c7410000-0000-4000-8000-000000000001",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "title": "Rent skis & boards",
+        "notes": null,
+        "assignee_id": null,
+        "due_date": null,
+        "done": false,
+        "position": 1,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-09-06T00:00:00Z"
+      },
+      {
+        "id": "c7410000-0000-4000-8000-000000000002",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "title": "Book airport transfer",
+        "notes": null,
+        "assignee_id": null,
+        "due_date": null,
+        "done": false,
+        "position": 2,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-09-06T00:00:00Z"
+      },
+      {
+        "id": "c7410000-0000-4000-8000-000000000003",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "title": "Buy travel insurance",
+        "notes": null,
+        "assignee_id": "44444444-4444-4444-8444-444444444401",
+        "due_date": null,
+        "done": false,
+        "position": 3,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-09-06T00:00:00Z"
+      },
+      {
+        "id": "c7410000-0000-4000-8000-000000000004",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "title": "Confirm passports valid",
+        "notes": null,
+        "assignee_id": "44444444-4444-4444-8444-444444444402",
+        "due_date": null,
+        "done": true,
+        "position": 4,
+        "created_by": "44444444-4444-4444-8444-444444444401",
+        "created_at": "2026-09-06T00:00:00Z"
+      }
+    ],
+    "polls": [
+      {
+        "id": "90410000-0000-4000-8000-000000000001",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "created_by": "44444444-4444-4444-8444-444444444402",
+        "question": "Which night do we do the onsen?",
+        "category": "activities",
+        "closes_at": null,
+        "closed": false,
+        "created_at": "2026-09-07T00:00:00Z"
+      }
+    ],
+    "poll_options": [
+      {
+        "id": "90410001-0000-4000-8000-000000000001",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "poll_id": "90410000-0000-4000-8000-000000000001",
+        "label": "Friday",
+        "position": 0,
+        "image_url": null,
+        "link_url": null
+      },
+      {
+        "id": "90410001-0000-4000-8000-000000000002",
+        "trip_id": "de410000-0000-4000-8000-000000000001",
+        "poll_id": "90410000-0000-4000-8000-000000000001",
+        "label": "Saturday",
+        "position": 1,
+        "image_url": null,
+        "link_url": null
+      }
+    ],
+    "votes": []
+  },
+  "rpcs": {
+    "join_trip": "de410000-0000-4000-8000-000000000001"
+  },
+  "routes": ["/trip/{trip}"],
+  "breakpoints": [
+    { "name": "mobile", "width": 375 },
+    { "name": "desktop", "width": 1280 }
+  ],
+  "colorScheme": "light"
+}

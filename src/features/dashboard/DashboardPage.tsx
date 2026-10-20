@@ -13,6 +13,7 @@ import { useDashboard, planningProgress } from './api'
 import { JoinWelcome } from './JoinWelcome'
 import { TripRecap } from './TripRecap'
 import { Today } from './Today'
+import { BeforeTrip } from './BeforeTrip'
 import { tripPhase } from './today'
 import { tripActual, tripEstimated } from '@/features/budget/amounts'
 import { ITINERARY_META } from '@/features/itinerary/meta'
@@ -168,6 +169,10 @@ export default function DashboardPage() {
       {phase === 'after' ? (
         <TripRecap />
       ) : (
+      <>
+      {/* Before the trip (and for an undated trip): the pre-trip readiness card
+          (#414), above the planning view. `during`/`after` are unchanged. */}
+      {phase !== 'during' && <BeforeTrip />}
       <div className="grid gap-5 md:grid-cols-2">
         {phase === 'during' ? (
           <Today today={today} />
@@ -255,6 +260,7 @@ export default function DashboardPage() {
           </Link>
         </motion.div>
       </div>
+      </>
       )}
 
       {/* Quick nav */}
