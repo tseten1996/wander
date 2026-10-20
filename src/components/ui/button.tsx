@@ -46,6 +46,14 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         // index.css can find them, independent of whatever size-* utility a
         // call site sets (see the comment there for why it can't be a class).
         data-icon-button={(size ?? 'md') === 'icon' ? '' : undefined}
+        // The `sm` variant is h-8 (32px) — below the 44px mobile tap floor
+        // (guardrail #6 / WCAG 2.5.5). Tagging it with the same
+        // `[data-tap-target]` hook the audit uses for compact inputs/tabs
+        // floors every `sm` button to 44px at ≤767px via index.css, so call
+        // sites (chat Edit Save/Cancel, Calendar Today, …) can't regress it.
+        // `min-height` composes with the h-8 utility instead of fighting it in
+        // tailwind-merge, leaving the visible 32px height untouched on desktop.
+        data-tap-target={(size ?? 'md') === 'sm' ? '' : undefined}
         className={cn(buttonVariants({ variant, size }), className)}
         {...props}
       />
