@@ -10,7 +10,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { derivePackingSuggestions } from '../src/features/packing/suggestions.ts'
+import {
+  derivePackingSuggestions,
+  filterNewPackingItems,
+} from '../src/features/packing/suggestions.ts'
 
 /** Build a DailyWeather-shaped day; code defaults to 0 (clear). */
 function day(date, tempMin, tempMax, code = 0) {
@@ -83,4 +86,70 @@ test('rain, cold and heat can all fire together, in that order', () => {
     day('2026-08-01', 2, 33, 61), // wet + cold low + hot high
   ]
   assert.deepEqual(ids(derivePackingSuggestions(days)), ['rain', 'cold', 'heat'])
+})
+
+// --- #412: suppression by existing items + add dedupe ---
+
+test('a nudge is suppressed once all its items are already on the list', () => {
+  const days = [day('2026-08-01', 2, 10)] // cold → Warm layers (clothes)
+  const existing = [{ name: 'Warm layers', category: 'clothes' }]
+  assert.deepEqual(derivePackingSuggestions(days, undefined, existing), [])
+})
+
+test('a nudge still shows while any of its items is missing (full items kept)', () => {
+  const days = [day('2026-08-01', 15, 24, 61)] // rain → Rain jacket + Umbrella
+  const existing = [{ name: 'Rain jacket', category: 'clothes' }] // only one present
+  const suggestions = derivePackingSuggestions(days, undefined, existing)
+  assert.deepEqual(ids(suggestions), ['rain'])
+  // The nudge keeps its full recommendation; the add path is what dedupes.
+  assert.deepEqual(
+    suggestions[0].items.map((i) => i.name),
+    ['Rain jacket', 'Umbrella'],
+  )
+})
+
+test('matching is case-insensitive, trimmed, and category-scoped', () => {
+  const days = [day('2026-08-01', 15, 24, 61)] // rain nudge
+  // Same names but different casing/whitespace → treated as present.
+  const present = [
+    { name: '  rain JACKET ', category: 'clothes' },
+    { name: 'umbrella', category: 'misc' },
+  ]
+  assert.deepEqual(derivePackingSuggestions(days, undefined, present), [])
+  // Umbrella filed under the wrong category does not satisfy the misc umbrella.
+  const wrongCategory = [
+    { name: 'Rain jacket', category: 'clothes' },
+    { name: 'Umbrella', category: 'clothes' },
+  ]
+  assert.deepEqual(ids(derivePackingSuggestions(days, undefined, wrongCategory)), ['rain'])
+})
+
+test('empty existing list leaves the pre-#412 behaviour unchanged', () => {
+  const days = [day('2026-08-01', 2, 10)]
+  assert.deepEqual(
+    ids(derivePackingSuggestions(days, undefined, [])),
+    ids(derivePackingSuggestions(days)),
+  )
+})
+
+test('filterNewPackingItems drops only the items already present in that category', () => {
+  const items = [
+    { name: 'Rain jacket', category: 'clothes' },
+    { name: 'Umbrella', category: 'misc' },
+  ]
+  // Nothing present → everything is new.
+  assert.deepEqual(filterNewPackingItems(items, []), items)
+  // One present (case/space-insensitive) → only the other remains.
+  assert.deepEqual(
+    filterNewPackingItems(items, [{ name: 'RAIN JACKET', category: 'clothes' }]),
+    [{ name: 'Umbrella', category: 'misc' }],
+  )
+  // All present → nothing to add.
+  assert.deepEqual(
+    filterNewPackingItems(items, [
+      { name: 'Rain jacket', category: 'clothes' },
+      { name: 'Umbrella', category: 'misc' },
+    ]),
+    [],
+  )
 })

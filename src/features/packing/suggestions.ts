@@ -15,6 +15,32 @@ export interface SuggestedItem {
   category: PackingCategory
 }
 
+/** Minimal shape of an item already on the packing list, for dedupe (#412). */
+export type ExistingItem = { name: string; category: PackingCategory }
+
+/**
+ * Normalized identity of a packing item: the same name (trimmed,
+ * case-insensitive) in the same category. Both the nudge suppression and the
+ * one-tap-add dedupe key off this single definition so they never disagree.
+ */
+function itemKey(item: { name: string; category: PackingCategory }): string {
+  return `${item.category}\u0000${item.name.trim().toLowerCase()}`
+}
+
+/**
+ * Drop the items that are already on the list (#412). Used by the one-tap add
+ * so re-adding an item already present in the same category is a no-op rather
+ * than inserting a duplicate into the shared list.
+ */
+export function filterNewPackingItems(
+  items: SuggestedItem[],
+  existing: readonly ExistingItem[],
+): SuggestedItem[] {
+  if (existing.length === 0) return items
+  const have = new Set(existing.map(itemKey))
+  return items.filter((i) => !have.has(itemKey(i)))
+}
+
 export interface PackingSuggestion {
   /** Stable id — used as the React key and the dismissal key. */
   id: 'rain' | 'cold' | 'heat'
@@ -56,52 +82,73 @@ const defaultFormatTemp: TempFormatter = (c) => `${Math.round(c)}°C`
  * when the forecast is unavailable. Temperatures in the copy are rendered
  * through `formatTemp`, so the member's unit preference is respected without
  * moving the thresholds off their internal Celsius scale.
+ *
+ * `existingItems` is the trip's current packing list (#412): a nudge is
+ * suppressed once every item it would add is already on the list. Because that
+ * list is shared server state, this is the natural cross-device dismissal — add
+ * the item on one device and the nudge stops reappearing everywhere, and after
+ * a reload. Defaults to empty, leaving the pre-#412 behaviour unchanged.
  */
 export function derivePackingSuggestions(
   days: DailyWeather[],
   formatTemp: TempFormatter = defaultFormatTemp,
+  existingItems: readonly ExistingItem[] = [],
 ): PackingSuggestion[] {
   if (days.length === 0) return []
+
+  // A nudge still has something to offer only while at least one of its items
+  // is missing from the list; once all are present it has served its purpose.
+  const outstanding = (items: SuggestedItem[]) =>
+    filterNewPackingItems(items, existingItems).length > 0
 
   const suggestions: PackingSuggestion[] = []
 
   const rainyDays = days.filter((d) => isWetCode(d.code)).length
   if (rainyDays > 0) {
-    suggestions.push({
-      id: 'rain',
-      Icon: CloudRain,
-      message: `Rain likely on ${rainyDays} of ${days.length} ${
-        days.length === 1 ? 'day' : 'days'
-      } — pack a rain jacket and umbrella.`,
-      items: [
-        { name: 'Rain jacket', category: 'clothes' },
-        { name: 'Umbrella', category: 'misc' },
-      ],
-    })
+    const items: SuggestedItem[] = [
+      { name: 'Rain jacket', category: 'clothes' },
+      { name: 'Umbrella', category: 'misc' },
+    ]
+    if (outstanding(items)) {
+      suggestions.push({
+        id: 'rain',
+        Icon: CloudRain,
+        message: `Rain likely on ${rainyDays} of ${days.length} ${
+          days.length === 1 ? 'day' : 'days'
+        } — pack a rain jacket and umbrella.`,
+        items,
+      })
+    }
   }
 
   const coldest = Math.min(...days.map((d) => d.tempMin))
   if (coldest <= COLD_C) {
-    suggestions.push({
-      id: 'cold',
-      Icon: Snowflake,
-      message: `Lows near ${formatTemp(coldest)} — bring warm layers.`,
-      items: [{ name: 'Warm layers', category: 'clothes' }],
-    })
+    const items: SuggestedItem[] = [{ name: 'Warm layers', category: 'clothes' }]
+    if (outstanding(items)) {
+      suggestions.push({
+        id: 'cold',
+        Icon: Snowflake,
+        message: `Lows near ${formatTemp(coldest)} — bring warm layers.`,
+        items,
+      })
+    }
   }
 
   const hottest = Math.max(...days.map((d) => d.tempMax))
   if (hottest >= HEAT_C) {
-    suggestions.push({
-      id: 'heat',
-      Icon: Sun,
-      message: `Highs around ${formatTemp(hottest)} — sun protection and water.`,
-      items: [
-        { name: 'Sunscreen', category: 'toiletries' },
-        { name: 'Sunglasses', category: 'misc' },
-        { name: 'Water bottle', category: 'misc' },
-      ],
-    })
+    const items: SuggestedItem[] = [
+      { name: 'Sunscreen', category: 'toiletries' },
+      { name: 'Sunglasses', category: 'misc' },
+      { name: 'Water bottle', category: 'misc' },
+    ]
+    if (outstanding(items)) {
+      suggestions.push({
+        id: 'heat',
+        Icon: Sun,
+        message: `Highs around ${formatTemp(hottest)} — sun protection and water.`,
+        items,
+      })
+    }
   }
 
   return suggestions
