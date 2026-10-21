@@ -16,6 +16,7 @@ export async function fetchItinerary(tripId: string): Promise<ItineraryItem[]> {
     .eq('trip_id', tripId)
     .order('day', { nullsFirst: false })
     .order('position')
+    .order('created_at')
   if (error) throw error
   return data
 }
