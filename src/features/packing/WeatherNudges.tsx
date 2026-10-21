@@ -8,8 +8,12 @@ import { useTempUnit } from '@/hooks/useTempUnit'
 import { formatTemp } from '@/lib/units'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useAddPackingItem } from './api'
-import { derivePackingSuggestions, type PackingSuggestion } from './suggestions'
+import { useAddPackingItem, usePacking } from './api'
+import {
+  derivePackingSuggestions,
+  filterNewPackingItems,
+  type PackingSuggestion,
+} from './suggestions'
 
 /** A single dismissible nudge row: message + one-tap add + dismiss. */
 function NudgeRow({
@@ -85,6 +89,9 @@ export default function WeatherNudges() {
   const weather = useTripWeather(trip)
   const { unit } = useTempUnit()
   const addItem = useAddPackingItem(trip.id, me.id)
+  // The already-fetched shared packing list (same query key as PackingPage, so
+  // no extra request). Drives both suppression and the add dedupe (#412).
+  const packing = usePacking(trip.id)
   const [dismissed, setDismissed] = React.useState<Set<string>>(() => new Set())
 
   const days = React.useMemo(
@@ -92,12 +99,17 @@ export default function WeatherNudges() {
     [weather.data],
   )
 
+  const existing = React.useMemo(
+    () => (packing.data ?? []).map((i) => ({ name: i.name, category: i.category })),
+    [packing.data],
+  )
+
   const suggestions = React.useMemo(
     () =>
-      derivePackingSuggestions(days, (c) => formatTemp(c, unit)).filter(
+      derivePackingSuggestions(days, (c) => formatTemp(c, unit), existing).filter(
         (s) => !dismissed.has(s.id),
       ),
-    [days, dismissed, unit],
+    [days, existing, dismissed, unit],
   )
 
   function dismiss(id: string) {
@@ -105,13 +117,20 @@ export default function WeatherNudges() {
   }
 
   async function add(suggestion: PackingSuggestion) {
+    // Only add what isn't already on the list — re-adding a present item is a
+    // no-op, never a duplicate in the shared list (#412).
+    const toAdd = filterNewPackingItems(suggestion.items, existing)
+    if (toAdd.length === 0) {
+      dismiss(suggestion.id)
+      return
+    }
     try {
       // Add each item sequentially so a mid-list failure still lands the earlier
       // ones; the mutation toasts its own error.
-      for (const item of suggestion.items) {
+      for (const item of toAdd) {
         await addItem.mutateAsync(item)
       }
-      const names = suggestion.items.map((i) => i.name).join(', ')
+      const names = toAdd.map((i) => i.name).join(', ')
       toast.success(`Added ${names} to your packing list`)
       dismiss(suggestion.id)
     } catch {
