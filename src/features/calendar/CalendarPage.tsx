@@ -17,6 +17,7 @@ import { legColor, legHeading } from '@/features/destinations/route'
 import { useStays } from '@/features/stays/api'
 import { stayForDay } from '@/features/stays/dates'
 import { StaysCard } from '@/features/stays/StaysCard'
+import { coveredDays } from '@/features/itinerary/spans'
 import { useTransport } from '@/features/transport/api'
 import { arrivingOn, departingOn, hasTransportOn } from '@/features/transport/dates'
 import { MODE_MAP, TransportCard, whenLabel } from '@/features/transport/TransportCard'
@@ -68,14 +69,24 @@ function useCalendarEvents(tripId: string) {
         })
       }
       for (const item of (itinerary.data ?? []) as ItineraryItem[]) {
-        events.push({
-          id: item.id,
-          date: parseISO(item.day!),
-          label: item.title,
-          detail: item.start_time ? formatTime(item.start_time) : undefined,
-          kind: 'itinerary',
-          color: 'bg-sky-500',
-        })
+        // A multi-day item (a rail pass, a multi-night booking) covers every day
+        // from `day` through `end_day`; draw it on each so the month view shows it
+        // active all week, mirroring how stays and transport already span. For a
+        // single-day item `coveredDays` returns just `[day]`, so this is a no-op.
+        // The start time belongs to the first day only; later days show the label
+        // without a repeated time. Non-start days get a composite key so React
+        // never sees duplicate ids.
+        for (const covered of coveredDays(item)) {
+          const isStart = covered === item.day
+          events.push({
+            id: isStart ? item.id : `${item.id}:${covered}`,
+            date: parseISO(covered),
+            label: item.title,
+            detail: isStart && item.start_time ? formatTime(item.start_time) : undefined,
+            kind: 'itinerary',
+            color: 'bg-sky-500',
+          })
+        }
       }
       for (const item of (checklist.data ?? []) as ChecklistItem[]) {
         if (item.done) continue
