@@ -33,7 +33,9 @@ function EventRow({
 }) {
   if (members.length === 0) return null
   const arriving = kind === 'arrive'
-  const Icon = arriving ? PlaneTakeoff : PlaneLanding
+  // An arrival lands (PlaneLanding, angled down); a departure takes off
+  // (PlaneTakeoff, angled up) — the glyph must match the row's meaning (#401).
+  const Icon = arriving ? PlaneLanding : PlaneTakeoff
   const verb = arriving
     ? members.length > 1
       ? 'arrive'
