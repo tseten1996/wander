@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Link } from 'react-router-dom'
 import {
   AtSign,
+  BedDouble,
   Bell,
   BellOff,
   BellRing,
@@ -15,6 +16,7 @@ import {
   Loader2,
   Luggage,
   PiggyBank,
+  Route,
   Timer,
   Vote,
   X,
@@ -124,6 +126,8 @@ const REMINDER_ICON: Record<ReminderKind, LucideIcon> = {
   task_due: CalendarClock,
   trip_countdown: Luggage,
   poll_closing: Timer,
+  stay_checkout: BedDouble,
+  transport_departure: Route,
 }
 
 function ReminderRow({

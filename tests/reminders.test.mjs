@@ -15,6 +15,8 @@ import {
   TASK_DUE_WINDOW_DAYS,
   POLL_CLOSING_WINDOW_HOURS,
   COUNTDOWN_WINDOW_DAYS,
+  TRANSPORT_DEPARTURE_WINDOW_DAYS,
+  STAY_CHECKOUT_WINDOW_DAYS,
 } from '../src/features/notifications/reminders.ts'
 
 const ME = 'me-0000'
@@ -40,6 +42,8 @@ function base(overrides = {}) {
     checklist: [],
     polls: [],
     packing: [],
+    stays: [],
+    transport: [],
     ...overrides,
   }
 }
@@ -62,6 +66,27 @@ function poll(overrides = {}) {
     closed: false,
     closes_at: new Date(NOW + 5 * HOUR).toISOString(),
     votes: [],
+    ...overrides,
+  }
+}
+
+function hop(overrides = {}) {
+  return {
+    id: 'h1',
+    mode: 'train',
+    depart_place: 'Gare du Nord',
+    arrive_place: 'Amsterdam Centraal',
+    // Wall-clock, no timezone — the date half decides the day.
+    depart_at: `${ymd(1)}T14:30`,
+    ...overrides,
+  }
+}
+
+function stay(overrides = {}) {
+  return {
+    id: 's1',
+    name: 'Hôtel du Nord',
+    check_out: ymd(1),
     ...overrides,
   }
 }
@@ -192,6 +217,88 @@ test('a poll more than a day out is "upcoming", not urgent', () => {
   assert.equal(r.detail, 'Closes in 1 day')
 })
 
+// ---- transport_departure -----------------------------------------------------
+
+test('a hop departing tomorrow is an upcoming reminder with the wall-clock time', () => {
+  const [r, ...rest] = deriveReminders(base({ transport: [hop({ depart_at: `${ymd(1)}T14:30` })] }))
+  assert.equal(rest.length, 0)
+  assert.equal(r.kind, 'transport_departure')
+  assert.equal(r.id, 'transport_departure:h1')
+  assert.equal(r.tab, 'calendar')
+  assert.equal(r.entityId, 'h1')
+  assert.equal(r.title, 'Gare du Nord → Amsterdam Centraal')
+  assert.equal(r.detail, 'Departs tomorrow 14:30')
+  assert.equal(r.tone, 'upcoming')
+})
+
+test('a hop departing today is urgent and reads "Departs today"', () => {
+  const [r] = deriveReminders(base({ transport: [hop({ depart_at: `${ymd(0)}T09:05` })] }))
+  assert.equal(r.detail, 'Departs today 09:05')
+  assert.equal(r.tone, 'urgent')
+})
+
+test('a hop with no endpoints falls back to the capitalized mode as its title', () => {
+  const [r] = deriveReminders(
+    base({ transport: [hop({ depart_place: null, arrive_place: null, mode: 'ferry' })] })
+  )
+  assert.equal(r.title, 'Ferry')
+})
+
+test('a hop departing beyond the window does not remind', () => {
+  const out = deriveReminders(
+    base({ transport: [hop({ depart_at: `${ymd(TRANSPORT_DEPARTURE_WINDOW_DAYS + 1)}T14:30` })] })
+  )
+  assert.equal(out.length, 0)
+})
+
+test('a hop with no depart_at, and one already departed, never remind', () => {
+  const out = deriveReminders(
+    base({
+      transport: [
+        hop({ id: 'a', depart_at: null }),
+        hop({ id: 'b', depart_at: `${ymd(-1)}T14:30` }),
+      ],
+    })
+  )
+  assert.equal(out.length, 0)
+})
+
+// ---- stay_checkout -----------------------------------------------------------
+
+test('a stay checking out tomorrow is an upcoming reminder, no invented time', () => {
+  const [r, ...rest] = deriveReminders(base({ stays: [stay({ check_out: ymd(1) })] }))
+  assert.equal(rest.length, 0)
+  assert.equal(r.kind, 'stay_checkout')
+  assert.equal(r.id, 'stay_checkout:s1')
+  assert.equal(r.tab, 'calendar')
+  assert.equal(r.entityId, 's1')
+  assert.equal(r.title, 'Hôtel du Nord')
+  assert.equal(r.detail, 'Check out tomorrow')
+  assert.equal(r.tone, 'upcoming')
+})
+
+test('a stay checking out today is urgent and reads "Check out today"', () => {
+  const [r] = deriveReminders(base({ stays: [stay({ check_out: ymd(0) })] }))
+  assert.equal(r.detail, 'Check out today')
+  assert.equal(r.tone, 'urgent')
+})
+
+test('a stay checking out beyond the window does not remind', () => {
+  const out = deriveReminders(
+    base({ stays: [stay({ check_out: ymd(STAY_CHECKOUT_WINDOW_DAYS + 1) })] })
+  )
+  assert.equal(out.length, 0)
+})
+
+test('a dateless stay, and one whose checkout has passed, never remind', () => {
+  const out = deriveReminders(
+    base({
+      stays: [stay({ id: 'a', check_out: null }), stay({ id: 'b', check_out: ymd(-1) })],
+    })
+  )
+  assert.equal(out.length, 0)
+})
+
 // ---- ordering ----------------------------------------------------------------
 
 test('reminders are returned most-urgent (soonest deadline) first', () => {
@@ -206,5 +313,20 @@ test('reminders are returned most-urgent (soonest deadline) first', () => {
   assert.deepEqual(
     out.map((r) => r.kind),
     ['poll_closing', 'trip_countdown', 'task_due']
+  )
+})
+
+test('stays and transport interleave with the other kinds by sortMs', () => {
+  const out = deriveReminders(
+    base({
+      stays: [stay({ check_out: ymd(0) })], // checkout this morning: sortMs 0
+      polls: [poll({ id: 'soon', closes_at: new Date(NOW + 2 * HOUR).toISOString() })], // +2h
+      transport: [hop({ depart_at: `${ymd(0)}T14:30` })], // today, after noon
+      checklist: [task({ id: 'far', due_date: ymd(1) })], // +1 day
+    })
+  )
+  assert.deepEqual(
+    out.map((r) => r.kind),
+    ['stay_checkout', 'poll_closing', 'transport_departure', 'task_due']
   )
 })

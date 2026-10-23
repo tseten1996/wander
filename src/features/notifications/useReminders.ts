@@ -3,6 +3,8 @@ import { useTripContext } from '@/hooks/useTrip'
 import { useChecklist } from '@/features/checklist/api'
 import { usePacking } from '@/features/packing/api'
 import { usePolls } from '@/features/polls/api'
+import { useStays } from '@/features/stays/api'
+import { useTransport } from '@/features/transport/api'
 import { deriveReminders, type Reminder } from './reminders'
 import { useDismissedReminders } from './reminderDismissal'
 
@@ -10,9 +12,10 @@ import { useDismissedReminders } from './reminderDismissal'
  * The signed-in member's live reminders for the current trip (#195).
  *
  * Reads only the feature queries that are already the app's cached source of
- * truth — `checklist_items`, `polls`, `packing_items` — all keyed `[table,
- * tripId]` and invalidated by the same per-trip realtime channel as everywhere
- * else. Because the bell mounts inside the trip shell, these resolve from the
+ * truth — `checklist_items`, `polls`, `packing_items`, `stays`, `transport` —
+ * all keyed `[table, tripId]` and invalidated by the same per-trip realtime
+ * channel as everywhere else. Because the bell mounts inside the trip shell,
+ * these resolve from the
  * TanStack cache (persisted across reloads) or fetch once per trip and dedupe
  * with the matching feature page; there are no per-reminder queries and no new
  * network on render. Derivation is delegated to the pure `deriveReminders`, and
@@ -23,11 +26,15 @@ export function useReminders(): Reminder[] {
   const checklist = useChecklist(trip.id)
   const polls = usePolls(trip.id)
   const packing = usePacking(trip.id)
+  const stays = useStays(trip.id)
+  const transport = useTransport(trip.id)
   const dismissed = useDismissedReminders()
 
   const checklistData = checklist.data
   const pollsData = polls.data
   const packingData = packing.data
+  const staysData = stays.data
+  const transportData = transport.data
 
   return React.useMemo(() => {
     const all = deriveReminders({
@@ -39,7 +46,9 @@ export function useReminders(): Reminder[] {
       checklist: checklistData ?? [],
       polls: pollsData ?? [],
       packing: packingData ?? [],
+      stays: staysData ?? [],
+      transport: transportData ?? [],
     })
     return all.filter((r) => !dismissed.has(r.id))
-  }, [me.id, trip.id, trip.start_date, checklistData, pollsData, packingData, dismissed])
+  }, [me.id, trip.id, trip.start_date, checklistData, pollsData, packingData, staysData, transportData, dismissed])
 }
