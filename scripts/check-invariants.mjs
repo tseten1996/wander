@@ -11,7 +11,11 @@
  *   2. Token lint    — no raw hex colours in src/ outside the declared
  *                      palette files. Design tokens live in src/index.css;
  *                      runtime palette data lives in the allowlist below.
- *   3. Bundle budget — (--bundle, needs dist/) gzipped JS must stay under
+ *   3. Realtime gate — every table added to the supabase_realtime publication
+ *                      in a migration must be in useRealtime.ts's TABLES
+ *                      subscription list, or its changes silently never
+ *                      invalidate a query (the `transport` dead-spot, #398).
+ *   4. Bundle budget — (--bundle, needs dist/) gzipped JS must stay under
  *                      budget so the free-tier PWA stays fast on phones.
  *
  * Exits non-zero with a file-by-file report on any violation.
@@ -19,6 +23,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { gzipSync } from 'node:zlib'
+import { realtimeGateFailures } from './realtime-publication-gate.mjs'
 
 const ROOT = join(import.meta.dirname, '..')
 const failures = []
@@ -100,7 +105,19 @@ for (const path of walk(join(ROOT, 'src'))) {
   })
 }
 
-// ── 3. Bundle budget (opt-in: needs a fresh dist/) ────────────────────────
+// ── 3. Realtime subscription gate ─────────────────────────────────────────
+// A content table published to supabase_realtime but absent from the client's
+// TABLES subscription list is a silent dead-spot — its changes never
+// invalidate a query. The parsing + comparison lives in a dedicated module so
+// it can be unit-tested with fixtures (tests/invariants-realtime.test.mjs).
+failures.push(
+  ...realtimeGateFailures({
+    migrationsDir: MIGRATIONS_DIR,
+    realtimeSourcePath: join(ROOT, 'src/hooks/useRealtime.ts'),
+  }),
+)
+
+// ── 4. Bundle budget (opt-in: needs a fresh dist/) ────────────────────────
 //
 // THE CRITICAL PATH IS THE BUDGET THAT MATTERS. What makes a PWA feel slow on a
 // phone is the bytes the browser must have before it can paint — the entry
@@ -168,4 +185,4 @@ if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`)
   process.exit(1)
 }
-console.log('invariants: RLS gate + token lint' + (process.argv.includes('--bundle') ? ' + bundle budget' : '') + ' passed')
+console.log('invariants: RLS gate + token lint + realtime gate' + (process.argv.includes('--bundle') ? ' + bundle budget' : '') + ' passed')
