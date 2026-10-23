@@ -18,8 +18,18 @@
  * it directly after stripping the types — matching `mentions.ts` / `spans.ts`.
  */
 
-/** What kind of deadline a reminder is about — drives its icon and copy. */
-export type ReminderKind = 'task_due' | 'trip_countdown' | 'poll_closing'
+/** What kind of deadline a reminder is about — drives its icon and copy.
+ *
+ * `stay_checkout` and `transport_departure` (#423) extend the original three
+ * onto the only rows in Wander that carry hard clock deadlines — the morning
+ * you lose the room, the train that leaves without you — so the bell can give
+ * the day-before heads-up the day-of Today card (#405) cannot. */
+export type ReminderKind =
+  | 'task_due'
+  | 'trip_countdown'
+  | 'poll_closing'
+  | 'stay_checkout'
+  | 'transport_departure'
 
 /** `urgent` = today/overdue/within-a-day; `upcoming` = further out. Drives the
  *  accent so the eye lands on what's actually running out first. */
@@ -67,6 +77,26 @@ export interface ReminderPackingItem {
   packed: boolean
 }
 
+/** A stay, narrowed to the fields a checkout reminder reads. Dates are the
+ *  date-only `YYYY-MM-DD` halves of the half-open `[check_in, check_out)`
+ *  window — stays carry no clock time, so a checkout reminder never invents one. */
+export interface ReminderStay {
+  id: string
+  name: string
+  check_out: string | null
+}
+
+/** A transport hop, narrowed to the fields a departure reminder reads. The
+ *  `depart_at` is a wall-clock `YYYY-MM-DDTHH:mm` (no timezone) — a 14:30 train
+ *  is 14:30 for every viewer. */
+export interface ReminderTransport {
+  id: string
+  mode: string
+  depart_place: string | null
+  arrive_place: string | null
+  depart_at: string | null
+}
+
 export interface ReminderInput {
   /** The signed-in member's id — reminders are always about *you*. */
   meId: string
@@ -79,6 +109,8 @@ export interface ReminderInput {
   checklist: ReminderTask[]
   polls: ReminderPoll[]
   packing: ReminderPackingItem[]
+  stays: ReminderStay[]
+  transport: ReminderTransport[]
 }
 
 const MS_PER_DAY = 86_400_000
@@ -90,6 +122,12 @@ export const TASK_DUE_WINDOW_DAYS = 2
 export const POLL_CLOSING_WINDOW_HOURS = 48
 /** The trip-countdown nudge appears once the start is within this many days. */
 export const COUNTDOWN_WINDOW_DAYS = 7
+/** A transport hop departing today or within this many days ahead surfaces —
+ *  ~24h (today) is `urgent`, ~48h (tomorrow) is `upcoming`. */
+export const TRANSPORT_DEPARTURE_WINDOW_DAYS = 1
+/** A stay checkout today or within this many days ahead surfaces — the morning
+ *  you leave (today) is `urgent`, the day-before heads-up (tomorrow) `upcoming`. */
+export const STAY_CHECKOUT_WINDOW_DAYS = 1
 
 /** UTC calendar day for an epoch-ms, as `YYYY-MM-DD` — matches how the rest of
  *  the app derives "today" (`new Date().toISOString().slice(0, 10)`). */
@@ -136,13 +174,45 @@ function closesDetail(ms: number): string {
   return days === 1 ? 'Closes in 1 day' : `Closes in ${days} days`
 }
 
+/** "today" / "tomorrow" / "in N days" for a whole-day offset — the day phrase
+ *  the stay and transport reminders share. Only ever called with `days >= 0`. */
+function dayWord(days: number): string {
+  if (days <= 0) return 'today'
+  if (days === 1) return 'tomorrow'
+  return `in ${days} days`
+}
+
+/** The `HH:mm` wall-clock half of a `YYYY-MM-DDTHH:mm[:ss]` datetime, or null
+ *  when there is no time component. No timezone math — the stored local time is
+ *  shown verbatim, so a 14:30 train reads 14:30 for every viewer. */
+function timeOf(datetime: string): string | null {
+  const m = /T(\d{2}):(\d{2})/.exec(datetime)
+  return m ? `${m[1]}:${m[2]}` : null
+}
+
+/** Minutes past midnight for an `HH:mm`, used only to order same-day departures
+ *  among themselves; 0 when there is no time. */
+function minutesOf(hhmm: string | null): number {
+  if (!hhmm) return 0
+  const [h = 0, m = 0] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+/** A transport hop's subject line: the route if either endpoint is named, else
+ *  the capitalized mode — mirroring the #405 Today card's route/label fallback. */
+function transportTitle(t: ReminderTransport): string {
+  const route = [t.depart_place, t.arrive_place].filter(Boolean).join(' → ')
+  if (route) return route
+  return t.mode ? t.mode.charAt(0).toUpperCase() + t.mode.slice(1) : 'Transport'
+}
+
 /**
  * Derive the full set of active reminders from already-cached data, most
  * urgent first. Pure: same inputs → same output, no clock read, no I/O. Session
  * dismissal is applied by the caller, not here.
  */
 export function deriveReminders(input: ReminderInput): Reminder[] {
-  const { meId, now, tripId, tripStartDate, checklist, polls, packing } = input
+  const { meId, now, tripId, tripStartDate, checklist, polls, packing, stays, transport } = input
   const today = ymdOf(now)
   const reminders: Reminder[] = []
 
@@ -200,6 +270,48 @@ export function deriveReminders(input: ReminderInput): Reminder[] {
       detail: closesDetail(remaining),
       tone: remaining < MS_PER_DAY ? 'urgent' : 'upcoming',
       sortMs: remaining,
+    })
+  }
+
+  // 4. Transport hops departing today or tomorrow (wall-clock day prefix, so no
+  //    timezone drift). A past departure is gone, so it is skipped like a closed
+  //    poll. Both cards live on the Calendar page, so the deep link flashes the
+  //    hop's row there via the shared `<id>` anchor.
+  for (const hop of transport) {
+    if (!hop.depart_at) continue
+    const departYmd = hop.depart_at.slice(0, 10)
+    const days = dayDiff(today, departYmd)
+    if (days === null || days < 0 || days > TRANSPORT_DEPARTURE_WINDOW_DAYS) continue
+    const time = timeOf(hop.depart_at)
+    reminders.push({
+      id: `transport_departure:${hop.id}`,
+      kind: 'transport_departure',
+      tab: 'calendar',
+      entityId: hop.id,
+      title: transportTitle(hop),
+      detail: `Departs ${dayWord(days)}${time ? ` ${time}` : ''}`,
+      tone: days <= 0 ? 'urgent' : 'upcoming',
+      sortMs: days * MS_PER_DAY + minutesOf(time) * 60_000,
+    })
+  }
+
+  // 5. Stay checkouts today or tomorrow. A stay's window is half-open, so the
+  //    `check_out` date is the morning you leave; stays carry no clock time, so
+  //    the reminder names the day, never an invented hour (matching the #405
+  //    Today card). A checkout already behind us is skipped like a past poll.
+  for (const stay of stays) {
+    if (!stay.check_out) continue
+    const days = dayDiff(today, stay.check_out)
+    if (days === null || days < 0 || days > STAY_CHECKOUT_WINDOW_DAYS) continue
+    reminders.push({
+      id: `stay_checkout:${stay.id}`,
+      kind: 'stay_checkout',
+      tab: 'calendar',
+      entityId: stay.id,
+      title: stay.name,
+      detail: `Check out ${dayWord(days)}`,
+      tone: days <= 0 ? 'urgent' : 'upcoming',
+      sortMs: days * MS_PER_DAY,
     })
   }
 
