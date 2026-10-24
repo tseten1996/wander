@@ -248,11 +248,15 @@ function PollCard({ poll, index }: { poll: PollWithVotes; index: number }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {/* Keyed off whether the poll is actually open, not `closed`:
+                    an auto-expired poll (`closed === false`, past `closes_at`)
+                    is dead yet would otherwise offer only "Close", leaving no
+                    way to revive it (#411). Reopen clears a past close time. */}
                 <DropdownMenuItem
-                  onClick={() => setClosed.mutate({ poll, closed: !poll.closed })}
+                  onClick={() => setClosed.mutate({ poll, closed: open })}
                 >
-                  {poll.closed ? <LockOpen /> : <Lock />}
-                  {poll.closed ? 'Reopen poll' : 'Close poll'}
+                  {open ? <Lock /> : <LockOpen />}
+                  {open ? 'Close poll' : 'Reopen poll'}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   destructive
