@@ -93,6 +93,16 @@ export interface HandlerDeps {
    * suggest" — never a crash, and never a widened prompt.
    */
   nearby?: (center: { lat: number; lon: number }) => Promise<NearbyPlace[]>
+  /**
+   * Forward-geocode a free-text place to a point, for suggest_starter's
+   * trip-level fallback (#426). Injected for the same reasons as `nearby`: it
+   * needs the provider key the runtime holds (the same Geoapify key again — no
+   * new credential), and a test must be able to supply a fixture instead of a
+   * network. Absent — a runtime with no key — means the trip's Destination
+   * field cannot be grounded, so a trip with no located legs degrades to the
+   * `no_location` result, never a crash and never a widened prompt.
+   */
+  geocode?: (query: string) => Promise<{ lat: number; lon: number } | null>
   /** Injected so tests are not clock-dependent. */
   now?: () => Date
 }
@@ -680,15 +690,20 @@ const nothingStarter = (message: string): HandlerResult => ({
 })
 
 /**
- * The coordinates to look for places around: the leg (#197) containing the day.
+ * The coordinates to look for places around, in the order the day is best
+ * grounded: the leg (#197) whose date range contains the day → the first
+ * located leg → the trip's own Destination field (#426).
  *
- * Read as the caller, so RLS is the boundary exactly as everywhere else. Prefers
- * the leg whose date range contains the day and that carries geocoded
- * coordinates; falls back to any destination with coordinates, so a
- * single-destination trip whose one leg is undated still grounds a suggestion in
- * the right city. Returns null — and the feature degrades to "add where you'll
- * be" — when nothing has coordinates, which is the honest answer: without a place
- * to search around, there is nothing to suggest. Never throws.
+ * Read as the caller, so RLS is the boundary exactly as everywhere else. The
+ * destination legs are the richer, multi-stop signal and win when any is
+ * geocoded. But a single-destination trip has no `destinations` rows at all —
+ * its only place is `trips.destination`, the documented fallback every other
+ * day-aware feature already honours (weather, `get_ai_day_context`; see
+ * src/types/index.ts). Without that fallback this feature could never run for
+ * the common case, which is exactly what production showed (#426). Returns null
+ * — and the feature degrades to the `no_location` result — only when all three
+ * fail, which is the honest answer: without a place to search around, there is
+ * nothing to suggest. Never throws.
  */
 async function legCenter(
   deps: HandlerDeps,
@@ -701,19 +716,70 @@ async function legCenter(
       .select('name, latitude, longitude, start_date, end_date, position')
       .eq('trip_id', tripId)
       .order('position')
-    if (error || !Array.isArray(data)) return null
-    const rows = (data as DestinationRow[]).filter(
-      (r) => typeof r.latitude === 'number' && typeof r.longitude === 'number',
-    )
-    const covering = rows.find(
-      (r) => r.start_date && r.start_date <= day && (r.end_date ?? r.start_date)! >= day,
-    )
-    const chosen = covering ?? rows[0]
-    if (!chosen) return null
-    return { name: chosen.name ?? null, lat: chosen.latitude as number, lon: chosen.longitude as number }
+    if (!error && Array.isArray(data)) {
+      const rows = (data as DestinationRow[]).filter(
+        (r) => typeof r.latitude === 'number' && typeof r.longitude === 'number',
+      )
+      const covering = rows.find(
+        (r) => r.start_date && r.start_date <= day && (r.end_date ?? r.start_date)! >= day,
+      )
+      const chosen = covering ?? rows[0]
+      if (chosen) {
+        return { name: chosen.name ?? null, lat: chosen.latitude as number, lon: chosen.longitude as number }
+      }
+    }
+    // No located destination leg. Fall back to the trip's Destination field —
+    // the single-destination case, and the common one.
+    return await tripDestinationCenter(deps, tripId)
   } catch {
     return null
   }
+}
+
+/**
+ * The trip's own Destination field, geocoded to a point (#426).
+ *
+ * The documented fallback (src/types/index.ts): a trip with no located
+ * destination legs is grounded in `trips.destination`, exactly as weather and
+ * `get_ai_day_context` already do. Read as the caller — RLS is the boundary —
+ * and geocoded through the injected helper, so a missing key, an empty field,
+ * or an ungeocodable string degrades to null (→ the `no_location` result)
+ * rather than a crash or a guess.
+ *
+ * Only `trips.destination` is ever geocoded, never the trip's name: a name is
+ * not a place ("Girls' weekend 2026" geocodes to nonsense), and the whole point
+ * of grounding the search is that the point is real.
+ */
+async function tripDestinationCenter(
+  deps: HandlerDeps,
+  tripId: string,
+): Promise<{ name: string | null; lat: number; lon: number } | null> {
+  // No geocoder (no key / disabled) means no way to turn the text into a point,
+  // so there is nothing to read the field for.
+  if (!deps.geocode) return null
+  let destination: string
+  try {
+    const { data, error } = await deps.db
+      .from('trips')
+      .select('destination')
+      .eq('id', tripId)
+      .maybeSingle()
+    if (error || !data) return null
+    const raw = (data as { destination?: string | null }).destination
+    destination = typeof raw === 'string' ? raw.trim() : ''
+  } catch {
+    return null
+  }
+  if (!destination) return null
+  let point: { lat: number; lon: number } | null
+  try {
+    point = await deps.geocode(destination)
+  } catch {
+    // A thrown lookup is a failed one — degrade, exactly as `nearby` does.
+    return null
+  }
+  if (!point) return null
+  return { name: destination, lat: point.lat, lon: point.lon }
 }
 
 /**
@@ -771,7 +837,7 @@ async function suggestStarter(
   const center = await legCenter(deps, tripId, day)
   if (!center) {
     await record(deps, { tripId, feature: `${feature}:no_location`, outcome: 'ok', ...free })
-    return nothingStarter('Add where you’ll be on this day (a trip destination) to get suggestions.')
+    return nothingStarter('Add a destination in Trip settings to get suggestions.')
   }
   const placeName = context?.leg?.name ?? center.name
 

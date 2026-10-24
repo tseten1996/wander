@@ -156,23 +156,28 @@ test('the computed reason describes the day without claiming a judgement', () =>
 const DEFAULT_DESTINATIONS = [
   { name: 'Kyoto', latitude: 35.0116, longitude: 135.7681, start_date: '2026-09-15', end_date: '2026-09-20', position: 1 },
 ]
+const DEFAULT_TRIP = { destination: 'Kyoto, Japan' }
 const EMPTY_DAY_CONTEXT = {
   trip: { currency: 'JPY' }, leg: { name: 'Kyoto' }, day: DAY, daySpend: 0, items: [],
 }
 
 /**
  * A fake Supabase client covering exactly the reads suggest_starter makes: the
- * membership `maybeSingle()`, the counting quota select, the destinations
- * `.order()` whole-set read, and the get_ai_day_context RPC. `rpcCalls` captures
- * the usage ledger — and only the ledger — so the "the server writes nothing but
- * a usage row" assertion below is meaningful.
+ * membership `.limit(1).maybeSingle()`, the counting quota select, the
+ * destinations `.order()` whole-set read, the `trips` single-row read (the
+ * #426 trip-level fallback — the only bare `.maybeSingle()` on the path), and
+ * the get_ai_day_context RPC. `rpcCalls` captures the usage ledger — and only
+ * the ledger — so the "the server writes nothing but a usage row" assertion
+ * below is meaningful.
  */
 function fakeDb({
   memberRows = 2,
   count = 0,
   destinations = DEFAULT_DESTINATIONS,
+  trip = DEFAULT_TRIP,
   dayContext = EMPTY_DAY_CONTEXT,
   destError = null,
+  tripError = null,
   contextError = null,
 } = {}) {
   const rpcCalls = []
@@ -191,7 +196,9 @@ function fakeDb({
                   maybeSingle: async () =>
                     memberRows > 0 ? { data: n >= 1 ? { id: 'm1' } : null, error: null } : { data: null, error: null },
                 }),
-                maybeSingle: async () => ({ data: memberRows > 0 ? { id: 'm1' } : null, error: null }),
+                // The bare single-row read is the trips lookup (#426): membership
+                // goes through `.limit(1)` above, so this is unambiguous.
+                maybeSingle: async () => (tripError ? { data: null, error: tripError } : { data: trip, error: null }),
                 order: async () => (destError ? { data: null, error: destError } : { data: destinations, error: null }),
               }
             },
@@ -318,14 +325,105 @@ test('a day that already has items is not this feature’s job', async () => {
 })
 
 test('a trip with no place to search around says so instead of guessing', async () => {
+  // No located leg AND no geocoder (deps() supplies none), so the #426 trip-level
+  // fallback is unavailable too — the honest no_location result, pointing at
+  // where to fix it rather than guessing a city.
   const provider = fakeProvider(GOOD_PICK)
   const res = await handleAiRequest(
     starter,
     deps({ db: fakeDb({ destinations: [{ name: 'Nowhere', latitude: null, longitude: null, start_date: DAY, end_date: DAY }] }), provider }),
   )
   assert.equal(res.body.result.status, 'nothing')
-  assert.match(res.body.result.message, /where you.?ll be/i)
+  assert.match(res.body.result.message, /trip settings/i)
   assert.equal(provider.calls.length, 0)
+})
+
+/* ── the trip-level Destination fallback (#426) ───────────────────────────── */
+
+const LA_JOLLA = 'La Jolla, San Diego, CA, United States'
+const LA_JOLLA_COORDS = { lat: 32.8328, lon: -117.2713 }
+// A single-destination trip: no `destinations` legs at all, only trips.destination.
+const SINGLE_DEST_DB = (over = {}) =>
+  fakeDb({ destinations: [], trip: { destination: LA_JOLLA }, ...over })
+// A legless day context — get_ai_day_context carries no leg name to ground on,
+// so the geocoded trip destination is what the suggestion is built around.
+const LEGLESS_DAY_CONTEXT = { ...EMPTY_DAY_CONTEXT, leg: null }
+
+// A fake geocoder with the same degrade-to-null contract as the Cloudflare
+// wiring: it records what it was asked, and returns a point or null.
+const geocodeOf = (coords = LA_JOLLA_COORDS, { throws = false } = {}) => {
+  const calls = []
+  const fn = async (query) => {
+    calls.push(query)
+    if (throws) throw new Error('geoapify down')
+    return coords
+  }
+  fn.calls = calls
+  return fn
+}
+
+test('a trip whose only location is trips.destination gets real suggestions (#426)', async () => {
+  const db = SINGLE_DEST_DB({ dayContext: LEGLESS_DAY_CONTEXT })
+  const geocode = geocodeOf()
+  const res = await handleAiRequest(starter, {
+    db, enabled: true, nearby: nearbyOf(), geocode, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'suggested', 'the single-destination case now works')
+  assert.deepEqual(geocode.calls, [LA_JOLLA], 'the Destination field is geocoded verbatim — never the trip name')
+  assert.equal(res.body.result.placeName, LA_JOLLA, 'the geocoded destination grounds the suggestion')
+})
+
+test('a covering leg still wins over the trip Destination field — no multi-stop regression (#426)', async () => {
+  // DEFAULT_DESTINATIONS has a located Kyoto leg covering DAY; the trip-level
+  // fallback must never be reached when a leg already grounds the day.
+  const geocode = geocodeOf()
+  const res = await handleAiRequest(starter, {
+    db: fakeDb({ trip: { destination: LA_JOLLA } }), enabled: true, nearby: nearbyOf(), geocode, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'suggested')
+  assert.equal(res.body.result.placeName, 'Kyoto', 'the covering leg wins')
+  assert.equal(geocode.calls.length, 0, 'a located leg means the trip destination is never geocoded')
+})
+
+test('an ungeocodable trip destination returns no_location, not a crash (#426)', async () => {
+  const db = SINGLE_DEST_DB({ dayContext: LEGLESS_DAY_CONTEXT })
+  const geocode = geocodeOf(null) // Geoapify found no point for the text
+  const res = await handleAiRequest(starter, {
+    db, enabled: true, nearby: nearbyOf(), geocode, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'nothing')
+  assert.match(res.body.result.message, /trip settings/i)
+  assert.equal(db.rpcCalls[0].args.p_feature, 'suggest_starter:no_location')
+})
+
+test('a thrown geocode degrades to no_location rather than erroring (#426)', async () => {
+  const db = SINGLE_DEST_DB({ dayContext: LEGLESS_DAY_CONTEXT })
+  const geocode = geocodeOf(LA_JOLLA_COORDS, { throws: true })
+  const res = await handleAiRequest(starter, {
+    db, enabled: true, nearby: nearbyOf(), geocode, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'nothing')
+  assert.match(res.body.result.message, /trip settings/i)
+})
+
+test('an empty trips.destination is never sent to the geocoder (#426)', async () => {
+  const db = SINGLE_DEST_DB({ trip: { destination: '   ' }, dayContext: LEGLESS_DAY_CONTEXT })
+  const geocode = geocodeOf()
+  const res = await handleAiRequest(starter, {
+    db, enabled: true, nearby: nearbyOf(), geocode, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'nothing')
+  assert.match(res.body.result.message, /trip settings/i)
+  assert.equal(geocode.calls.length, 0, 'a blank destination is not a query')
+})
+
+test('no geocoder (no key) leaves the trip-level fallback unavailable (#426)', async () => {
+  const db = SINGLE_DEST_DB({ dayContext: LEGLESS_DAY_CONTEXT })
+  const res = await handleAiRequest(starter, {
+    db, enabled: true, nearby: nearbyOf(), geocode: undefined, provider: fakeProvider(GOOD_PICK),
+  })
+  assert.equal(res.body.result.status, 'nothing')
+  assert.match(res.body.result.message, /trip settings/i)
 })
 
 test('no nearby lookup, or an empty one, degrades to a free "nothing"', async () => {
