@@ -25,7 +25,12 @@ import { handleAiRequest } from '../../src/server/ai/handler'
 import type { Db } from '../../src/server/ai/handler'
 import { workersAiProvider } from '../../src/server/ai/provider'
 import type { AiBinding } from '../../src/server/ai/provider'
-import { buildPlacesUrl, parseGeoapifyPlaces } from '../../src/server/geo/geoapify'
+import {
+  buildGeocodeUrl,
+  buildPlacesUrl,
+  parseGeoapifyFirstCoords,
+  parseGeoapifyPlaces,
+} from '../../src/server/geo/geoapify'
 import type { NearbyPlace } from '../../src/lib/places'
 
 interface Env {
@@ -86,6 +91,38 @@ function nearbyLookup(
     } catch {
       // Every caller's contract is to degrade; a thrown lookup is an empty one.
       return []
+    }
+  }
+}
+
+/**
+ * A forward-geocode bound to this deployment's Geoapify key, or undefined when
+ * there is no key. The trip-level fallback for suggest_starter (#426): it turns
+ * a single-destination trip's `trips.destination` text into a point so the
+ * feature can run for the common case. Same key, same degrade-to-undefined
+ * contract and the same reason-it-lives-here as `nearbyLookup` — it adds no new
+ * credential, and the handler stays a pure rule engine that is *given* a way to
+ * geocode rather than reaching for one.
+ */
+function geocodeLookup(
+  env: Env,
+): ((query: string) => Promise<{ lat: number; lon: number } | null>) | undefined {
+  const key = env.GEOAPIFY_ENABLED === 'false' ? '' : (env.GEOAPIFY_KEY ?? '').trim()
+  if (!key) return undefined
+  return async (query) => {
+    try {
+      // Forward search (one best match), not autocomplete: the field is a
+      // committed place, not a half-typed query.
+      const url = buildGeocodeUrl(query, { limit: 1, autocomplete: false }, key)
+      const res = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) return null
+      return parseGeoapifyFirstCoords(await res.json())
+    } catch {
+      // Degrade to "no point" exactly as the nearby lookup degrades to [].
+      return null
     }
   }
 }
@@ -152,6 +189,10 @@ export async function onRequestPost({ request, env }: PagesContext): Promise<Res
     // Places for suggest_starter (#284). Undefined when no key is configured,
     // which degrades the feature to "nothing to suggest" rather than erroring.
     nearby: nearbyLookup(env),
+    // The trip-level Destination fallback for suggest_starter (#426), reusing
+    // the same Geoapify key. Undefined with no key — the fallback is then simply
+    // unavailable and a legless trip degrades to the no_location result.
+    geocode: geocodeLookup(env),
   })
 
   return json(result, status)
