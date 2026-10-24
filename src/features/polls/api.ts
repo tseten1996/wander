@@ -4,7 +4,13 @@ import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { notify } from '@/lib/notify'
 import { friendlyError } from '@/lib/errors'
+import { reopenPatch } from './status'
 import type { Poll, PollCategory, PollOption, Vote } from '@/types'
+
+// The open/closed predicate lives in a dependency-free module so it can be
+// unit-tested directly; re-exported here so `me/api.ts`, `dashboard/api.ts` and
+// the polls page keep importing it from `@/features/polls/api` unchanged.
+export { isPollOpen } from './status'
 
 export type PollWithVotes = Poll & { poll_options: PollOption[]; votes: Vote[] }
 
@@ -159,9 +165,13 @@ export function useSetPollClosed(tripId: string, memberId: string) {
   const invalidate = useInvalidatePolls(tripId)
   return useMutation({
     mutationFn: async ({ poll, closed }: { poll: Poll; closed: boolean }) => {
-      const { error } = await supabase.from('polls').update({ closed }).eq('id', poll.id)
+      // Closing just flips the flag; reopening must also clear a close time that
+      // has already passed, or the poll stays expired and the action is a silent
+      // no-op (#411). `reopenPatch` encodes that rule.
+      const patch = closed ? { closed: true } : reopenPatch(poll)
+      const { error } = await supabase.from('polls').update(patch).eq('id', poll.id)
       if (error) throw error
-      if (closed) logActivity(tripId, memberId, 'closed the poll', poll.question)
+      logActivity(tripId, memberId, closed ? 'closed the poll' : 'reopened the poll', poll.question)
     },
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not update that poll')),
@@ -178,10 +188,4 @@ export function useDeletePoll(tripId: string) {
     onSuccess: invalidate,
     onError: (err) => toast.error(friendlyError(err, 'Could not delete that poll')),
   })
-}
-
-export function isPollOpen(poll: Pick<Poll, 'closed' | 'closes_at'>): boolean {
-  if (poll.closed) return false
-  if (poll.closes_at && new Date(poll.closes_at) < new Date()) return false
-  return true
 }
